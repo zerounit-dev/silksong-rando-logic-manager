@@ -1,0 +1,31 @@
+@inject DebugDiagnosticSwitches Switches
+@using Silksong_Rando_Logic_Manager.Services
+
+<div><button class="tree-action sidebar-debug-control" type="button" @onclick="Open">debug</button></div>
+
+@if (isOpen)
+{
+    <div class="confirmation-backdrop" @onclick="Close">
+        <section class="confirmation-modal" role="dialog" aria-modal="true" aria-labelledby="debug-controls-title" aria-describedby="debug-controls-description" @onclick:stopPropagation>
+            <h2 id="debug-controls-title">debug diagnostics</h2>
+            <p id="debug-controls-description">These settings affect all current circuits in this process and reset when the process restarts. Debug defaults are circuit timing on, EF context summaries on, and ordinary EF command SQL off.</p>
+            <label class="sidebar-export-map-option"><input type="checkbox" checked="@Switches.CircuitTimingEnabled" @onchange="SetCircuitTiming" /> circuit timing</label>
+            <label class="sidebar-export-map-option"><input type="checkbox" checked="@Switches.EfContextSummariesEnabled" @onchange="SetContextSummaries" /> EF context summaries</label>
+            <label class="sidebar-export-map-option"><input type="checkbox" checked="@Switches.EfCommandSqlEnabled" @onchange="SetCommandSql" /> ordinary EF command SQL</label>
+            <div class="confirmation-actions">
+                <button type="button" @onclick="Close">close</button>
+            </div>
+        </section>
+    </div>
+}
+
+@code {
+    private bool isOpen;
+
+    private void Open() => isOpen = true;
+    private void Close() => isOpen = false;
+    private void SetCircuitTiming(ChangeEventArgs args) => Switches.CircuitTimingEnabled = AsBoolean(args);
+    private void SetContextSummaries(ChangeEventArgs args) => Switches.EfContextSummariesEnabled = AsBoolean(args);
+    private void SetCommandSql(ChangeEventArgs args) => Switches.EfCommandSqlEnabled = AsBoolean(args);
+    private static bool AsBoolean(ChangeEventArgs args) => args.Value is true || bool.TryParse(args.Value?.ToString(), out var value) && value;
+}

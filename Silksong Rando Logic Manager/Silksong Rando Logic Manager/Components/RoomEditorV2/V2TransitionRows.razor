@@ -1,0 +1,38 @@
+@using Silksong_Rando_Logic_Manager.Components.RoomEditorV2.Contracts
+<table class="logic-table transition-table v2-read-only-table">
+    <thead><tr><th>alias</th><th>name</th><th>from subroom</th><th>destination room</th><th>destination alias</th><th class="transition-inverse-heading">inverse</th><th>requirements</th><th>notes</th><th>todo</th><th>verify</th></tr></thead>
+    <tbody>
+    @foreach (var row in Rows)
+    {
+        <tr>
+            <td class="@SeverityClass(row.AliasSeverity)">@row.Alias</td>
+            <td class="@SeverityClass(row.FriendlyNameSeverity)">@row.FriendlyName</td>
+            <td class="@SeverityClass(row.SourceReferenceSeverity)" title="@row.SourceReferenceState">@row.SourceSubroomReferenceText</td>
+            <td class="@SeverityClass(row.DestinationRoomSeverity)" title="@row.DestinationRoomState">@row.DestinationRoomReferenceText</td>
+            <td class="@SeverityClass(row.DestinationAliasSeverity)" title="@row.DestinationAliasState">@row.DestinationTransitionAliasText</td>
+            <td class="transition-inverse-state">@InverseIcon(row.InverseState)</td>
+            <td class="@RequirementsClass(row.RequirementsSeverity, row.IsTodo)">@row.Requirements</td>
+            <td class="detail-cell">@row.Notes</td>
+            <td class="checkbox-cell @(row.IsTodo ? "todo" : null)" aria-label="@(row.IsTodo ? "Transition is TODO" : "Transition is not TODO")">@(row.IsTodo ? "✓" : "")</td>
+            <td class="verification-cell" aria-label="Transition verification: @VerificationText(row.IsVerified)">@VerificationText(row.IsVerified)</td>
+        </tr>
+    }
+    </tbody>
+</table>
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<TransitionRowView> Rows { get; set; } = [];
+    private static string? SeverityClass(V2Severity severity) => severity switch { V2Severity.Warning => "warning", V2Severity.Danger => "danger", _ => null };
+    private static string? RequirementsClass(V2Severity severity, bool todo) => severity switch { V2Severity.Warning => "warning", V2Severity.Danger => "danger", _ when todo => "todo", _ => null };
+    private static string VerificationText(bool? value) => value switch { true => "verified", false => "not verified", null => "unknown" };
+    private static RenderFragment InverseIcon(V2InverseState state) => builder =>
+    {
+        var (icon, label, css) = state switch
+        {
+            V2InverseState.Zero => ("fa-triangle-exclamation", "No inverse transition found", "warning"),
+            V2InverseState.One => ("fa-circle-check", "One inverse transition found", ""),
+            V2InverseState.Multiple => ("fa-circle-exclamation", "Multiple inverse transitions found", "danger"),
+            _ => ("", "Inverse unavailable", "")
+        };
+        if (icon.Length != 0) { builder.OpenElement(0, "i"); builder.AddAttribute(1, "class", $"fa-solid {icon} {css}"); builder.AddAttribute(2, "role", "img"); builder.AddAttribute(3, "aria-label", label); builder.AddAttribute(4, "title", label); builder.CloseElement(); }
+    };
+}

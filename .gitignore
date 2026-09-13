@@ -1,0 +1,63 @@
+# IDE state
+.vs/
+.vscode/
+.idea/
+*.rsuser
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.DotSettings.user
+
+# Build, test, and package output
+[Bb]in/
+[Oo]bj/
+[Aa]rtifacts/
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+publish/
+TestResults/
+test-results/
+coverage/
+coverage-results/
+BenchmarkDotNet.Artifacts/
+*.nupkg
+*.snupkg
+*.zip
+*.binlog
+*.log
+
+# Local configuration and secrets
+.opencode/
+AGENTS.md
+opencode.json
+.env
+.env.*
+*.pem
+*.key
+*.pfx
+*.snk
+*.publishsettings
+*.pubxml
+
+# Runtime and generated development state
+**/Data/backups/
+**/data/backups/
+*.db-wal
+*.db-shm
+*.db-journal
+**/Data/scene-source/room-map-hd.png
+**/data/scene-source/room-map-hd.png
+scenedumpmod/
+.history/
+local-history/
+.cache/
+__pycache__/
+.pytest_cache/
+
+# OS metadata
+.DS_Store
+Thumbs.db
+desktop.ini

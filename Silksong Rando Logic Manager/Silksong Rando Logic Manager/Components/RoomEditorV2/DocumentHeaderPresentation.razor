@@ -1,0 +1,31 @@
+@using Silksong_Rando_Logic_Manager.Components.RoomEditorV2.Contracts
+
+<header class="document-header">
+    <RoomTitlePresentation View="new RoomTitleView(Draft?.FriendlyName ?? View.FriendlyName, View.FriendlyNameSeverity, View.IsArchived, View.AppliedStatus)" Editable="Status.IsEditable" ValueChanged="SetName" Save="Save" />
+    <div class="room-meta">
+        <div class="room-meta-authored">
+            <RoomReferencePresentation View="new RoomReferenceView(Draft?.ReferenceId ?? View.ReferenceId, View.ReferenceIdSeverity)" Value="@(Draft?.ReferenceId ?? View.ReferenceId)" Editable="Status.IsEditable" ValueChanged="SetReference" Save="Save" />
+            <RoomGameIdPresentation View="new RoomGameIdView(Draft?.InGameId ?? View.InGameId, View.InGameIdSeverity)" Editable="Status.IsEditable" ValueChanged="SetGame" Save="Save" />
+            <RoomContributorsPresentation View="new RoomContributorsView(Draft?.Contributors ?? View.Contributors)" Editable="Status.IsEditable" ValueChanged="SetContributors" Save="Save" />
+        </div>
+        <div class="room-meta-status">
+            <RoomUpdatedPresentation UpdatedUtc="View.UpdatedUtc" />
+            <RoomSaveStatusPresentation Status="Status" />
+            <V2RefreshDiagnosticPresentation Diagnostic="RefreshDiagnostic" />
+        </div>
+    </div>
+</header>
+
+@code {
+    [Parameter, EditorRequired] public RoomHeaderView View { get; set; } = null!;
+    [Parameter] public RoomHeaderDraft? Draft { get; set; }
+    [Parameter] public V2RefreshDiagnosticView? RefreshDiagnostic { get; set; }
+    [Parameter] public V2RoomHeaderSaveStatus Status { get; set; } = new(V2RoomHeaderSaveState.Saved);
+    [Parameter] public EventCallback<RoomHeaderDraft> DraftChanged { get; set; }
+    [Parameter] public EventCallback Save { get; set; }
+    private RoomHeaderDraft Current => Draft ?? new(View.FriendlyName, View.InGameId, View.Contributors, View.Comments, View.ReferenceId);
+    private Task SetName(string value) => DraftChanged.InvokeAsync(Current with { FriendlyName = value });
+    private Task SetReference(string value) => DraftChanged.InvokeAsync(Current with { ReferenceId = value });
+    private Task SetGame(string? value) => DraftChanged.InvokeAsync(Current with { InGameId = value });
+    private Task SetContributors(string? value) => DraftChanged.InvokeAsync(Current with { Contributors = value });
+}

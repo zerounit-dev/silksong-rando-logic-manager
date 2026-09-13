@@ -1,0 +1,126 @@
+@implements IAsyncDisposable
+@using System.Globalization
+@inject IJSRuntime JS
+
+<div class="area-map-surface @(Compact ? "area-map-surface-compact" : "area-map-surface-full")">
+    <svg id="@View.Context.SvgId" @key="View.Context.SvgId" @ref="svgElement" class="map-wireframe @(Compact ? "room-context-wireframe" : "")"
+         viewBox="@InitialViewBox" data-base-viewbox="@NavigationBoundsViewBox" data-initial-viewbox="@InitialViewBox"
+         data-map-view-version="@(View.Context.IsRoomContext ? "3" : null)" data-map-key="@View.Context.ViewportKey"
+         data-has-overlay="@((View.Decoration.Overlay is not null).ToString().ToLowerInvariant())"
+         role="img" aria-label="@(Compact ? "Room zone map" : "Imported map wireframe")">
+        @if (View.Decoration.Overlay is { } overlay)
+        {
+            <image class="map-overlay-image" href="@overlay.ImageUrl" x="@Number(overlay.Placement.X)" y="@Number(overlay.Placement.Y)"
+                   width="@Number(overlay.Placement.Width)" height="@Number(overlay.Placement.Height)" preserveAspectRatio="none" />
+        }
+        <g transform="@MapUnitToSvgTransform">
+            @foreach (var owner in View.Geometry.Owners)
+            {
+                var decoration = Decoration(owner);
+                if (decoration is not null)
+                {
+                    var linked = owner.ActiveResolvedRoomId is not null;
+                    <path class="chunk-frame @(linked ? $"linked-owner {BorderStatusClass(decoration.Status)}" : "unlinked")"
+                          data-map-owner="@(linked ? "linked" : "unlinked")" d="@owner.SvgPathData" tabindex="0"
+                          aria-label="@decoration.Label" @onclick="() => ActivateAsync(owner.ActiveResolvedRoomId)"
+                          @oncontextmenu:preventDefault="true" @oncontextmenu="() => EditAsync(owner.ActiveResolvedRoomId, decoration.MapSceneId)">
+                        <title>@decoration.Label</title>
+                    </path>
+                }
+            }
+            @if (View.Context.CurrentRoomId is { } currentRoomId)
+            {
+                @foreach (var owner in View.Geometry.Owners.Where(x => x.ActiveResolvedRoomId == currentRoomId))
+                {
+                    <path class="current-room-frame" d="@owner.SvgPathData" aria-hidden="true" />
+                }
+            }
+        </g>
+    </svg>
+    <area-map-prepaint @key="PrepaintMarkerKey" hidden aria-hidden="true"></area-map-prepaint>
+    @if (Compact)
+    {
+        <div class="room-map-context-map-actions">
+            <div><button type="button" @onclick="() => EditAsync(null, null)"><i class="fa-solid fa-link" aria-hidden="true"></i> edit map links</button></div>
+            <div>
+                @if (View.Decoration.Overlay is not null)
+                {
+                    <button type="button" class="map-image-toggle-compact" data-map-command="image" title="hide map image" aria-label="hide map image" aria-pressed="true"><i class="fa-solid fa-image" aria-hidden="true"></i></button>
+                }
+                <button type="button" data-map-command="linked"><i class="fa-solid fa-eye" aria-hidden="true"></i> linked</button>
+                <button type="button" data-map-command="unlinked"><i class="fa-solid fa-eye" aria-hidden="true"></i> unlinked</button>
+                <button type="button" data-map-command="reset"><i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i> reset view</button>
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="map-manifest-upload">
+            <div class="map-controls-start">@LeadingControls</div>
+            <div class="map-controls-end">
+                @if (View.Decoration.Overlay is not null) { <button type="button" class="map-manifest-picker" data-map-command="image"><i class="fa-solid fa-image" aria-hidden="true"></i> image</button> }
+                <button type="button" class="map-manifest-picker" data-map-command="linked"><i class="fa-solid fa-eye" aria-hidden="true"></i> linked</button>
+                <button type="button" class="map-manifest-picker" data-map-command="unlinked"><i class="fa-solid fa-eye" aria-hidden="true"></i> unlinked</button>
+                <button type="button" class="map-manifest-picker" data-map-command="reset"><i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i> reset view</button>
+            </div>
+            @ControlStatus
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public AreaMapSurfaceView View { get; set; } = null!;
+    [Parameter] public bool Compact { get; set; }
+    [Parameter] public EventCallback<LinkedMapRoomIntent> LinkedRoomActivated { get; set; }
+    [Parameter] public long HostGeneration { get; set; }
+    [Parameter] public EventCallback<MapLinkContextIntent> MapLinkRequested { get; set; }
+    [Parameter] public RenderFragment? LeadingControls { get; set; }
+    [Parameter] public RenderFragment? ControlStatus { get; set; }
+
+    private ElementReference svgElement;
+    private bool disposed;
+    private bool browserInitialized;
+    private string NavigationBoundsViewBox => Bounds(View.Geometry.MapBounds);
+    private string InitialViewBox => Bounds(View.Context.InitialBounds);
+    private string PrepaintMarkerKey => $"area-map-prepaint:{View.Context.SvgId}";
+    private string MapUnitToSvgTransform => $"translate(0 {Number(View.Geometry.MapBounds.Y * 2 + View.Geometry.MapBounds.Height)}) scale(1 -1)";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (disposed) return;
+        try
+        {
+            await JS.InvokeVoidAsync("mapNavigation.initialize", svgElement);
+            if (disposed)
+            {
+                await JS.InvokeVoidAsync("mapNavigation.dispose", svgElement);
+                return;
+            }
+            browserInitialized = true;
+        }
+        catch (JSDisconnectedException) { }
+        catch (ObjectDisposedException) when (disposed) { }
+    }
+
+    private AreaMapOwnerDecoration? Decoration(MapRenderProjectionOwner owner) => owner.ActiveResolvedRoomId is { } roomId
+        ? View.Decoration.Linked.GetValueOrDefault(roomId)
+        : owner.UnlinkedChunkId is { } chunkId ? View.Decoration.Unlinked.GetValueOrDefault(chunkId) : null;
+    private Task ActivateAsync(Guid? roomId) => roomId is { } id ? LinkedRoomActivated.InvokeAsync(new(View.Context.CurrentRoomId, HostGeneration, id)) : Task.CompletedTask;
+    private Task EditAsync(Guid? roomId, Guid? sceneId) => MapLinkRequested.InvokeAsync(new(roomId, sceneId));
+    private static string BorderStatusClass(AppliedRoomStatus status) => $"map-room-border-{status.ToString().ToLowerInvariant()}";
+    private static string Bounds(MapSvgBounds bounds) => $"{Number(bounds.X)} {Number(bounds.Y)} {Number(bounds.Width)} {Number(bounds.Height)}";
+    private static string Number(double value) => value.ToString("G17", CultureInfo.InvariantCulture);
+
+    public async ValueTask DisposeAsync()
+    {
+        if (disposed) return;
+        disposed = true;
+        if (!browserInitialized) return;
+        try { await JS.InvokeVoidAsync("mapNavigation.dispose", svgElement); }
+        catch (JSDisconnectedException) { }
+        catch (ObjectDisposedException) { }
+    }
+
+    public sealed record MapLinkContextIntent(Guid? ResolvedRoomId, Guid? MapSceneId);
+    public sealed record LinkedMapRoomIntent(Guid? SourceRoomId, long HostGeneration, Guid TargetRoomId);
+}

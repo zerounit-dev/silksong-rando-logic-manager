@@ -1,0 +1,111 @@
+@rendermode InteractiveServer
+@implements IAsyncDisposable
+@inject DiagnosticState DiagnosticState
+@inject IJSRuntime JS
+
+@if (DiagnosticState.ErrorDetails is { } errorDetails)
+{
+    <div class="diagnostic-backdrop" role="presentation">
+        <section class="diagnostic-modal" role="alertdialog" aria-modal="true" aria-labelledby="diagnostic-title" aria-describedby="diagnostic-details">
+            <header class="diagnostic-header">
+                <h2 id="diagnostic-title">Application error</h2>
+                <button class="diagnostic-close icon-button" type="button" title="Close diagnostic details" @onclick="Close" aria-label="Close diagnostic details"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+            </header>
+            <p>An unexpected error has occurred. Full diagnostic details are shown below; consult the debug/server logs when contacting the developer.</p>
+            <pre id="diagnostic-details" class="diagnostic-details">@errorDetails</pre>
+            <footer class="diagnostic-actions">
+                <button class="diagnostic-button" type="button" @onclick="CopyDetailsAsync"><i class="fa-solid fa-copy" aria-hidden="true"></i> Copy details</button>
+                <button class="diagnostic-button" type="button" @onclick="Close">Close</button>
+                @if (copyStatus is not null)
+                {
+                    <span class="diagnostic-copy-status" aria-live="polite">@copyStatus</span>
+                }
+            </footer>
+        </section>
+    </div>
+}
+
+@code {
+    private IJSObjectReference? module;
+    private DotNetObjectReference<DiagnosticModal>? callbackReference;
+    private string? copyStatus;
+
+    protected override void OnInitialized()
+    {
+        DiagnosticState.StateChanged += HandleStateChanged;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        try
+        {
+            module = await JS.InvokeAsync<IJSObjectReference>("import", "./diagnostic-modal.js");
+            callbackReference = DotNetObjectReference.Create(this);
+            await module.InvokeVoidAsync("register", callbackReference);
+        }
+        catch (Exception exception)
+        {
+            DiagnosticState.Show(exception.ToString());
+        }
+    }
+
+    [JSInvokable]
+    public Task ReportBrowserError(string details)
+    {
+        DiagnosticState.Show(details);
+        return Task.CompletedTask;
+    }
+
+    private async Task CopyDetailsAsync()
+    {
+        if (module is null || DiagnosticState.ErrorDetails is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var copied = await module.InvokeAsync<bool>("copyDetails", DiagnosticState.ErrorDetails);
+            copyStatus = copied ? "Details copied." : "Unable to copy details.";
+        }
+        catch (Exception exception)
+        {
+            DiagnosticState.Show(exception.ToString());
+        }
+    }
+
+    private void Close()
+    {
+        copyStatus = null;
+        DiagnosticState.Close();
+    }
+
+    private void HandleStateChanged()
+    {
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        DiagnosticState.StateChanged -= HandleStateChanged;
+
+        if (module is not null)
+        {
+            try
+            {
+                await module.InvokeVoidAsync("unregister");
+                await module.DisposeAsync();
+            }
+            catch (Exception)
+            {
+            }
+        }
+
+        callbackReference?.Dispose();
+    }
+}

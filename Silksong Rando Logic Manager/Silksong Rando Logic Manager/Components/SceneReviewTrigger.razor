@@ -1,0 +1,9 @@
+<button class="scene-picker scene-review-trigger" type="button" @onclick="OpenAsync">
+    <i class="fa-solid fa-file-import" aria-hidden="true"></i> upload scene dump
+</button>
+
+@code {
+    [Inject] private IJSRuntime JS { get; set; } = null!;
+
+    private Task OpenAsync() => JS.InvokeVoidAsync("openSceneUploadPicker", "scene-upload-input").AsTask();
+}

@@ -1,0 +1,26 @@
+@using Silksong_Rando_Logic_Manager.Components.RoomEditorV2.Contracts
+
+<div class="room-title-row">
+    <i class="fa-solid fa-fw @StatusIcon(View.AppliedStatus) room-header-status @StatusClass(View.AppliedStatus)" role="img" title="@StatusLabel(View.AppliedStatus)" aria-label="@StatusLabel(View.AppliedStatus)"></i>
+    <label aria-label="Room friendly name">
+        <textarea id="room-friendly-name" class="room-title @SeverityClass(View.Severity)" aria-label="Room friendly name" readonly="@(!Editable)" rows="1" @bind="value" @bind:event="oninput" @onblur="Blur"></textarea>
+    </label>
+</div>
+@if (View.IsArchived)
+{
+    <span class="archived-indicator">[archived]</span>
+}
+
+@code {
+    [Parameter, EditorRequired] public RoomTitleView View { get; set; } = null!;
+    [Parameter] public bool Editable { get; set; }
+    [Parameter] public EventCallback<string> ValueChanged { get; set; }
+    [Parameter] public EventCallback Save { get; set; }
+    private string value = string.Empty;
+    protected override void OnParametersSet() => value = View.FriendlyName;
+    private async Task Blur() { await ValueChanged.InvokeAsync(value); await Save.InvokeAsync(); }
+    private static string SeverityClass(V2Severity severity) => severity switch { V2Severity.Warning => "warning", V2Severity.Danger => "danger", _ => string.Empty };
+    private static string StatusIcon(AppliedRoomStatus status) => status switch { AppliedRoomStatus.Success => "fa-circle-check", AppliedRoomStatus.Warning => "fa-triangle-exclamation", AppliedRoomStatus.Danger => "fa-circle-exclamation", _ => "fa-circle-minus" };
+    private static string StatusClass(AppliedRoomStatus status) => status switch { AppliedRoomStatus.Success => "success", AppliedRoomStatus.Warning => "warning", AppliedRoomStatus.Danger => "danger", _ => "secondary" };
+    private static string StatusLabel(AppliedRoomStatus status) => $"Room status: {status}";
+}

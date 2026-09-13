@@ -1,0 +1,1724 @@
+@page "/rooms/{RoomId:guid}"
+@rendermode InteractiveServer
+@implements IAsyncDisposable
+@inject IRoomEditorV2LogicLoader Loader
+@inject IRoomEditorV2CommandService Commands
+@inject IRequirementValidationService RequirementValidation
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+@inject RequirementCatalogueService Catalogue
+@inject IServiceProvider Services
+@inject WorkspaceChangeNotifier WorkspaceChanges
+@inject ILogger<RoomEditorV2Page> Logger
+@inject DiagnosticState Diagnostics
+@inject IAreaMapLoader AreaMaps
+@using Silksong_Rando_Logic_Manager.Components.RoomEditorV2.Contracts
+@using Microsoft.JSInterop
+
+@if (view is null)
+{
+    <p class="text-secondary">Loading room…</p>
+}
+else
+{
+    <div @ref="pageRoot" class="room-editor-v2">
+        <article class="room-document" aria-label="Room editor">
+            <RoomHeaderPresentation View="view.Header" Map="mapView" MapOwnerGeneration="@(mapLoads?.AppliedGeneration ?? 0)" Scene="view.Scene" Placement="placementRequest" SelectedItem="selectedSceneItem" ActionBox="SceneActionBox" ActionRequested="HandleSceneActionAsync" OwnerMounted="SetSceneOwnerAsync" SelectionChanged="SetSceneSelectionAsync" PlacementCommitted="CommitScenePlacementAsync" PlacementCancelled="CancelScenePlacementAsync" MarkerDragCommitted="CommitSceneMarkerDragAsync" SceneNudgeCommitted="CommitSceneNudgeAsync" FrameGeometryCommitted="CommitSubroomGeometryAsync" Capture="RequestSceneImageCaptureAsync" LinkedRoomActivated="NavigateLinkedMapRoomAsync" MapLinksChanged="ReloadAreaMapAfterMapLinkChangeAsync" MapLinkModalStateChanged="SetRoomMapLinkModalStateAsync" Draft="headerDraft" RefreshDiagnostic="refreshDiagnostic" Status="headerSaveStatus" ShowMapContext="showMapContext" MapContextVisibilityResolved="mapContextVisibilityResolved" BackToMap="NavigateBackToMap" ToggleMapContext="ToggleMapContextAsync" ShowArchivedChildren="showArchivedChildren" ToggleArchivedChildren="ToggleArchivedChildren" LifecycleContentIntent="HandleLifecycleContentIntentAsync" RecheckRoomLogicBusy="recheckingRoomLogic" Archive="ArchiveRoomAsync" Restore="RestoreRoomAsync" PermanentDelete="RequestRoomPermanentDeleteAsync" SceneDimensions="RequestSceneDimensionsAsync" CurrentRoomExport="DownloadCurrentRoomExport" ZoneExport="DownloadZoneExport" DraftChanged="SetHeaderDraft" Save="SaveHeader" />
+            <div class="room-document-content">
+                <RoomCommentsPresentation View="new RoomCommentsView(headerDraft?.Comments ?? view.Header.Comments)" Editable="headerSaveStatus.IsEditable" DraftChanged="SetHeaderComments" Save="SaveHeader" />
+                <SubroomTablePresentation @ref="subroomTable" RoomId="RoomId" View="view.Subrooms" ShowArchivedChildren="showArchivedChildren" SceneActionsAvailable="SceneTableActionsAvailable" SceneActionsUnavailableReason="@SceneTableActionsUnavailableReason" Save="SaveSubroom" Create="CreateSubroom" Reorder="ReorderSubroom" SetArchive="SetSubroomArchive" AnnotationRequested="HandleSubroomAnnotationAsync" GeometryRequested="RequestSubroomGeometryAsync" DeleteConfirmationRequested="RequestChildPermanentDeleteAsync" DeleteConfirmationCancelled="CancelChildPermanentDeleteAsync" DeleteConfirmationConfirmed="ConfirmChildPermanentDeleteAsync" FocusRequested="RequestChildFocusAsync" DraftStateChanged="SetPendingDraft" RefreshApplied="ApplyRefreshedState" ClearDragFeedback="ClearSubroomDragFeedbackAsync" />
+                <TransitionTablePresentation @ref="transitionTable" RoomId="RoomId" View="view.Transitions" ShowArchivedChildren="showArchivedChildren" SceneActionsAvailable="SceneTableActionsAvailable" SceneActionsUnavailableReason="@SceneTableActionsUnavailableReason" Save="SaveTransitionAsync" Create="CreateTransitionAsync" Reorder="ReorderTransitionAsync" SetArchive="SetTransitionArchiveAsync" PermanentDeleteRequested="RequestTransitionPermanentDeleteAsync" EditInGameDataRequested="RequestTransitionMetadataAsync" InverseStatusActionRequested="RequestTransitionInverseStatusActionAsync" InverseRoomNavigationRequested="RequestApplicationRoomNavigationAsync" AnnotationRequested="HandleTransitionAnnotationAsync" FocusRequested="RequestChildFocusAsync" DraftStateChanged="SetPendingDraft" RefreshApplied="ApplyRefreshedState" ClearDragFeedback="ClearTransitionDragFeedbackAsync" />
+                <ConnectionTablePresentation @ref="connectionTable" RoomId="RoomId" View="view.Connections" ShowArchivedChildren="showArchivedChildren" SceneActionsAvailable="SceneTableActionsAvailable" SceneActionsUnavailableReason="@SceneTableActionsUnavailableReason" PlacementOutcome="@connectionPlacementOutcome" Save="SaveConnectionAsync" Create="CreateConnectionAsync" Reorder="ReorderConnectionAsync" SetArchive="SetConnectionArchiveAsync" PermanentDeleteRequested="RequestConnectionPermanentDeleteAsync" Scaffold="ScaffoldInverseConnectionAsync" AnnotationRequested="HandleConnectionAnnotationAsync" FocusRequested="RequestChildFocusAsync" DraftStateChanged="SetPendingDraft" RefreshApplied="ApplyRefreshedState" ClearDragFeedback="ClearConnectionDragFeedbackAsync" />
+                <CheckTablePresentation @ref="checkTable" RoomId="RoomId" View="view.Checks" ShowArchivedChildren="showArchivedChildren" SceneActionsAvailable="SceneTableActionsAvailable" SceneActionsUnavailableReason="@SceneTableActionsUnavailableReason" Save="SaveCheck" Create="CreateCheck" Reorder="ReorderCheck" SetArchive="SetCheckArchive" EditInGameDataRequested="RequestCheckMetadataAsync" AnnotationRequested="HandleCheckAnnotationAsync" DeleteConfirmationRequested="RequestChildPermanentDeleteAsync" DeleteConfirmationCancelled="CancelChildPermanentDeleteAsync" DeleteConfirmationConfirmed="ConfirmChildPermanentDeleteAsync" FocusRequested="RequestChildFocusAsync" DraftStateChanged="SetPendingDraft" RefreshApplied="ApplyRefreshedState" ClearDragFeedback="ClearCheckDragFeedbackAsync" />
+            </div>
+            <RoomReminderFooterPresentation View="new RoomReminderFooterView(ReminderFooterProse)" Intent="HandleReminderFooterIntentAsync" />
+        </article>
+        <V2PageModalHost Content="modalState?.Content" Stage="modalState?.Stage" FocusRequested="modalFocusRequested" MetadataDraft="modalState?.TransitionMetadataOperation?.Draft" MetadataDraftChanged="SetTransitionMetadataDraft" CheckMetadataDraft="modalState?.CheckMetadataOperation?.Draft" CheckMetadataDraftChanged="SetCheckMetadataDraft" SubroomGeometryDraftChanged="SetSubroomGeometryDraft" SceneDimensionsDraftChanged="SetSceneDimensionsDraft" SceneImageCaptureDraftChanged="SetSceneImageCaptureDraft" SceneImageCaptureReset="ResetSceneImageCaptureEstimateAsync" ManageRequirementCatalogue="NavigateToRequirementCatalogueAsync" Cancel="CancelModalAsync" Apply="ApplyModalAsync" DoNotUpdate="DoNotUpdateModalAsync" />
+        <div data-v2-requirements-expanded-host></div>
+    </div>
+}
+
+@code {
+    [Parameter] public Guid RoomId { get; set; }
+    private RoomEditorV2RefreshCoordinator? refresh;
+    private RoomEditorV2View? view => refresh?.View;
+    private RoomAreaMapLoadOwner? mapLoads;
+    private AreaMapSurfaceView? mapView => mapLoads?.View;
+    private readonly SemaphoreSlim commandGate = new(1, 1);
+    private bool meaningfulPendingDraft, showArchivedChildren, disposed, sceneActionPending, recheckingRoomLogic, applicationNavigationActive, suppressStaleSceneDimensionsCompletionRender, suppressStaleSceneImageCaptureCompletionRender, suppressStaleRoomLogicRecheckCompletionRender, childInteractionOwnerInitializing;
+    private Guid? roomMapLinkModalOwner;
+    private AreaMapPanePresentation.RoomMapLinkModalState roomMapLinkModalState;
+    private bool showMapContext, mapContextVisibilityLoadStarted, mapContextVisibilityResolved;
+    private V2SceneSelectedItem? selectedSceneItem;
+    private long sceneOwnerGeneration;
+    private long childInteractionOwnerGeneration;
+    private Guid? displayedRoomId;
+    private ElementReference pageRoot;
+    private IJSObjectReference? childInteractionOwner, mapContextHeightOwner;
+    private DotNetObjectReference<SubroomTablePresentation>? subroomCallback;
+    private DotNetObjectReference<TransitionTablePresentation>? transitionCallback;
+    private DotNetObjectReference<ConnectionTablePresentation>? connectionCallback;
+    private DotNetObjectReference<CheckTablePresentation>? checkCallback;
+    private SubroomTablePresentation? subroomTable;
+    private TransitionTablePresentation? transitionTable;
+    private ConnectionTablePresentation? connectionTable;
+    private CheckTablePresentation? checkTable;
+    private V2RefreshDiagnosticView? refreshDiagnostic;
+    private RoomHeaderDurableBaseline? headerBaseline;
+    private RoomHeaderDraft? headerDraft;
+    private V2RoomHeaderSaveStatus headerSaveStatus = new(V2RoomHeaderSaveState.Saved);
+    private V2ModalRuntimeState? modalState;
+    private SceneAnnotationPlacementRequest? placementRequest;
+    private string? connectionPlacementOutcome;
+    private string? sceneActionStatus;
+    private V2ModalFocusRoute? pendingModalFocus;
+    private string? pendingConnectionFocusId;
+    private bool modalFocusRequested;
+    private readonly Dictionary<Guid, TransitionInGameMetadataDraft> retainedTransitionMetadataDrafts = [];
+    private readonly Dictionary<Guid, CheckInGameMetadataDraft> retainedCheckMetadataDrafts = [];
+    private const string ReminderFooterProse = "remember your options: ledge grab, spike pogo, crest pogo, run, dash, drifter's cloak, faydown cloak, cling grip, silk soar, clawline, sharpdart, scuttlebrace";
+    private const string RoomFriendlyNameFocusId = "room-friendly-name";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        childInteractionOwnerGeneration++;
+        if (displayedRoomId is Guid previous && previous != RoomId)
+        {
+            await RetireChildInteractionOwnerAsync();
+            applicationNavigationActive = false; roomMapLinkModalOwner = null; roomMapLinkModalState = AreaMapPanePresentation.RoomMapLinkModalState.Closed; mapLoads?.Clear(); showArchivedChildren = false; recheckingRoomLogic = false; ClearSceneTransientState();
+        }
+        displayedRoomId = RoomId; retainedTransitionMetadataDrafts.Clear(); retainedCheckMetadataDrafts.Clear(); ClearModalState();
+        mapLoads ??= new(AreaMaps);
+        refresh?.InvalidateRouteState(); refresh ??= new(Loader, sidebarInvalidated: () => WorkspaceChanges.NotifyChanged(WorkspaceChangeScope.Sidebar));
+        var before = refresh.LastAppliedRefresh?.Sequence;
+        try
+        {
+            if (await refresh.RefreshAsync(RoomId)) Navigation.NavigateTo("/", replace: true);
+            else if (refresh.LastAppliedRefresh?.Sequence != before) { SetRefreshDiagnostic(); ResetHeaderDraft(); }
+            if (view?.Header.IsArchived == false)
+                await mapLoads.LoadAsync(RoomId, mapLoads.RetainedGeometry, refresh.RefreshGeneration, OwnsMapLoad);
+            else mapLoads.Clear();
+        }
+        catch (OperationCanceledException) { }
+        if (view?.Header.IsArchived == true) await DisposeMapContextHeightOwnerAsync();
+    }
+    protected override bool ShouldRender()
+    {
+        // Blazor schedules a render when an async event completes even when its
+        // stale completion intentionally changed no page state. Do not let a
+        // source-room operation result redraw a newer destination room.
+        if (!suppressStaleSceneDimensionsCompletionRender && !suppressStaleSceneImageCaptureCompletionRender && !suppressStaleRoomLogicRecheckCompletionRender) return true;
+        suppressStaleSceneDimensionsCompletionRender = false;
+        suppressStaleSceneImageCaptureCompletionRender = false;
+        suppressStaleRoomLogicRecheckCompletionRender = false;
+        return false;
+    }
+    private Task ToggleArchivedChildren() { showArchivedChildren = !showArchivedChildren; return Task.CompletedTask; }
+    private async Task HandleReminderFooterIntentAsync(RoomReminderFooterIntent intent)
+    {
+        if (intent != RoomReminderFooterIntent.OpenSyntaxGuide || disposed || modalState is not null) return;
+        if (childInteractionOwner is not null)
+        {
+            try
+            {
+                if (!await childInteractionOwner.InvokeAsync<bool>("commitActiveRequirement")) return;
+            }
+            catch (JSDisconnectedException) { return; }
+            catch (ObjectDisposedException) when (disposed) { return; }
+        }
+        if (disposed || modalState is not null || refresh?.CurrentRoomId != RoomId) return;
+        var reference = await Catalogue.LoadReferenceAsync();
+        if (disposed || modalState is not null || refresh?.CurrentRoomId != RoomId) return;
+        modalState = new(new V2RequirementSyntaxGuideDialogView(reference), "room-syntax-guide", null, V2ModalRuntimeStage.ProposalOpen);
+        modalFocusRequested = true;
+        StateHasChanged();
+    }
+    private async Task NavigateToRequirementCatalogueAsync()
+    {
+        if (modalState?.Content is not V2RequirementSyntaxGuideDialogView) return;
+        ClearModalState();
+        await InvokeAsync(StateHasChanged);
+        Navigation.NavigateTo("/requirements");
+    }
+    private void DownloadCurrentRoomExport(RoomExportIntent intent) => Navigation.NavigateTo($"{LocalExchangeDownloadEndpoints.CurrentRoomPathPrefix}{intent.RoomId:D}", forceLoad: true);
+    private void DownloadZoneExport(RoomExportIntent intent) => Navigation.NavigateTo($"{LocalExchangeDownloadEndpoints.ZonePathPrefix}{intent.RoomId:D}", forceLoad: true);
+    private void NavigateBackToMap() => Navigation.NavigateTo("/");
+    private async Task ToggleMapContextAsync()
+    {
+        if (!mapContextVisibilityResolved) return;
+        showMapContext = !showMapContext;
+        await JS.InvokeVoidAsync("saveRoomMapContextVisibility", showMapContext);
+        if (!showMapContext) await DisposeMapContextHeightOwnerAsync();
+    }
+    private void ResetHeaderDraft() { if (view is null) return; headerBaseline = RoomEditorV2CommandService.HeaderFromView(view.Header); headerDraft = new(view.Header.FriendlyName, view.Header.InGameId, view.Header.Contributors, view.Header.Comments, view.Header.ReferenceId); headerSaveStatus = new(V2RoomHeaderSaveState.Saved); }
+    private Task SetHeaderDraft(RoomHeaderDraft draft) { headerDraft = draft; return Task.CompletedTask; }
+    private Task SetHeaderComments(string comments) { if (headerDraft is not null) headerDraft = headerDraft with { Comments = comments }; return Task.CompletedTask; }
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (disposed) return;
+        if (!mapContextVisibilityResolved && !mapContextVisibilityLoadStarted)
+        {
+            mapContextVisibilityLoadStarted = true;
+            try
+            {
+                showMapContext = await JS.InvokeAsync<bool>("loadRoomMapContextVisibility");
+                mapContextVisibilityResolved = true;
+                await InvokeAsync(StateHasChanged);
+            }
+            catch (JSDisconnectedException) { }
+            catch (ObjectDisposedException) when (disposed) { }
+        }
+        if (modalState is not null && modalFocusRequested)
+        {
+            modalFocusRequested = false;
+            await InvokeAsync(StateHasChanged);
+        }
+        if (pendingModalFocus is { } focus)
+        {
+            pendingModalFocus = null;
+            try { await JS.InvokeVoidAsync("focusEditorField", focus.TargetId); }
+            catch (JSDisconnectedException) { } catch (ObjectDisposedException) when (disposed) { }
+        }
+        if (pendingConnectionFocusId is { } connectionFocus)
+        {
+            pendingConnectionFocusId = null;
+            try { await JS.InvokeVoidAsync("focusEditorField", connectionFocus); }
+            catch (JSDisconnectedException) { } catch (ObjectDisposedException) when (disposed) { }
+        }
+        if (childInteractionOwner is null && !childInteractionOwnerInitializing && view is { } ownerView && subroomTable is not null && transitionTable is not null && connectionTable is not null && checkTable is not null)
+        {
+            childInteractionOwnerInitializing = true;
+            var ownerGeneration = childInteractionOwnerGeneration;
+            var retryCurrentInitialization = false;
+            Exception? initializationFailure = null;
+            IJSObjectReference? candidate = null;
+            try
+            {
+                subroomCallback ??= DotNetObjectReference.Create(subroomTable);
+                transitionCallback ??= DotNetObjectReference.Create(transitionTable);
+                connectionCallback ??= DotNetObjectReference.Create(connectionTable);
+                checkCallback ??= DotNetObjectReference.Create(checkTable);
+                candidate = await JS.InvokeAsync<IJSObjectReference>("createV2ChildInteractionOwner", pageRoot, ownerView.RequirementsParserContext);
+                if (OwnsChildInteractionInitialization(ownerGeneration))
+                {
+                    await candidate.InvokeVoidAsync("register", subroomCallback, "subroom");
+                    await candidate.InvokeVoidAsync("register", transitionCallback, "transition");
+                    await candidate.InvokeVoidAsync("register", connectionCallback, "connection");
+                    await candidate.InvokeVoidAsync("register", checkCallback, "check");
+                    if (OwnsChildInteractionInitialization(ownerGeneration))
+                    {
+                        childInteractionOwner = candidate;
+                        candidate = null;
+                    }
+                    else retryCurrentInitialization = !disposed;
+                }
+                else retryCurrentInitialization = !disposed;
+            }
+            catch (JSDisconnectedException) { }
+            catch (ObjectDisposedException) when (disposed) { }
+            catch (Exception ex) { initializationFailure = ex; }
+            finally
+            {
+                try
+                {
+                    if (candidate is not null) await DisposeUnpublishedChildInteractionOwnerAsync(candidate);
+                }
+                catch (Exception ex) { initializationFailure ??= ex; }
+                finally
+                {
+                    candidate = null;
+                    childInteractionOwnerInitializing = false;
+                    if ((retryCurrentInitialization || initializationFailure is not null) && CanRetryChildInteractionInitialization())
+                    {
+                        try { await InvokeAsync(StateHasChanged); }
+                        catch (Exception ex) { initializationFailure ??= ex; }
+                    }
+                }
+            }
+            if (initializationFailure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(initializationFailure).Throw();
+        }
+        if (childInteractionOwner is not null && view is not null)
+        {
+            try { await childInteractionOwner.InvokeVoidAsync("setRequirementsContext", view.RequirementsParserContext); }
+            catch (JSDisconnectedException) { } catch (ObjectDisposedException) when (disposed) { }
+        }
+        if (mapContextHeightOwner is null && view?.Header.IsArchived == false && mapContextVisibilityResolved && showMapContext)
+        {
+            try { mapContextHeightOwner = await JS.InvokeAsync<IJSObjectReference>("createV2MapContextHeightOwner", pageRoot); }
+            catch (JSDisconnectedException) { } catch (ObjectDisposedException) when (disposed) { }
+        }
+    }
+    public async ValueTask DisposeAsync()
+    {
+        if (disposed) return;
+        disposed = true;
+        childInteractionOwnerGeneration++;
+        var owner = childInteractionOwner;
+        childInteractionOwner = null;
+        var callbacks = new IDisposable?[] { subroomCallback, transitionCallback, connectionCallback, checkCallback };
+        subroomCallback = null; transitionCallback = null; connectionCallback = null; checkCallback = null;
+        Exception? disposalFailure = null;
+        try { ClearSceneTransientState(); ClearModalState(); refresh?.Dispose(); }
+        catch (Exception ex) { disposalFailure = ex; }
+        try { if (mapLoads is not null) await mapLoads.DisposeAsync(); }
+        catch (Exception ex) { disposalFailure ??= ex; }
+        try { await DisposeMapContextHeightOwnerAsync(); }
+        catch (Exception ex) { disposalFailure ??= ex; }
+        if (owner is not null)
+        {
+            foreach (var kind in new[] { "subroom", "transition", "connection", "check" })
+            {
+                try { await owner.InvokeVoidAsync("unregister", kind); }
+                catch (JSDisconnectedException) { }
+                catch (ObjectDisposedException) { }
+                catch (Exception ex) { disposalFailure ??= ex; }
+            }
+            try { await owner.InvokeVoidAsync("dispose"); }
+            catch (JSDisconnectedException) { }
+            catch (ObjectDisposedException) { }
+            catch (Exception ex) { disposalFailure ??= ex; }
+            try { await owner.DisposeAsync(); }
+            catch (JSDisconnectedException) { }
+            catch (ObjectDisposedException) { }
+            catch (Exception ex) { disposalFailure ??= ex; }
+        }
+        foreach (var callback in callbacks)
+        {
+            try { callback?.Dispose(); }
+            catch (Exception ex) { disposalFailure ??= ex; }
+        }
+        if (disposalFailure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(disposalFailure).Throw();
+    }
+    private bool OwnsChildInteractionInitialization(long generation) =>
+        !disposed && childInteractionOwner is null && childInteractionOwnerGeneration == generation && refresh?.CurrentRoomId == RoomId;
+    private bool CanRetryChildInteractionInitialization() =>
+        !disposed && childInteractionOwner is null && refresh?.CurrentRoomId == RoomId;
+    private async Task RetireChildInteractionOwnerAsync()
+    {
+        var owner = childInteractionOwner;
+        childInteractionOwner = null;
+        var callbacks = new IDisposable?[] { subroomCallback, transitionCallback, connectionCallback, checkCallback };
+        subroomCallback = null; transitionCallback = null; connectionCallback = null; checkCallback = null;
+        Exception? retirementFailure = null;
+        if (owner is not null)
+        {
+            foreach (var kind in new[] { "subroom", "transition", "connection", "check" })
+            {
+                try { await owner.InvokeVoidAsync("unregister", kind); }
+                catch (JSDisconnectedException) { }
+                catch (ObjectDisposedException) { }
+                catch (Exception ex) { retirementFailure ??= ex; }
+            }
+            try { await owner.InvokeVoidAsync("dispose"); }
+            catch (JSDisconnectedException) { }
+            catch (ObjectDisposedException) { }
+            catch (Exception ex) { retirementFailure ??= ex; }
+            try { await owner.DisposeAsync(); }
+            catch (JSDisconnectedException) { }
+            catch (ObjectDisposedException) { }
+            catch (Exception ex) { retirementFailure ??= ex; }
+        }
+        foreach (var callback in callbacks)
+        {
+            try { callback?.Dispose(); }
+            catch (Exception ex) { retirementFailure ??= ex; }
+        }
+        if (retirementFailure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(retirementFailure).Throw();
+    }
+    private static async ValueTask DisposeUnpublishedChildInteractionOwnerAsync(IJSObjectReference owner)
+    {
+        Exception? failure = null;
+        try { await owner.InvokeVoidAsync("dispose"); }
+        catch (JSDisconnectedException) { }
+        catch (ObjectDisposedException) { }
+        catch (Exception ex) { failure = ex; }
+        finally
+        {
+            try { await owner.DisposeAsync(); }
+            catch (JSDisconnectedException) { }
+            catch (ObjectDisposedException) { }
+            catch (Exception ex) { failure ??= ex; }
+        }
+        if (failure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+    }
+    private async Task DisposeMapContextHeightOwnerAsync()
+    {
+        if (mapContextHeightOwner is null) return;
+        try { await mapContextHeightOwner.InvokeVoidAsync("dispose"); } catch (JSDisconnectedException) { } catch (ObjectDisposedException) { }
+        try { await mapContextHeightOwner.DisposeAsync(); } catch (JSDisconnectedException) { } catch (ObjectDisposedException) { }
+        mapContextHeightOwner = null;
+    }
+    private async Task<V2SubroomCommandOutcome> SaveSubroom(SubroomDurableBaseline b, SubroomDraft d, string initiatorId, string? pendingTargetId)
+    {
+        if (b.ReferenceId == d.ReferenceId) return await Execute(() => Commands.SaveSubroomAsync(RoomId, b, d), sceneRelevant: SceneRefreshImpact.SubroomSave(b, d));
+        await commandGate.WaitAsync();
+        try
+        {
+            if (modalState is not null) return new(V2SubroomCommandStatus.ExpectedFailure, "Close the open dialog first.");
+            if (refresh is null || refresh.CurrentRoomId != RoomId) return new(V2SubroomCommandStatus.Missing, "This room is not loaded.");
+            var result = await Commands.PrepareSubroomReferenceRenameAsync(RoomId, b, d);
+            if (result.Status == V2SubroomCommandStatus.Proposal && result.Proposal is { } proposal)
+            {
+                modalState = new(new V2ReferenceUpdateProposalView("subroom", view?.Subrooms.ActiveRows.FirstOrDefault(x => x.EntityId == b.EntityId)?.FriendlyName ?? "Subroom", proposal.SourceCurrent.ReferenceId), initiatorId, pendingTargetId, V2ModalRuntimeStage.ProposalOpen, SubroomReferenceRenameProposal: proposal);
+                modalFocusRequested = true; StateHasChanged();
+            }
+            return result;
+        }
+        finally { commandGate.Release(); }
+    }
+    private Task<V2SubroomCommandOutcome> CreateSubroom(SubroomDraft d) => Execute(() => Commands.CreateSubroomAsync(RoomId, d), true, SceneRefreshImpact.Create);
+    private Task<V2SubroomCommandOutcome> ReorderSubroom(Guid id, int index) => Execute(() => Commands.ReorderSubroomAsync(RoomId, id, index), sceneRelevant: SceneRefreshImpact.Reorder);
+    private Task<V2SubroomCommandOutcome> SetSubroomArchive(Guid id, bool archived) => Execute(() => Commands.SetSubroomArchiveAsync(RoomId, id, archived), sceneRelevant: SceneRefreshImpact.ArchiveRestoreDelete);
+    private Task ArmSubroomDrawAsync(SubroomDurableBaseline baseline, string initiatorId)
+    {
+        if (!disposed && modalState is null && !meaningfulPendingDraft && view?.Scene?.HasValidBounds == true && view.Subrooms.ActiveRows.Any(x => x.EntityId == baseline.EntityId))
+        { selectedSceneItem = new(V2SceneSelectedItemKind.Subroom, baseline.EntityId); placementRequest = new("subroom", baseline.EntityId, initiatorId); }
+        return InvokeAsync(StateHasChanged);
+    }
+    private bool SceneTableActionsAvailable => !disposed && showMapContext && view?.Scene?.HasValidBounds == true && sceneOwnerGeneration != 0;
+    private string SceneTableActionsUnavailableReason => disposed
+        ? "Scene annotation actions are unavailable because the scene view is no longer active."
+        : !showMapContext
+            ? "Scene annotation actions are unavailable because map context is hidden."
+            : view?.Scene?.HasValidBounds != true
+                ? "Scene annotation actions are unavailable because scene dimensions are unavailable."
+                : "Scene annotation actions are unavailable because the scene view is not ready.";
+    private V2SceneActionBoxView SceneActionBox
+    {
+        get
+        {
+            var unavailable = !SceneTableActionsAvailable;
+            var reason = unavailable ? SceneTableActionsUnavailableReason : "Select a scene item first.";
+            var armed = placementRequest is not null;
+            // The unavailable-dimensions status is the scene contract. Button
+            // disablement still explains its own precise admission reason.
+            var status = view?.Scene?.HasValidBounds != true ? "scene dimensions unavailable" : sceneActionStatus ?? (armed ? PlacementStatus(placementRequest!) : unavailable ? reason : view?.Scene?.Image?.IsStale == true ? "needs recapture" : "");
+            if (selectedSceneItem is not { } selected)
+                return new(false, false, false, false, false, reason, reason, reason, reason, reason, false, status);
+            var data = SelectedSceneData(selected);
+            if (unavailable || data is null)
+                return new(false, false, false, false, false, reason, reason, reason, reason, reason, false, status);
+            var reset = data.Kind is V2SceneSelectedItemKind.Transition or V2SceneSelectedItemKind.Check && Usable(data.GameX, data.GameY);
+            var valid = data.IsValidGeometry;
+            var rearm = !armed;
+            var clear = valid;
+            var visibility = valid;
+            var pending = sceneActionPending;
+            var immediateActionBlocked = modalState is not null || meaningfulPendingDraft;
+            return new(rearm && !pending, reset && !pending && !immediateActionBlocked, clear && !pending && !immediateActionBlocked, visibility && !pending && !immediateActionBlocked, !pending,
+                armed ? "placement is already armed" : "re-arm placement", "reset annotation to game position", "clear annotation geometry",
+                data.Enabled ? "hide annotation" : "show annotation", armed ? "cancel placement" : "dismiss scene interaction", data.Enabled, status);
+        }
+    }
+    private static string PlacementStatus(SceneAnnotationPlacementRequest request) => request.Kind == "subroom"
+        ? "draw subroom rectangle; drag to the opposite corner, or press Escape to cancel"
+        : $"place {request.Kind} annotation; click the scene, or press Escape to cancel";
+    private sealed record SceneActionData(V2SceneSelectedItemKind Kind, Guid EntityId, bool Enabled, bool IsValidGeometry, double? GameX, double? GameY, object Baseline);
+    private SceneActionData? SelectedSceneData(V2SceneSelectedItem selected) => selected.Kind switch
+    {
+        V2SceneSelectedItemKind.Subroom => view?.Subrooms.ActiveRows.SingleOrDefault(x => x.EntityId == selected.EntityId) is { } row
+            ? new(selected.Kind, selected.EntityId, row.EnableAnnotation, row.SceneUnitX is double x && row.SceneUnitY is double y && row.SceneUnitWidth is double w && row.SceneUnitHeight is double h && double.IsFinite(x) && double.IsFinite(y) && double.IsFinite(w) && double.IsFinite(h) && w > 0 && h > 0, null, null, RoomEditorV2CommandService.FromView(row)) : null,
+        V2SceneSelectedItemKind.Transition => view?.Transitions.ActiveRows.SingleOrDefault(x => x.EntityId == selected.EntityId) is { } row
+            ? new(selected.Kind, selected.EntityId, row.EnableAnnotation, Usable(row.AnnotationSceneUnitX, row.AnnotationSceneUnitY), row.InGamePositionX, row.InGamePositionY, RoomEditorV2CommandService.TransitionFromView(row)) : null,
+        V2SceneSelectedItemKind.Check => view?.Checks.ActiveRows.SingleOrDefault(x => x.EntityId == selected.EntityId) is { } row
+            ? new(selected.Kind, selected.EntityId, row.EnableAnnotation, Usable(row.AnnotationSceneUnitX, row.AnnotationSceneUnitY), row.InGamePositionX, row.InGamePositionY, RoomEditorV2CommandService.CheckMetadataFromView(row)) : null,
+        V2SceneSelectedItemKind.Connection => view?.Connections.ActiveRows.SingleOrDefault(x => x.EntityId == selected.EntityId) is { } row
+            ? new(selected.Kind, selected.EntityId, row.CanRemoveAnnotation, row.HasCompleteAnnotationCoordinates, null, null, row.EntityId) : null,
+        _ => null
+    };
+    private async Task HandleSceneActionAsync(Guid ownerRoomId, long ownerGeneration, V2SceneAction action)
+    {
+        if (!OwnsCurrentSceneOwner(ownerRoomId, ownerGeneration) || !SceneTableActionsAvailable || selectedSceneItem is not { } selected) return;
+        if (action == V2SceneAction.Dismiss)
+        {
+            if (placementRequest is not null) { placementRequest = null; sceneActionStatus = null; }
+            else ClearSceneTransientState();
+            await InvokeAsync(StateHasChanged); return;
+        }
+        var data = SelectedSceneData(selected);
+        if (data is null || sceneActionPending) return;
+        if (action == V2SceneAction.Rearm)
+        {
+            if (placementRequest is null) { placementRequest = new(selected.Kind == V2SceneSelectedItemKind.Subroom ? "subroom" : selected.Kind == V2SceneSelectedItemKind.Transition ? "exit" : selected.Kind == V2SceneSelectedItemKind.Check ? "check" : "connection", selected.Kind == V2SceneSelectedItemKind.Connection ? (Guid)data.Baseline : selected.EntityId, "scene-action-box", selected.Kind == V2SceneSelectedItemKind.Connection ? selected.EntityId : null); sceneActionStatus = null; await InvokeAsync(StateHasChanged); }
+            return;
+        }
+        if ((action == V2SceneAction.Reset && !(data.Kind is V2SceneSelectedItemKind.Transition or V2SceneSelectedItemKind.Check && Usable(data.GameX, data.GameY))) || (action == V2SceneAction.Clear && !data.IsValidGeometry) || (action == V2SceneAction.ToggleVisibility && !data.IsValidGeometry) || modalState is not null || meaningfulPendingDraft) return;
+        sceneActionPending = true; sceneActionStatus = null; await InvokeAsync(StateHasChanged);
+        await commandGate.WaitAsync();
+        try
+        {
+            if (!OwnsCurrentSceneOwner(ownerRoomId, ownerGeneration) || refresh?.CurrentRoomId != RoomId || SelectedSceneData(selected) is null || modalState is not null || meaningfulPendingDraft) return;
+            placementRequest = null;
+            var result = await ExecuteSceneActionCommandAsync(action, data);
+            if (result.committed) { SetRefreshDiagnostic(); sceneActionStatus = null; }
+            else if (result.unexpected) (Services.GetService(typeof(DiagnosticState)) as DiagnosticState)?.Show(result.message ?? "The scene annotation action failed unexpectedly.");
+            else sceneActionStatus = result.message ?? "The scene annotation action could not be completed.";
+        }
+        finally { sceneActionPending = false; commandGate.Release(); await InvokeAsync(StateHasChanged); }
+    }
+    private async Task<(bool committed, bool unexpected, string? message)> ExecuteSceneActionCommandAsync(V2SceneAction action, SceneActionData data)
+    {
+        if (data.Kind == V2SceneSelectedItemKind.Subroom)
+        {
+            var b = (SubroomDurableBaseline)data.Baseline;
+            var r = await refresh!.CommitSubroomCommandAsync(RoomId, action == V2SceneAction.Clear ? "subroom-annotation-clear" : data.Enabled ? "subroom-annotation-hide" : "subroom-annotation-show", () => action == V2SceneAction.Clear ? Commands.ClearSubroomAnnotationAsync(RoomId, b) : data.Enabled ? Commands.HideSubroomAnnotationAsync(RoomId, b) : Commands.ShowSubroomAnnotationAsync(RoomId, b), SceneRefreshImpact.SubroomGeometry);
+            return (r.Status == V2SubroomCommandStatus.Committed, r.Status == V2SubroomCommandStatus.Unexpected, r.Message);
+        }
+        if (data.Kind == V2SceneSelectedItemKind.Transition)
+        {
+            var b=(TransitionDurableBaseline)data.Baseline; var r=await refresh!.CommitTransitionCommandAsync(RoomId, action == V2SceneAction.Reset ? "transition-annotation-reset" : action == V2SceneAction.Clear ? "transition-annotation-clear" : data.Enabled ? "transition-annotation-hide" : "transition-annotation-show", () => action == V2SceneAction.Reset ? Commands.ResetTransitionAnnotationAsync(RoomId,b) : action == V2SceneAction.Clear ? Commands.ClearTransitionAnnotationAsync(RoomId,b) : data.Enabled ? Commands.RemoveTransitionAnnotationAsync(RoomId,b) : Commands.ShowTransitionAnnotationAsync(RoomId,b), true); return (r.Status==V2TransitionCommandStatus.Committed,r.Status==V2TransitionCommandStatus.Unexpected,r.Message);
+        }
+        if (data.Kind == V2SceneSelectedItemKind.Check)
+        {
+            var b=(CheckMetadataDurableBaseline)data.Baseline; var r=await refresh!.CommitCheckCommandAsync(RoomId, action == V2SceneAction.Reset ? "check-annotation-reset" : action == V2SceneAction.Clear ? "check-annotation-clear" : data.Enabled ? "check-annotation-hide" : "check-annotation-show", () => action == V2SceneAction.Reset ? Commands.ResetCheckAnnotationAsync(RoomId,b) : action == V2SceneAction.Clear ? Commands.ClearCheckAnnotationAsync(RoomId,b) : data.Enabled ? Commands.RemoveCheckAnnotationAsync(RoomId,b) : Commands.ShowCheckAnnotationAsync(RoomId,b), true); return (r.Status==V2CheckCommandStatus.Committed,r.Status==V2CheckCommandStatus.Unexpected,r.Message);
+        }
+        var id=(Guid)data.Baseline; var c=await refresh!.CommitConnectionCommandAsync(RoomId, action == V2SceneAction.Clear ? "connection-annotation-clear" : data.Enabled ? "connection-annotation-hide" : "connection-annotation-show", () => action == V2SceneAction.Clear ? Commands.ClearConnectionAnnotationAsync(RoomId,id) : data.Enabled ? Commands.DisableConnectionAnnotationAsync(RoomId,id) : Commands.ShowConnectionAnnotationAsync(RoomId,id), true); return (c.Status==V2ConnectionCommandStatus.Committed,c.Status==V2ConnectionCommandStatus.Unexpected,c.Message);
+    }
+    private Task HandleSubroomAnnotationAsync(SubroomDurableBaseline baseline, string initiatorId)
+    {
+        if (!SceneTableActionsAvailable || modalState is not null || meaningfulPendingDraft || view?.Subrooms.ActiveRows.Any(x => x.EntityId == baseline.EntityId) != true) return Task.CompletedTask;
+        selectedSceneItem = new(V2SceneSelectedItemKind.Subroom, baseline.EntityId);
+        if (view.Scene!.Frames.Any(x => x.EntityId == baseline.EntityId)) placementRequest = null;
+        else if (!baseline.EnableAnnotation && HasUsableRectangle(baseline)) { _ = ShowAndSelectSubroomAsync(baseline); }
+        else placementRequest = new("subroom", baseline.EntityId, initiatorId);
+        return InvokeAsync(StateHasChanged);
+    }
+    private async Task HandleTransitionAnnotationAsync(TransitionDurableBaseline baseline, string initiatorId)
+    {
+        if (!SceneTableActionsAvailable || modalState is not null || meaningfulPendingDraft || refresh?.CurrentRoomId != RoomId || view?.Transitions.ActiveRows.SingleOrDefault(x => x.EntityId == baseline.EntityId) is not { } row) return;
+        if (view!.Scene!.Markers.Any(x => x.Kind == "exit" && x.EntityId == baseline.EntityId)) { selectedSceneItem = new(V2SceneSelectedItemKind.Transition, baseline.EntityId); placementRequest = null; await InvokeAsync(StateHasChanged); return; }
+        if (HasUsablePosition(row.AnnotationSceneUnitX, row.AnnotationSceneUnitY) && !row.EnableAnnotation)
+        {
+            var outcome = await refresh.CommitTransitionCommandAsync(RoomId, "transition-annotation-show-and-select", () => Commands.ShowAndSelectTransitionAnnotationAsync(RoomId, baseline), true);
+            if (outcome.Status == V2TransitionCommandStatus.Committed) { selectedSceneItem = new(V2SceneSelectedItemKind.Transition, baseline.EntityId); placementRequest = null; SetRefreshDiagnostic(); await InvokeAsync(StateHasChanged); }
+            return;
+        }
+        selectedSceneItem = new(V2SceneSelectedItemKind.Transition, baseline.EntityId); placementRequest = new("exit", baseline.EntityId, initiatorId); await InvokeAsync(StateHasChanged);
+    }
+    private async Task HandleCheckAnnotationAsync(CheckMetadataDurableBaseline baseline, string initiatorId)
+    {
+        if (!SceneTableActionsAvailable || modalState is not null || meaningfulPendingDraft || refresh?.CurrentRoomId != RoomId || view?.Checks.ActiveRows.SingleOrDefault(x => x.EntityId == baseline.EntityId) is not { } row) return;
+        if (view!.Scene!.Markers.Any(x => x.Kind == "check" && x.EntityId == baseline.EntityId)) { selectedSceneItem = new(V2SceneSelectedItemKind.Check, baseline.EntityId); placementRequest = null; await InvokeAsync(StateHasChanged); return; }
+        if (HasUsablePosition(row.AnnotationSceneUnitX, row.AnnotationSceneUnitY) && !row.EnableAnnotation)
+        {
+            var outcome = await refresh.CommitCheckCommandAsync(RoomId, "check-annotation-show-and-select", () => Commands.ShowAndSelectCheckAnnotationAsync(RoomId, baseline), true);
+            if (outcome.Status == V2CheckCommandStatus.Committed) { selectedSceneItem = new(V2SceneSelectedItemKind.Check, baseline.EntityId); placementRequest = null; SetRefreshDiagnostic(); await InvokeAsync(StateHasChanged); }
+            return;
+        }
+        selectedSceneItem = new(V2SceneSelectedItemKind.Check, baseline.EntityId); placementRequest = new("check", baseline.EntityId, initiatorId); await InvokeAsync(StateHasChanged);
+    }
+    private async Task HandleConnectionAnnotationAsync(ConnectionDurableBaseline baseline, string initiatorId)
+    {
+        if (!SceneTableActionsAvailable || modalState is not null || meaningfulPendingDraft || refresh?.CurrentRoomId != RoomId || view?.Connections.ActiveRows.SingleOrDefault(x => x.EntityId == baseline.EntityId) is not { } row || (!row.CanPlaceAnnotation && !row.CanRemoveAnnotation)) return;
+        var marker = view.Connections.ActiveRows.Where(x => string.Equals(x.Alias.Trim(), row.Alias.Trim(), StringComparison.OrdinalIgnoreCase)).OrderBy(x => x.SortOrder).ThenBy(x => x.EntityId).First();
+        if (view!.Scene!.Markers.Any(x => x.Kind == "connection" && x.EntityId == marker.EntityId)) { selectedSceneItem = new(V2SceneSelectedItemKind.Connection, marker.EntityId); placementRequest = null; await InvokeAsync(StateHasChanged); return; }
+        if (row.CanPlaceAnnotation && row.HasCompleteAnnotationCoordinates)
+        {
+            var outcome = await refresh.CommitConnectionCommandAsync(RoomId, "connection-annotation-show-and-select", () => Commands.ShowAndSelectConnectionAnnotationAsync(RoomId, baseline.EntityId), true);
+            if (outcome.Status == V2ConnectionCommandStatus.Committed) { selectedSceneItem = new(V2SceneSelectedItemKind.Connection, marker.EntityId); placementRequest = null; SetRefreshDiagnostic(); await InvokeAsync(StateHasChanged); }
+            return;
+        }
+        selectedSceneItem = new(V2SceneSelectedItemKind.Connection, marker.EntityId); placementRequest = new("connection", baseline.EntityId, initiatorId, marker.EntityId); await InvokeAsync(StateHasChanged);
+    }
+    private Task RequestSubroomGeometryAsync(SubroomDurableBaseline baseline, string initiatorId)
+    {
+        if (!disposed && modalState is null && !meaningfulPendingDraft && view?.Subrooms.ActiveRows.Any(x => x.EntityId == baseline.EntityId) == true)
+        {
+            modalState = new(new V2SubroomGeometryDialogView(baseline.FriendlyName, baseline.SceneUnitX, baseline.SceneUnitY, baseline.SceneUnitWidth, baseline.SceneUnitHeight), initiatorId, null, V2ModalRuntimeStage.ProposalOpen,
+                SubroomGeometryOperation: new(baseline, new(baseline.FriendlyName, baseline.SceneUnitX, baseline.SceneUnitY, baseline.SceneUnitWidth, baseline.SceneUnitHeight)));
+            modalFocusRequested = true;
+        }
+        return InvokeAsync(StateHasChanged);
+    }
+    private Task RequestSubroomRemovalAsync(SubroomDurableBaseline baseline, string initiatorId)
+    {
+        if (!disposed && modalState is null && !meaningfulPendingDraft && baseline.SceneUnitX is not null && view?.Subrooms.ActiveRows.Any(x => x.EntityId == baseline.EntityId) == true)
+        {
+            modalState = new(new V2SubroomRemoveDialogView(baseline.FriendlyName), initiatorId, null, V2ModalRuntimeStage.ProposalOpen, SubroomRemoveOperation: new(baseline));
+            modalFocusRequested = true;
+        }
+        return InvokeAsync(StateHasChanged);
+    }
+    private Task SetSubroomGeometryDraft(V2SubroomGeometryDialogView draft)
+    {
+        if (modalState?.SubroomGeometryOperation is { } operation) modalState = modalState with { Content = draft, SubroomGeometryOperation = operation with { Draft = draft } };
+        return Task.CompletedTask;
+    }
+    private async Task RequestSceneDimensionsAsync()
+    {
+        if (disposed || modalState is not null) return;
+        await commandGate.WaitAsync();
+        try
+        {
+            if (meaningfulPendingDraft || refresh?.CurrentRoomId != RoomId || view?.Header.IsArchived != false) return;
+            var header = view.Header;
+            var draft = new V2SceneDimensionsDialogView(FormatDimension(header.SceneUnitWidth), FormatDimension(header.SceneUnitHeight));
+            modalState = new(draft, "room-scene-dimensions", null, V2ModalRuntimeStage.ProposalOpen,
+                SceneDimensionsOperation: new(new(header.RoomId, header.UpdatedUtc, header.SceneUnitWidth, header.SceneUnitHeight), draft));
+            modalFocusRequested = true; StateHasChanged();
+        }
+        finally { commandGate.Release(); }
+    }
+    private static string FormatDimension(double? value) => value?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "";
+    private Task SetSceneDimensionsDraft(V2SceneDimensionsDialogView draft)
+    {
+        if (modalState is { Stage: V2ModalRuntimeStage.ProposalOpen, SceneDimensionsOperation: { } operation })
+            modalState = modalState with { Content = draft, SceneDimensionsOperation = operation with { Draft = draft } };
+        return Task.CompletedTask;
+    }
+    private async Task RequestSceneImageCaptureAsync()
+    {
+        if (disposed || modalState is not null || meaningfulPendingDraft || refresh?.CurrentRoomId != RoomId || view?.Header.IsArchived != false) return;
+        await commandGate.WaitAsync();
+        try
+        {
+            if (disposed || modalState is not null || meaningfulPendingDraft || refresh?.CurrentRoomId != RoomId || view?.Header.IsArchived != false) return;
+            var sourceRoom = RoomId;
+            var outcome = await Commands.PrepareSceneImageCaptureAsync(sourceRoom);
+            if (disposed || RoomId != sourceRoom || refresh?.CurrentRoomId != sourceRoom) return;
+            if (outcome.Status != V2SceneImageCaptureCommandStatus.Committed || outcome.Draft is not { } draft)
+            {
+                if (outcome.Status == V2SceneImageCaptureCommandStatus.Unexpected) Diagnostics.Show(outcome.Message ?? "Scene image capture preparation failed unexpectedly.");
+                else sceneActionStatus = outcome.Message ?? "Scene image capture is unavailable.";
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+            var scene = view?.Scene;
+            var preview = scene is { HasValidBounds: true, SceneUnitWidth: double width, SceneUnitHeight: double height }
+                ? new V2SceneImageCapturePreviewView(width, height, scene.Frames, scene.Markers) : null;
+            var summary = outcome.Message ?? "Scene image capture is ready.";
+            var scaleX = draft.ScaleXPercent.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var scaleY = draft.ScaleYPercent.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var panX = draft.PanXPercent.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var panY = draft.PanYPercent.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var content = new V2SceneImageCaptureDialogView(summary, scaleX, scaleY, panX, panY, true,
+                view?.Scene?.Image?.HasTransform == true ? "Apply recapture" : "Apply capture", preview);
+            sceneActionStatus = outcome.Message;
+            modalState = new(content, "scene-image-capture", null, V2ModalRuntimeStage.ProposalOpen, SceneImageCaptureOperation: new(content));
+            modalFocusRequested = true;
+            await InvokeAsync(StateHasChanged);
+        }
+        finally { commandGate.Release(); }
+    }
+    private async Task NavigateLinkedMapRoomAsync(AreaMapSurface.LinkedMapRoomIntent intent) => _ = await RequestLinkedMapRoomNavigationAsync(intent);
+    private Task SetRoomMapLinkModalStateAsync(AreaMapPanePresentation.RoomMapLinkModalStateIntent intent)
+    {
+        if (disposed) return Task.CompletedTask;
+        if (intent.State == AreaMapPanePresentation.RoomMapLinkModalState.Closed)
+        {
+            if (roomMapLinkModalOwner == intent.RoomId) { roomMapLinkModalOwner = null; roomMapLinkModalState = AreaMapPanePresentation.RoomMapLinkModalState.Closed; }
+        }
+        else if (displayedRoomId == intent.RoomId && RoomId == intent.RoomId && refresh?.CurrentRoomId == intent.RoomId)
+        {
+            roomMapLinkModalOwner = intent.RoomId; roomMapLinkModalState = intent.State;
+        }
+        return Task.CompletedTask;
+    }
+    private async Task ReloadAreaMapAfterMapLinkChangeAsync()
+    {
+        if (disposed || refresh?.CurrentRoomId != RoomId || view?.Header.IsArchived != false) return;
+        var sourceRoomId = RoomId; var sourceGeneration = refresh.RefreshGeneration;
+        if (mapLoads is not null && await mapLoads.LoadAsync(sourceRoomId, null, sourceGeneration, OwnsMapLoad) && OwnsMapLoad(sourceRoomId, sourceGeneration))
+            await InvokeAsync(StateHasChanged);
+    }
+    private Task SetSceneImageCaptureDraft(V2SceneImageCaptureDialogView draft)
+    {
+        if (modalState?.SceneImageCaptureOperation is { } operation && modalState.Stage == V2ModalRuntimeStage.ProposalOpen) modalState = modalState with { Content = draft, SceneImageCaptureOperation = operation with { Draft = draft } };
+        return Task.CompletedTask;
+    }
+    private async Task ResetSceneImageCaptureEstimateAsync()
+    {
+        if (disposed || modalState is not { Stage: V2ModalRuntimeStage.ProposalOpen, SceneImageCaptureOperation: { } operation } state) return;
+        var sourceRoom = RoomId;
+        var outcome = await Commands.ResetSceneImageCaptureEstimateAsync(sourceRoom);
+        if (disposed || RoomId != sourceRoom || modalState != state) return;
+        if (outcome.Status == V2SceneImageCaptureCommandStatus.Committed && outcome.Draft is { } estimate)
+        {
+            var fresh = operation.Draft with { AvailabilitySummary = outcome.Message ?? "Scene image capture is ready.", IsAvailable = true, ScaleXPercent = estimate.ScaleXPercent.ToString(System.Globalization.CultureInfo.InvariantCulture), ScaleYPercent = estimate.ScaleYPercent.ToString(System.Globalization.CultureInfo.InvariantCulture), PanXPercent = estimate.PanXPercent.ToString(System.Globalization.CultureInfo.InvariantCulture), PanYPercent = estimate.PanYPercent.ToString(System.Globalization.CultureInfo.InvariantCulture), BrowserResetVersion = operation.Draft.BrowserResetVersion + 1 };
+            sceneActionStatus = outcome.Message;
+            modalState = state with { Content = fresh, SceneImageCaptureOperation = operation with { Draft = fresh } };
+        }
+        else
+        {
+            var failed = operation.Draft with { AvailabilitySummary = outcome.Message ?? "Scene image capture estimate failed.", IsAvailable = false };
+            sceneActionStatus = failed.AvailabilitySummary;
+            modalState = state with { Content = failed, SceneImageCaptureOperation = operation with { Draft = failed } };
+        }
+        StateHasChanged();
+    }
+    private Task<V2CheckCommandOutcome> SaveCheck(CheckDurableBaseline b, CheckDraft d) => ExecuteCheck(() => Commands.SaveCheckAsync(RoomId, b, d), sceneRelevant: SceneRefreshImpact.CheckSave(b, d));
+    private Task<V2CheckCommandOutcome> CreateCheck(CheckDraft d) => ExecuteCheck(() => Commands.CreateCheckAsync(RoomId, d), true, SceneRefreshImpact.Create);
+    private Task<V2CheckCommandOutcome> ReorderCheck(Guid id, int index) => ExecuteCheck(() => Commands.ReorderCheckAsync(RoomId, id, index), sceneRelevant: SceneRefreshImpact.Reorder);
+    private Task<V2CheckCommandOutcome> SetCheckArchive(Guid id, bool archived) => ExecuteCheck(() => Commands.SetCheckArchiveAsync(RoomId, id, archived), sceneRelevant: SceneRefreshImpact.ArchiveRestoreDelete);
+    public async Task<V2CheckCommandOutcome> RequestCheckMetadataAsync(CheckMetadataDurableBaseline baseline, string initiatorId)
+    {
+        if (disposed || modalState is not null || string.IsNullOrWhiteSpace(initiatorId)) return new(V2CheckCommandStatus.ExpectedFailure, "Close the open dialog first.");
+        await commandGate.WaitAsync();
+        try
+        {
+            if (meaningfulPendingDraft) return new(V2CheckCommandStatus.ExpectedFailure, "Finish or clear the pending child row first.");
+            var row = view?.Checks.ActiveRows.SingleOrDefault(x => x.EntityId == baseline.EntityId);
+            if (refresh?.CurrentRoomId != RoomId || row is null) return new(V2CheckCommandStatus.Missing, "This check is no longer active in the current room.");
+            var draft = retainedCheckMetadataDrafts.TryGetValue(baseline.EntityId, out var retained) ? retained : new CheckInGameMetadataDraft(baseline.InGameId, baseline.InGamePositionX, baseline.InGamePositionY, baseline.InGamePositionZ, baseline.LocalPositionX, baseline.LocalPositionY, baseline.LocalPositionZ, baseline.AnnotationSceneUnitX, baseline.AnnotationSceneUnitY);
+            modalState = new(new V2InGameMetadataDialogView("check", draft.InGameId, draft.InGamePositionX, draft.InGamePositionY, draft.InGamePositionZ, draft.LocalPositionX, draft.LocalPositionY, draft.LocalPositionZ, draft.AnnotationSceneUnitX, draft.AnnotationSceneUnitY, row.InGameIdSeverity), initiatorId, null, V2ModalRuntimeStage.ProposalOpen, CheckMetadataOperation: new(baseline, draft));
+            modalFocusRequested = true; StateHasChanged(); return new(V2CheckCommandStatus.Committed);
+        }
+        finally { commandGate.Release(); }
+    }
+    private async Task ArmTransitionPlacementAsync(TransitionDurableBaseline baseline, string initiatorId)
+    {
+        if (disposed || modalState is not null || meaningfulPendingDraft || refresh?.CurrentRoomId != RoomId || view?.Transitions.ActiveRows.SingleOrDefault(x => x.EntityId == baseline.EntityId) is not { } row) return;
+        if (!baseline.EnableAnnotation && HasUsablePosition(baseline.AnnotationSceneUnitX, baseline.AnnotationSceneUnitY))
+        {
+            var outcome = await refresh.CommitTransitionCommandAsync(RoomId, "transition-annotation-show", () => Commands.ShowTransitionAnnotationAsync(RoomId, baseline), true);
+            if (outcome.Status == V2TransitionCommandStatus.Committed) { selectedSceneItem = new(V2SceneSelectedItemKind.Transition, baseline.EntityId); SetRefreshDiagnostic(); await InvokeAsync(StateHasChanged); }
+            return;
+        }
+        selectedSceneItem = new(V2SceneSelectedItemKind.Transition, baseline.EntityId);
+        placementRequest = new("exit", baseline.EntityId, initiatorId);
+        await InvokeAsync(StateHasChanged);
+    }
+    private async Task ArmCheckPlacementAsync(CheckMetadataDurableBaseline baseline, string initiatorId)
+    {
+        if (disposed || modalState is not null || meaningfulPendingDraft || refresh?.CurrentRoomId != RoomId || view?.Checks.ActiveRows.Any(x => x.EntityId == baseline.EntityId) != true) return;
+        if (!baseline.EnableAnnotation && HasUsablePosition(baseline.AnnotationSceneUnitX, baseline.AnnotationSceneUnitY))
+        {
+            var outcome = await refresh.CommitCheckCommandAsync(RoomId, "check-annotation-show", () => Commands.ShowCheckAnnotationAsync(RoomId, baseline), true);
+            if (outcome.Status == V2CheckCommandStatus.Committed) { selectedSceneItem = new(V2SceneSelectedItemKind.Check, baseline.EntityId); SetRefreshDiagnostic(); await InvokeAsync(StateHasChanged); }
+            return;
+        }
+        selectedSceneItem = new(V2SceneSelectedItemKind.Check, baseline.EntityId);
+        placementRequest = new("check", baseline.EntityId, initiatorId);
+        await InvokeAsync(StateHasChanged);
+    }
+    private async Task RequestTransitionAnnotationRemovalAsync(TransitionDurableBaseline baseline, string initiatorId)
+    {
+        if (disposed || modalState is not null || meaningfulPendingDraft || refresh?.CurrentRoomId != RoomId) return;
+        var row = view?.Transitions.ActiveRows.SingleOrDefault(x => x.EntityId == baseline.EntityId);
+        if (row is null || !baseline.EnableAnnotation) return;
+        modalState = new(new V2DirectAnnotationRemoveDialogView("transition", row.FriendlyName), initiatorId, null, V2ModalRuntimeStage.ProposalOpen,
+            DirectAnnotationRemoveOperation: new("transition", baseline.EntityId, baseline)); modalFocusRequested = true; await InvokeAsync(StateHasChanged);
+    }
+    private async Task RequestCheckAnnotationRemovalAsync(CheckMetadataDurableBaseline baseline, string initiatorId)
+    {
+        if (disposed || modalState is not null || meaningfulPendingDraft || refresh?.CurrentRoomId != RoomId) return;
+        var row = view?.Checks.ActiveRows.SingleOrDefault(x => x.EntityId == baseline.EntityId);
+        if (row is null || !baseline.EnableAnnotation) return;
+        modalState = new(new V2DirectAnnotationRemoveDialogView("check", row.FriendlyName), initiatorId, null, V2ModalRuntimeStage.ProposalOpen,
+            DirectAnnotationRemoveOperation: new("check", baseline.EntityId, CheckBaseline: baseline)); modalFocusRequested = true; await InvokeAsync(StateHasChanged);
+    }
+    private Task ArmConnectionPlacementAsync(ConnectionDurableBaseline baseline, string initiatorId)
+    {
+        var row = view?.Connections.ActiveRows.SingleOrDefault(x => x.EntityId == baseline.EntityId);
+        if (!disposed && modalState is null && !meaningfulPendingDraft && row is not null)
+        {
+            connectionPlacementOutcome = null;
+            // The scene loader renders a pathway marker from its lowest ordered
+            // row. Carry that canonical identity through an arm from either
+            // reciprocal row, including while the disabled group has no marker.
+            var marker = view?.Connections.ActiveRows
+                .Where(x => string.Equals(x.Alias.Trim(), row.Alias.Trim(), StringComparison.OrdinalIgnoreCase))
+                .OrderBy(x => x.SortOrder).ThenBy(x => x.EntityId)
+                .FirstOrDefault();
+            if (marker is null) return Task.CompletedTask;
+            selectedSceneItem = new(V2SceneSelectedItemKind.Connection, marker.EntityId);
+            placementRequest = new("connection", baseline.EntityId, initiatorId, marker.EntityId);
+        }
+        return InvokeAsync(StateHasChanged);
+    }
+    private async Task RequestConnectionAnnotationDisableAsync(ConnectionDurableBaseline baseline, string initiatorId)
+    {
+        if (disposed || modalState is not null || string.IsNullOrWhiteSpace(initiatorId)) return;
+        await commandGate.WaitAsync();
+        try
+        {
+            if (meaningfulPendingDraft || refresh?.CurrentRoomId != RoomId) return;
+            var row = view?.Connections.ActiveRows.SingleOrDefault(x => x.EntityId == baseline.EntityId);
+            if (row is null || !row.CanRemoveAnnotation) return;
+            modalState = new(new V2ConnectionRemoveDialogView(row.Alias), initiatorId, null, V2ModalRuntimeStage.ProposalOpen,
+                ConnectionAnnotationDisableOperation: new(baseline.EntityId));
+            modalFocusRequested = true;
+            StateHasChanged();
+        }
+        finally { commandGate.Release(); }
+    }
+    private async Task<bool> CommitScenePlacementAsync(Guid ownerRoomId, long ownerGeneration, SceneAnnotationPlacementRequest request, double x, double y)
+    {
+        if (!OwnsCurrentSceneOwner(ownerRoomId, ownerGeneration) || placementRequest != request || !SelectionMatches(request) || refresh?.CurrentRoomId != RoomId) return false;
+        await commandGate.WaitAsync();
+        try
+        {
+            if (placementRequest != request || !SelectionMatches(request)) return false;
+            if (request.Kind == "exit")
+            {
+                var row = view?.Transitions.ActiveRows.SingleOrDefault(x => x.EntityId == request.EntityId);
+                if (row is null || !AdmitsCurrentSceneCommandAfterGate(ownerRoomId, ownerGeneration, request.Kind, request.EntityId, requiresRenderedTarget: false)) return false;
+                var result = await refresh!.CommitTransitionCommandAsync(RoomId, "transition-annotation-placement", () => Commands.PlaceTransitionAnnotationAsync(RoomId, RoomEditorV2CommandService.TransitionFromView(row), x, y), true);
+                if (result.Status != V2TransitionCommandStatus.Committed) return false;
+            }
+            else if (request.Kind == "check")
+            {
+                var row = view?.Checks.ActiveRows.SingleOrDefault(x => x.EntityId == request.EntityId);
+                if (row is null || !AdmitsCurrentSceneCommandAfterGate(ownerRoomId, ownerGeneration, request.Kind, request.EntityId, requiresRenderedTarget: false)) return false;
+                var result = await refresh!.CommitCheckCommandAsync(RoomId, "check-annotation-placement", () => Commands.PlaceCheckAnnotationAsync(RoomId, RoomEditorV2CommandService.CheckMetadataFromView(row), x, y), true);
+                if (result.Status != V2CheckCommandStatus.Committed) return false;
+            }
+            else if (request.Kind == "connection")
+            {
+                var row = view?.Connections.ActiveRows.SingleOrDefault(x => x.EntityId == request.EntityId);
+                if (row is null || !AdmitsCurrentSceneCommandAfterGate(ownerRoomId, ownerGeneration, request.Kind, request.EntityId, requiresRenderedTarget: false)) return false;
+                var result = await refresh!.CommitConnectionCommandAsync(RoomId, "connection-annotation-placement", () => Commands.PlaceConnectionAnnotationAsync(RoomId, row.EntityId, x, y), true);
+                if (result.Status != V2ConnectionCommandStatus.Committed)
+                {
+                    if (result.Status == V2ConnectionCommandStatus.ExpectedFailure)
+                    {
+                        placementRequest = null;
+                        connectionPlacementOutcome = result.Message ?? "Connection annotation is already enabled.";
+                        pendingModalFocus = new(request.InitiatorId, null, V2ModalFocusOutcome.Initiator);
+                        await InvokeAsync(StateHasChanged);
+                    }
+                    return false;
+                }
+            }
+            else return false;
+            placementRequest = null; SetRefreshDiagnostic();
+            await InvokeAsync(StateHasChanged);
+            return true;
+        }
+        finally { commandGate.Release(); }
+    }
+    private async Task<bool> CommitSubroomGeometryAsync(Guid ownerRoomId, long ownerGeneration, Guid entityId, double x, double y, double width, double height)
+    {
+        var initialOrReplacementPlacement = placementRequest is { Kind: "subroom", EntityId: var armedId } && armedId == entityId && SelectionMatches(placementRequest);
+        if (!AdmitsCurrentSceneCommandAfterGate(ownerRoomId, ownerGeneration, "subroom", entityId, requiresRenderedTarget: !initialOrReplacementPlacement)) return false;
+        await commandGate.WaitAsync();
+        try
+        {
+            var row = view?.Subrooms.ActiveRows.SingleOrDefault(x => x.EntityId == entityId);
+            var coordinator = refresh;
+            initialOrReplacementPlacement = placementRequest is { Kind: "subroom", EntityId: var currentArmedId } && currentArmedId == entityId && SelectionMatches(placementRequest);
+            if (row is null || coordinator is null || !AdmitsCurrentSceneCommandAfterGate(ownerRoomId, ownerGeneration, "subroom", entityId, requiresRenderedTarget: !initialOrReplacementPlacement)) return false;
+            var result = await coordinator.CommitSubroomCommandAsync(RoomId, "subroom-geometry", () => Commands.SaveSubroomGeometryAsync(RoomId, RoomEditorV2CommandService.FromView(row), x, y, width, height), SceneRefreshImpact.SubroomGeometry);
+            if (result.Status != V2SubroomCommandStatus.Committed) return false;
+            placementRequest = null;
+            selectedSceneItem = new(V2SceneSelectedItemKind.Subroom, entityId);
+            SetRefreshDiagnostic(); await InvokeAsync(StateHasChanged); return true;
+        }
+        finally { commandGate.Release(); }
+    }
+    private async Task<bool> CancelScenePlacementAsync(Guid ownerRoomId, long ownerGeneration, SceneAnnotationPlacementRequest request)
+    {
+        if (!OwnsCurrentSceneOwner(ownerRoomId, ownerGeneration) || placementRequest != request) return false;
+        placementRequest = null; pendingModalFocus = new(request.InitiatorId, null, V2ModalFocusOutcome.Initiator);
+        await InvokeAsync(StateHasChanged);
+        return true;
+    }
+    private Task SetSceneSelectionAsync(V2SceneSelectionCallback callback)
+    {
+        if (disposed || callback.RoomId != RoomId || callback.OwnerGeneration != sceneOwnerGeneration) return Task.CompletedTask;
+        var selection = callback.Selection;
+        var changed = selectedSceneItem != selection;
+        selectedSceneItem = selection;
+        if (changed || selection is null) placementRequest = null;
+        return InvokeAsync(StateHasChanged);
+    }
+    private Task SetSceneOwnerAsync(Guid ownerRoomId, long ownerGeneration)
+    {
+        // A same-room pane replacement can mount before an older pane's delayed
+        // lifecycle continuation. Owner generations are monotonic, so an older
+        // mount must not reopen admission for its later browser callbacks.
+        if (!disposed && ownerRoomId == RoomId && ownerGeneration > sceneOwnerGeneration) { sceneOwnerGeneration = ownerGeneration; return InvokeAsync(StateHasChanged); }
+        return Task.CompletedTask;
+    }
+    private bool OwnsCurrentSceneOwner(Guid ownerRoomId, long ownerGeneration) => !disposed && ownerRoomId == RoomId && ownerGeneration == sceneOwnerGeneration;
+    // Scene callbacks can wait behind another durable command. Recheck this one
+    // page-owned boundary after acquiring that gate, rather than letting each
+    // callback maintain a divergent stale-owner guard.
+    private bool AdmitsCurrentSceneCommandAfterGate(Guid ownerRoomId, long ownerGeneration, string kind, Guid entityId, bool requiresRenderedTarget)
+        => OwnsCurrentSceneOwner(ownerRoomId, ownerGeneration)
+           && refresh?.CurrentRoomId == RoomId
+           && modalState is null
+           && !meaningfulPendingDraft
+           && (!requiresRenderedTarget || IsSelectedRenderable(kind, entityId));
+    private void ClearSceneTransientState() { selectedSceneItem = null; placementRequest = null; }
+    private bool SelectionMatches(SceneAnnotationPlacementRequest request)
+    {
+        if (selectedSceneItem is not { } selected) return false;
+        var kind = request.Kind switch { "subroom" => V2SceneSelectedItemKind.Subroom, "exit" => V2SceneSelectedItemKind.Transition, "check" => V2SceneSelectedItemKind.Check, "connection" => V2SceneSelectedItemKind.Connection, _ => (V2SceneSelectedItemKind?)null };
+        return kind.HasValue && selected.Kind == kind.Value && selected.EntityId == (request.Kind == "connection" ? request.GroupMarkerEntityId : request.EntityId);
+    }
+    // Imported game position is metadata only.  A scene action may never infer a
+    // renderable marker from it; reset-to-game is the explicit durable bridge.
+    private static bool HasUsablePosition(double? annotationX, double? annotationY)
+        => Usable(annotationX, annotationY);
+    private static bool HasUsableRectangle(SubroomDurableBaseline value) => value.SceneUnitX is double x && value.SceneUnitY is double y && value.SceneUnitWidth is double width && value.SceneUnitHeight is double height && double.IsFinite(x) && double.IsFinite(y) && double.IsFinite(width) && double.IsFinite(height) && width > 0 && height > 0;
+    private async Task ShowAndSelectSubroomAsync(SubroomDurableBaseline baseline)
+    {
+        var result = await refresh!.CommitSubroomCommandAsync(RoomId, "subroom-annotation-show-and-select", () => Commands.ShowSubroomAnnotationAsync(RoomId, baseline), SceneRefreshImpact.SubroomGeometry);
+        if (result.Status == V2SubroomCommandStatus.Committed) { selectedSceneItem = new(V2SceneSelectedItemKind.Subroom, baseline.EntityId); placementRequest = null; SetRefreshDiagnostic(); await InvokeAsync(StateHasChanged); }
+    }
+    private static bool Usable(double? x, double? y) => x is double a && y is double b && double.IsFinite(a) && double.IsFinite(b);
+    private async Task<bool> CommitSceneMarkerDragAsync(Guid ownerRoomId, long ownerGeneration, string kind, Guid entityId, double x, double y)
+    {
+        if (!OwnsCurrentSceneOwner(ownerRoomId, ownerGeneration) || refresh?.CurrentRoomId != RoomId || modalState is not null || meaningfulPendingDraft || !IsSelectedRenderable(kind, entityId)) return false;
+        await commandGate.WaitAsync();
+        try
+        {
+            if (kind == "exit") { var row=view?.Transitions.ActiveRows.SingleOrDefault(x=>x.EntityId==entityId); if(row is null||!row.EnableAnnotation||!HasUsablePosition(row.AnnotationSceneUnitX,row.AnnotationSceneUnitY)||!AdmitsCurrentSceneCommandAfterGate(ownerRoomId, ownerGeneration, kind, entityId, requiresRenderedTarget: true))return false; var result=await refresh!.CommitTransitionCommandAsync(RoomId,"transition-annotation-drag",()=>Commands.MoveTransitionAnnotationAsync(RoomId,RoomEditorV2CommandService.TransitionFromView(row),x,y),true); if(result.Status!=V2TransitionCommandStatus.Committed)return false; }
+            else if (kind == "check") { var row=view?.Checks.ActiveRows.SingleOrDefault(x=>x.EntityId==entityId); if(row is null||!row.EnableAnnotation||!HasUsablePosition(row.AnnotationSceneUnitX,row.AnnotationSceneUnitY)||!AdmitsCurrentSceneCommandAfterGate(ownerRoomId, ownerGeneration, kind, entityId, requiresRenderedTarget: true))return false; var result=await refresh!.CommitCheckCommandAsync(RoomId,"check-annotation-drag",()=>Commands.MoveCheckAnnotationAsync(RoomId,RoomEditorV2CommandService.CheckMetadataFromView(row),x,y),true); if(result.Status!=V2CheckCommandStatus.Committed)return false; }
+            else if (kind == "connection") { var row=view?.Connections.ActiveRows.SingleOrDefault(x=>x.EntityId==entityId); if(row is null || !AdmitsCurrentSceneCommandAfterGate(ownerRoomId, ownerGeneration, kind, entityId, requiresRenderedTarget: true)) return false; var result=await refresh!.CommitConnectionCommandAsync(RoomId,"connection-annotation-move",()=>Commands.MoveConnectionAnnotationAsync(RoomId,entityId,x,y),true); if(result.Status!=V2ConnectionCommandStatus.Committed)return false; }
+            else return false;
+            SetRefreshDiagnostic(); await InvokeAsync(StateHasChanged); return true;
+        }
+        finally { commandGate.Release(); }
+    }
+    private async Task<bool> CommitSceneNudgeAsync(Guid ownerRoomId, long ownerGeneration, string kind, Guid entityId, double x, double y)
+    {
+        if (!IsSelectedRenderable(kind, entityId)) return false;
+        if (kind == "subroom")
+        {
+            var row = view?.Subrooms.ActiveRows.SingleOrDefault(value => value.EntityId == entityId);
+            return row is not null && row.SceneUnitWidth is double width && row.SceneUnitHeight is double height
+                && await CommitSubroomGeometryAsync(ownerRoomId, ownerGeneration, entityId, x, y, width, height);
+        }
+        return await CommitSceneMarkerDragAsync(ownerRoomId, ownerGeneration, kind, entityId, x, y);
+    }
+    private bool IsSelectedRenderable(string kind, Guid entityId)
+    {
+        var expected = kind switch { "subroom" => V2SceneSelectedItemKind.Subroom, "exit" => V2SceneSelectedItemKind.Transition, "check" => V2SceneSelectedItemKind.Check, "connection" => V2SceneSelectedItemKind.Connection, _ => (V2SceneSelectedItemKind?)null };
+        return expected is not null && selectedSceneItem is { } selected && selected.Kind == expected && selected.EntityId == entityId && view?.Scene is { } scene && (kind == "subroom" ? scene.Frames.Any(x => x.EntityId == entityId) : scene.Markers.Any(x => x.EntityId == entityId && x.Kind == kind));
+    }
+    private Task SetCheckMetadataDraft(CheckInGameMetadataDraft draft)
+    {
+        if (modalState?.CheckMetadataOperation is { } operation && modalState.Stage == V2ModalRuntimeStage.ProposalOpen)
+            modalState = modalState with { Content = new V2InGameMetadataDialogView("check", draft.InGameId, draft.InGamePositionX, draft.InGamePositionY, draft.InGamePositionZ, draft.LocalPositionX, draft.LocalPositionY, draft.LocalPositionZ, draft.AnnotationSceneUnitX, draft.AnnotationSceneUnitY, (modalState.Content as V2InGameMetadataDialogView)?.InGameIdSeverity ?? V2Severity.Neutral), CheckMetadataOperation = operation with { Draft = draft } };
+        return Task.CompletedTask;
+    }
+    private async Task<V2RoomHeaderCommandOutcome> SaveHeader()
+    {
+        if (headerBaseline is null || headerDraft is null) return new(V2RoomHeaderCommandStatus.Missing, "This room is not loaded.");
+        if (modalState is not null) return new(V2RoomHeaderCommandStatus.Unchanged, "Close the open dialog first.");
+        if (!headerSaveStatus.IsEditable) return new(V2RoomHeaderCommandStatus.Missing, headerSaveStatus.Message);
+        await commandGate.WaitAsync();
+        try
+        {
+            headerSaveStatus = new(V2RoomHeaderSaveState.Saving);
+            await InvokeAsync(StateHasChanged);
+            if (refresh is null) return ApplyHeaderOutcome(await Commands.PrepareRoomReferenceRenameAsync(RoomId, headerBaseline, headerDraft));
+            var before = refresh.LastAppliedRefresh?.Sequence;
+            var result = await Commands.PrepareRoomReferenceRenameAsync(RoomId, headerBaseline, headerDraft);
+            if (result.Status == V2RoomHeaderCommandStatus.Committed)
+                result = await refresh.CommitRoomHeaderCommandAsync(RoomId, "header-save", () => Task.FromResult(result));
+            if (result.Status == V2RoomHeaderCommandStatus.Committed && refresh.LastAppliedRefresh?.Sequence != before) { SetRefreshDiagnostic(); ResetHeaderDraft(); }
+            if (result.Status == V2RoomHeaderCommandStatus.Proposal && result.Proposal is { } proposal)
+            {
+                modalState = new(new V2ReferenceUpdateProposalView("room", view?.Header.FriendlyName ?? "Room", proposal.SourceCurrent.ReferenceId), "room-reference-id", null, V2ModalRuntimeStage.ProposalOpen, RoomReferenceRenameProposal: proposal);
+                modalFocusRequested = true; StateHasChanged();
+            }
+            return ApplyHeaderOutcome(result);
+        }
+        finally { commandGate.Release(); }
+    }
+    private V2RoomHeaderCommandOutcome ApplyHeaderOutcome(V2RoomHeaderCommandOutcome result)
+    {
+        if (result.Status == V2RoomHeaderCommandStatus.Conflict && result.FreshBaseline is not null)
+        {
+            headerBaseline = result.FreshBaseline;
+            headerDraft = result.RetainedDraft ?? headerDraft;
+            headerSaveStatus = new(V2RoomHeaderSaveState.Conflict, result.Message);
+        }
+        else if (result.Status == V2RoomHeaderCommandStatus.Missing)
+            headerSaveStatus = new(V2RoomHeaderSaveState.Missing, result.Message);
+        else if (result.Status == V2RoomHeaderCommandStatus.Unexpected)
+            headerSaveStatus = new(V2RoomHeaderSaveState.Failed, result.Message);
+        else if (result.Status is V2RoomHeaderCommandStatus.Unchanged or V2RoomHeaderCommandStatus.Proposal)
+            headerSaveStatus = new(V2RoomHeaderSaveState.Saved);
+        return result;
+    }
+    private Task SetPendingDraft(bool meaningful) { meaningfulPendingDraft = meaningful; return Task.CompletedTask; }
+    private Task HandleLifecycleContentIntentAsync(RoomLifecycleContentControlsIntent intent) => intent switch
+    {
+        RoomLifecycleContentControlsIntent.RecheckRoomLogic => RecheckRoomLogicAsync(),
+        _ => Task.CompletedTask
+    };
+    private async Task RecheckRoomLogicAsync()
+    {
+        if (disposed || recheckingRoomLogic || modalState is not null || meaningfulPendingDraft || refresh?.CurrentRoomId != RoomId || view?.Header.IsArchived != false) return;
+        var sourceRoomId = RoomId;
+        var sourceGeneration = refresh.RefreshGeneration;
+        recheckingRoomLogic = true;
+        await InvokeAsync(StateHasChanged);
+        await commandGate.WaitAsync();
+        try
+        {
+            if (!OwnsRequirementRecheckOperation(sourceRoomId, sourceGeneration) || modalState is not null || meaningfulPendingDraft || view?.Header.IsArchived != false) return;
+            try
+            {
+                var before = refresh.LastAppliedRefresh?.Sequence;
+                var completion = await refresh.CommitRequirementRecheckAsync(sourceRoomId, () => RequirementValidation.RecheckRoomAsync(sourceRoomId));
+                if (!completion.RefreshApplied || !OwnsRequirementRecheckOperation(sourceRoomId, sourceGeneration + 1))
+                {
+                    suppressStaleRoomLogicRecheckCompletionRender = true;
+                    return;
+                }
+                if (refresh.LastAppliedRefresh?.Sequence != before) SetRefreshDiagnostic();
+            }
+            catch (RequirementValidationOperationException)
+            {
+                if (!OwnsRequirementRecheckOperation(sourceRoomId, sourceGeneration)) { suppressStaleRoomLogicRecheckCompletionRender = true; return; }
+            }
+            catch (Exception exception)
+            {
+                if (!OwnsRequirementRecheckOperation(sourceRoomId, sourceGeneration)) { suppressStaleRoomLogicRecheckCompletionRender = true; return; }
+                Logger.LogError(exception, "Unexpected current-room requirement recheck failure.");
+                Diagnostics.Show(exception.ToString());
+            }
+            finally
+            {
+                if (OwnsCurrentRequirementRecheckRoom(sourceRoomId)) recheckingRoomLogic = false;
+            }
+        }
+        finally { commandGate.Release(); }
+    }
+    private bool OwnsCurrentRequirementRecheckRoom(Guid sourceRoomId) =>
+        !disposed && RoomId == sourceRoomId && displayedRoomId == sourceRoomId && refresh?.CurrentRoomId == sourceRoomId;
+    private bool OwnsMapLoad(Guid sourceRoomId, long expectedGeneration) =>
+        !disposed && RoomId == sourceRoomId && displayedRoomId == sourceRoomId &&
+        refresh?.CurrentRoomId == sourceRoomId && refresh.RefreshGeneration == expectedGeneration;
+    private bool OwnsRequirementRecheckOperation(Guid sourceRoomId, long expectedGeneration) =>
+        OwnsCurrentRequirementRecheckRoom(sourceRoomId) && refresh!.RefreshGeneration == expectedGeneration;
+    private Task<V2RoomLifecycleCommandOutcome> ArchiveRoomAsync() => ExecuteRoomLifecycleAsync("room-archive", () => Commands.SetRoomArchiveAsync(RoomId, true));
+    private Task<V2RoomLifecycleCommandOutcome> RestoreRoomAsync() => ExecuteRoomLifecycleAsync("room-restore", () => Commands.SetRoomArchiveAsync(RoomId, false));
+    private async Task<V2RoomLifecycleCommandOutcome> RequestRoomPermanentDeleteAsync()
+    {
+        if (disposed || modalState is not null) return new(V2RoomLifecycleCommandStatus.ExpectedFailure, "Close the open dialog first.");
+        await commandGate.WaitAsync();
+        try
+        {
+            if (meaningfulPendingDraft) return new(V2RoomLifecycleCommandStatus.ExpectedFailure, "Finish or clear the pending child row first.");
+            if (refresh?.CurrentRoomId != RoomId || view is not { Header.IsArchived: true }) return new(V2RoomLifecycleCommandStatus.ExpectedFailure, "Only the current archived room can be deleted permanently.");
+            modalState = new(new V2PermanentDeleteDialogView("room", view.Header.FriendlyName), "room-permanent-delete", null,
+                V2ModalRuntimeStage.ProposalOpen, RoomPermanentDeleteOperation: new(RoomId));
+            modalFocusRequested = true; StateHasChanged();
+            return new(V2RoomLifecycleCommandStatus.ExpectedFailure, "Confirmation opened.");
+        }
+        finally { commandGate.Release(); }
+    }
+    private async Task RequestChildPermanentDeleteAsync(V2DeleteConfirmationIntent intent)
+    {
+        if (disposed || modalState is not null || intent.Kind is not (V2DeleteConfirmationKind.Subroom or V2DeleteConfirmationKind.Check)) return;
+        await commandGate.WaitAsync();
+        try
+        {
+            if (refresh?.CurrentRoomId != RoomId) return;
+            var name = intent.Kind switch
+            {
+                V2DeleteConfirmationKind.Subroom => view?.Subrooms.ArchivedRows.SingleOrDefault(x => x.EntityId == intent.EntityId)?.FriendlyName,
+                V2DeleteConfirmationKind.Check => view?.Checks.ArchivedRows.SingleOrDefault(x => x.EntityId == intent.EntityId)?.FriendlyName,
+                _ => null
+            };
+            if (name is null) return;
+            var kind = intent.Kind == V2DeleteConfirmationKind.Subroom ? "subroom" : "check";
+            modalState = new(new V2PermanentDeleteDialogView(kind, name), $"delete-{kind}-{intent.EntityId}", null,
+                V2ModalRuntimeStage.ProposalOpen, DeleteConfirmationIntent: intent);
+            modalFocusRequested = true;
+            StateHasChanged();
+        }
+        finally { commandGate.Release(); }
+    }
+    private Task CancelChildPermanentDeleteAsync(V2DeleteConfirmationIntent intent)
+    {
+        if (modalState is { Stage: V2ModalRuntimeStage.ProposalOpen, DeleteConfirmationIntent: { } pending } && pending == intent)
+            return CancelModalAsync();
+        return Task.CompletedTask;
+    }
+    private Task ConfirmChildPermanentDeleteAsync(V2DeleteConfirmationIntent intent)
+    {
+        if (modalState is { Stage: V2ModalRuntimeStage.ProposalOpen, DeleteConfirmationIntent: { } pending } && pending == intent)
+            return CompleteChildDeleteModalAsync();
+        return Task.CompletedTask;
+    }
+    private async Task<V2RoomLifecycleCommandOutcome> ExecuteRoomLifecycleAsync(string commandName, Func<Task<V2RoomLifecycleCommandOutcome>> command)
+    {
+        await commandGate.WaitAsync();
+        try
+        {
+            if (modalState is not null) return new(V2RoomLifecycleCommandStatus.ExpectedFailure, "Close the open dialog first.");
+            if (meaningfulPendingDraft) return new(V2RoomLifecycleCommandStatus.ExpectedFailure, "Finish or clear the pending child row first.");
+            if (refresh is null || refresh.CurrentRoomId != RoomId) return new(V2RoomLifecycleCommandStatus.Missing, "This room is not loaded.");
+            var before = refresh.LastAppliedRefresh?.Sequence;
+            var result = await refresh.CommitRoomLifecycleCommandAsync(RoomId, commandName, command, sceneRelevant: SceneRefreshImpact.RoomLifecycle);
+            if (result.Status == V2RoomLifecycleCommandStatus.Committed && refresh.LastAppliedRefresh?.Sequence != before)
+            {
+                if (view?.Header.IsArchived == true) { mapLoads?.Clear(); await DisposeMapContextHeightOwnerAsync(); }
+                else if (mapLoads is not null) await mapLoads.LoadAsync(RoomId, null, refresh.RefreshGeneration, OwnsMapLoad);
+                SetRefreshDiagnostic(); ResetHeaderDraft();
+            }
+            return result;
+        }
+        finally { commandGate.Release(); }
+    }
+    private Task ApplyRefreshedState() => InvokeAsync(StateHasChanged);
+    private async Task<V2SubroomCommandOutcome> Execute(Func<Task<V2SubroomCommandOutcome>> command, bool permitsPendingDraft = false, bool sceneRelevant = false)
+    {
+        await commandGate.WaitAsync(); try { if (modalState is not null) return new(V2SubroomCommandStatus.ExpectedFailure, "Close the open dialog first."); if (meaningfulPendingDraft && !permitsPendingDraft) return new(V2SubroomCommandStatus.ExpectedFailure, "Finish or clear the pending subroom row first."); if (refresh is null) return await command(); var before = refresh.LastAppliedRefresh?.Sequence; var result = await refresh.CommitSubroomCommandAsync(RoomId, "save", command, sceneRelevant); if (refresh.LastAppliedRefresh?.Sequence != before) SetRefreshDiagnostic(); return result; } finally { commandGate.Release(); }
+    }
+    private async Task<V2CheckCommandOutcome> ExecuteCheck(Func<Task<V2CheckCommandOutcome>> command, bool permitsPendingDraft = false, bool sceneRelevant = false)
+    {
+        await commandGate.WaitAsync(); try { if (modalState is not null) return new(V2CheckCommandStatus.ExpectedFailure, "Close the open dialog first."); if (meaningfulPendingDraft && !permitsPendingDraft) return new(V2CheckCommandStatus.ExpectedFailure, "Finish or clear the pending check row first."); if (refresh is null) return await command(); var before = refresh.LastAppliedRefresh?.Sequence; var result = await refresh.CommitCheckCommandAsync(RoomId, "save", command, sceneRelevant); if (refresh.LastAppliedRefresh?.Sequence != before) SetRefreshDiagnostic(); return result; } finally { commandGate.Release(); }
+    }
+    public Task<V2TransitionCommandOutcome> SaveTransitionAsync(TransitionDurableBaseline baseline, TransitionDraft draft, string initiatorId, string? pendingTargetId = null)
+        => ExecuteTransitionAsync("transition-save", () => Commands.PrepareInverseAsync(RoomId, baseline, draft), initiatorId, pendingTargetId, sceneRelevant: SceneRefreshImpact.TransitionSave(baseline, draft));
+    public async Task<V2TransitionCommandOutcome> RequestTransitionInverseStatusActionAsync(TransitionDurableBaseline baseline, TransitionDraft draft, string initiatorId)
+    {
+        if (disposed || modalState is not null || string.IsNullOrWhiteSpace(initiatorId)) return new(V2TransitionCommandStatus.ExpectedFailure, "Close the open dialog first.");
+        await commandGate.WaitAsync();
+        try
+        {
+            if (refresh?.CurrentRoomId != RoomId || view?.Transitions.ActiveRows.Any(x => x.EntityId == baseline.EntityId && x.CanExplicitInverseSetup) != true)
+                return new(V2TransitionCommandStatus.Missing, "This inverse setup is no longer active in the current room.");
+            var result = await Commands.PrepareInverseStatusActionAsync(RoomId, baseline, draft);
+            if (result.Status == V2TransitionCommandStatus.Proposal && result.Proposal is { } proposal)
+            {
+                modalState = new(new V2InverseSetupProposalView(proposal.SourceFriendlyName, proposal.TargetFriendlyName, proposal.SourceRoomReferenceId, proposal.SourceAlias, proposal.Target.FillDestinationRoomReferenceText, proposal.Target.FillDestinationTransitionAliasText), initiatorId, null, V2ModalRuntimeStage.ProposalOpen, new V2TransitionInverseEditModalOperation(proposal));
+                modalFocusRequested = true; StateHasChanged();
+            }
+            return result;
+        }
+        finally { commandGate.Release(); }
+    }
+    public Task<V2TransitionCommandOutcome> CreateTransitionAsync(TransitionDraft draft, string initiatorId, string? pendingTargetId = null)
+        => ExecuteTransitionAsync("transition-create", () => Commands.CreateTransitionAsync(RoomId, draft), initiatorId, pendingTargetId, true, SceneRefreshImpact.Create);
+    public Task<V2TransitionCommandOutcome> ReorderTransitionAsync(Guid entityId, int targetIndex)
+        => ExecuteTransitionAsync("transition-reorder", () => Commands.ReorderTransitionAsync(RoomId, entityId, targetIndex), null, null, sceneRelevant: SceneRefreshImpact.Reorder);
+    public Task<V2TransitionCommandOutcome> SetTransitionArchiveAsync(Guid entityId, bool archived)
+        => ExecuteTransitionAsync(archived ? "transition-archive" : "transition-restore", () => Commands.SetTransitionArchiveAsync(RoomId, entityId, archived), null, null, sceneRelevant: SceneRefreshImpact.ArchiveRestoreDelete);
+    public async Task<V2TransitionCommandOutcome> RequestTransitionMetadataAsync(TransitionDurableBaseline baseline, string initiatorId)
+    {
+        if (disposed || modalState is not null || string.IsNullOrWhiteSpace(initiatorId)) return new(V2TransitionCommandStatus.ExpectedFailure, "Close the open dialog first.");
+        await commandGate.WaitAsync();
+        try
+        {
+            if (meaningfulPendingDraft) return new(V2TransitionCommandStatus.ExpectedFailure, "Finish or clear the pending child row first.");
+            if (refresh?.CurrentRoomId != RoomId || view?.Transitions.ActiveRows.Any(x => x.EntityId == baseline.EntityId) != true) return new(V2TransitionCommandStatus.Missing, "This transition is no longer active in the current room.");
+            var draft = retainedTransitionMetadataDrafts.TryGetValue(baseline.EntityId, out var retained) ? retained : new TransitionInGameMetadataDraft(baseline.InGameId, baseline.InGamePositionX, baseline.InGamePositionY, baseline.InGamePositionZ, baseline.LocalPositionX, baseline.LocalPositionY, baseline.LocalPositionZ, baseline.AnnotationSceneUnitX, baseline.AnnotationSceneUnitY);
+            var severity = view.Transitions.ActiveRows.First(x => x.EntityId == baseline.EntityId).InGameIdSeverity;
+            modalState = new(new V2InGameMetadataDialogView("transition", draft.InGameId, draft.InGamePositionX, draft.InGamePositionY, draft.InGamePositionZ, draft.LocalPositionX, draft.LocalPositionY, draft.LocalPositionZ, draft.AnnotationSceneUnitX, draft.AnnotationSceneUnitY, severity), initiatorId, null, V2ModalRuntimeStage.ProposalOpen, TransitionMetadataOperation: new(baseline, draft));
+            modalFocusRequested = true; StateHasChanged();
+            return new(V2TransitionCommandStatus.Proposal);
+        }
+        finally { commandGate.Release(); }
+    }
+    private Task SetTransitionMetadataDraft(TransitionInGameMetadataDraft draft)
+    {
+        if (modalState?.TransitionMetadataOperation is { } operation && modalState.Stage == V2ModalRuntimeStage.ProposalOpen)
+            modalState = modalState with { Content = new V2InGameMetadataDialogView("transition", draft.InGameId, draft.InGamePositionX, draft.InGamePositionY, draft.InGamePositionZ, draft.LocalPositionX, draft.LocalPositionY, draft.LocalPositionZ, draft.AnnotationSceneUnitX, draft.AnnotationSceneUnitY, (modalState.Content as V2InGameMetadataDialogView)?.InGameIdSeverity ?? V2Severity.Neutral), TransitionMetadataOperation = operation with { Draft = draft } };
+        return Task.CompletedTask;
+    }
+    public async Task<V2TransitionCommandOutcome> RequestTransitionPermanentDeleteAsync(Guid entityId, string initiatorId)
+    {
+        if (disposed || string.IsNullOrWhiteSpace(initiatorId) || modalState is not null) return new(V2TransitionCommandStatus.ExpectedFailure, "Close the open dialog first.");
+        await commandGate.WaitAsync();
+        try
+        {
+            if (refresh?.CurrentRoomId != RoomId) return new(V2TransitionCommandStatus.Missing, "This room is not loaded.");
+            modalState = new(new V2PermanentDeleteDialogView("transition", "Transition"), initiatorId, null, V2ModalRuntimeStage.ProposalOpen, new V2TransitionPermanentDeleteModalOperation(entityId));
+            modalFocusRequested = true; StateHasChanged();
+            return new(V2TransitionCommandStatus.Proposal);
+        }
+        finally { commandGate.Release(); }
+    }
+    public Task<V2ConnectionCommandOutcome> SaveConnectionAsync(ConnectionDurableBaseline baseline, ConnectionDraft draft, string initiatorId = "", string? pendingTargetId = null)
+        => ExecuteConnectionAsync("connection-save", () => Commands.SaveConnectionAsync(RoomId, baseline, draft), false, SceneRefreshImpact.ConnectionSave(baseline, draft));
+    public Task<V2ConnectionCommandOutcome> CreateConnectionAsync(ConnectionDraft draft, string initiatorId = "", string? pendingTargetId = null)
+        => ExecuteConnectionAsync("connection-create", () => Commands.CreateConnectionAsync(RoomId, draft), true, SceneRefreshImpact.Create);
+    public Task<V2ConnectionCommandOutcome> ReorderConnectionAsync(Guid entityId, int targetIndex)
+        => ExecuteConnectionAsync("connection-reorder", () => Commands.ReorderConnectionAsync(RoomId, entityId, targetIndex), sceneRelevant: SceneRefreshImpact.Reorder);
+    public Task<V2ConnectionCommandOutcome> SetConnectionArchiveAsync(Guid entityId, bool archived)
+        => ExecuteConnectionAsync(archived ? "connection-archive" : "connection-restore", () => Commands.SetConnectionArchiveAsync(RoomId, entityId, archived), sceneRelevant: SceneRefreshImpact.ArchiveRestoreDelete);
+    public async Task<V2ConnectionCommandOutcome> ScaffoldInverseConnectionAsync(Guid entityId, string initiatorId)
+    {
+        var result = await ExecuteConnectionAsync("connection-scaffold", () => Commands.ScaffoldInverseConnectionAsync(RoomId, entityId), sceneRelevant: SceneRefreshImpact.Create);
+        if (result.Status == V2ConnectionCommandStatus.Committed && result.CreatedEntityId is Guid created && connectionTable is not null)
+        {
+            pendingConnectionFocusId = connectionTable.FieldIdFor(created, "requirements");
+            await InvokeAsync(StateHasChanged);
+        }
+        return result;
+    }
+    public async Task<V2ConnectionCommandOutcome> RequestConnectionPermanentDeleteAsync(Guid entityId, string initiatorId)
+    {
+        if (disposed || string.IsNullOrWhiteSpace(initiatorId) || modalState is not null) return new(V2ConnectionCommandStatus.ExpectedFailure, "Close the open dialog first.");
+        await commandGate.WaitAsync();
+        try
+        {
+            if (refresh?.CurrentRoomId != RoomId) return new(V2ConnectionCommandStatus.Missing, "This room is not loaded.");
+            modalState = new(new V2PermanentDeleteDialogView("connection", "Connection"), initiatorId, null, V2ModalRuntimeStage.ProposalOpen, null, new V2ConnectionPermanentDeleteModalOperation(entityId));
+            modalFocusRequested = true; StateHasChanged();
+            return new(V2ConnectionCommandStatus.ExpectedFailure, "Confirmation opened.");
+        }
+        finally { commandGate.Release(); }
+    }
+    private async Task<V2ConnectionCommandOutcome> ExecuteConnectionAsync(string commandName, Func<Task<V2ConnectionCommandOutcome>> command, bool permitsPendingDraft = false, bool sceneRelevant = false)
+    {
+        await commandGate.WaitAsync();
+        try
+        {
+            if (modalState is not null) return new(V2ConnectionCommandStatus.ExpectedFailure, "Close the open dialog first.");
+            if (meaningfulPendingDraft && !permitsPendingDraft) return new(V2ConnectionCommandStatus.ExpectedFailure, "Finish or clear the pending child row first.");
+            if (refresh is null || refresh.CurrentRoomId != RoomId) return new(V2ConnectionCommandStatus.Missing, "This room is not loaded.");
+            var before = refresh.LastAppliedRefresh?.Sequence;
+            var result = await refresh.CommitConnectionCommandAsync(RoomId, commandName, command, sceneRelevant);
+            if (result.Status == V2ConnectionCommandStatus.Committed && refresh.LastAppliedRefresh?.Sequence != before) SetRefreshDiagnostic();
+            return result;
+        }
+        finally { commandGate.Release(); }
+    }
+    private async Task<V2TransitionCommandOutcome> ExecuteTransitionAsync(string commandName, Func<Task<V2TransitionCommandOutcome>> command, string? initiatorId, string? pendingTargetId, bool permitsPendingDraft = false, bool sceneRelevant = false)
+    {
+        // Modal admission is checked before the command gate so a competing
+        // durable request is rejected while a completion-bound modal command is
+        // held, rather than waiting behind it and running after it closes.
+        if (modalState is not null) return new(V2TransitionCommandStatus.ExpectedFailure, "Close the open dialog first.");
+        await commandGate.WaitAsync();
+        try
+        {
+            if (modalState is not null) return new(V2TransitionCommandStatus.ExpectedFailure, "Close the open dialog first.");
+            if (meaningfulPendingDraft && !permitsPendingDraft) return new(V2TransitionCommandStatus.ExpectedFailure, "Finish or clear the pending child row first.");
+            if (refresh is null || refresh.CurrentRoomId != RoomId) return new(V2TransitionCommandStatus.Missing, "This room is not loaded.");
+            var result = await refresh.CommitTransitionCommandAsync(RoomId, commandName, command, sceneRelevant);
+            if (result.Status == V2TransitionCommandStatus.Committed) { SetRefreshDiagnostic(); return result; }
+            if (result.Status == V2TransitionCommandStatus.Proposal && initiatorId is not null)
+            {
+                var operation = result.Proposal is not null ? new V2TransitionInverseEditModalOperation(result.Proposal) as V2TransitionModalOperation : new V2TransitionInverseCreateModalOperation(result.CreateProposal!);
+                var proposal = result.Proposal;
+                var createProposal = result.CreateProposal;
+                var target = proposal?.Target ?? createProposal!.Target;
+                modalState = new(new V2InverseSetupProposalView(proposal?.SourceFriendlyName ?? createProposal!.SourceFriendlyName, proposal?.TargetFriendlyName ?? createProposal!.TargetFriendlyName,
+                    proposal?.SourceRoomReferenceId ?? createProposal!.SourceRoomReferenceId, proposal?.SourceAlias ?? createProposal!.SourceAlias,
+                    target.FillDestinationRoomReferenceText, target.FillDestinationTransitionAliasText), initiatorId, pendingTargetId, V2ModalRuntimeStage.ProposalOpen, operation);
+                modalFocusRequested = true; StateHasChanged();
+            }
+            return result;
+        }
+        finally { commandGate.Release(); }
+    }
+    private void SetRefreshDiagnostic() { if (refresh?.LastAppliedRefresh is { } applied && refresh.CurrentRoomId == RoomId) refreshDiagnostic = new(applied.Sequence, applied.ServerElapsed); }
+    private async Task RequestChildFocusAsync(Guid sourceRoomId, string id) { if (disposed || sourceRoomId != RoomId || displayedRoomId != RoomId || childInteractionOwner is null) return; try { await childInteractionOwner.InvokeVoidAsync("focus", id); } catch (JSDisconnectedException) { } catch (ObjectDisposedException) when (disposed) { } }
+    private async Task ClearChildDragFeedbackAsync(string kind) { if (childInteractionOwner is null) return; try { await childInteractionOwner.InvokeVoidAsync("clear", kind); } catch (JSDisconnectedException) { } catch (ObjectDisposedException) when (disposed) { } }
+    private Task ClearSubroomDragFeedbackAsync() => ClearChildDragFeedbackAsync("subroom"); private Task ClearTransitionDragFeedbackAsync() => ClearChildDragFeedbackAsync("transition"); private Task ClearConnectionDragFeedbackAsync() => ClearChildDragFeedbackAsync("connection"); private Task ClearCheckDragFeedbackAsync() => ClearChildDragFeedbackAsync("check");
+    /// <summary>Test-only entry point; production controls do not expose an unfinished modal workflow.</summary>
+    public async Task<bool> OpenModalTestIntentAsync(V2ModalTestIntent intent)
+    {
+        if (disposed || modalState is not null || refresh?.CurrentRoomId != RoomId || string.IsNullOrWhiteSpace(intent.InitiatorId)) return false;
+        V2PageModalContentView content = intent.Kind switch
+        {
+            V2ModalTestIntentKind.InverseProposal => new V2InverseSetupProposalView("source", "target"),
+            V2ModalTestIntentKind.PermanentDelete => new V2PermanentDeleteDialogView("record", "target"),
+            _ => throw new ArgumentOutOfRangeException(nameof(intent))
+        };
+        modalState = new(content, intent.InitiatorId, intent.PendingTargetId, V2ModalRuntimeStage.ProposalOpen);
+        modalFocusRequested = true;
+        StateHasChanged();
+        return true;
+    }
+    /// <summary>Test-only intent exercises the ordinary header command admission path.</summary>
+    public Task<V2RoomHeaderCommandOutcome> RequestHeaderSaveTestIntentAsync() => SaveHeader();
+    /// <summary>
+    /// The page-owned application navigation intent. It deliberately does not
+    /// attempt to own browser address-bar navigation or reload.
+    /// </summary>
+    public Task<bool> RequestApplicationRoomNavigationAsync(Guid targetRoomId)
+    {
+        var sourceRoomId = RoomId;
+        var sourceGeneration = refresh?.RefreshGeneration ?? -1;
+        return Task.FromResult(TryNavigateToRoom(sourceRoomId, sourceGeneration, targetRoomId, null));
+    }
+    private Task<bool> RequestLinkedMapRoomNavigationAsync(AreaMapSurface.LinkedMapRoomIntent intent) =>
+        Task.FromResult(intent.SourceRoomId is { } sourceRoomId &&
+            TryNavigateToRoom(sourceRoomId, refresh?.RefreshGeneration ?? -1, intent.TargetRoomId, intent.HostGeneration));
+    private bool TryNavigateToRoom(Guid sourceRoomId, long sourceGeneration, Guid targetRoomId, long? requiredMapGeneration)
+    {
+        if (targetRoomId == sourceRoomId) return false;
+        if (disposed || applicationNavigationActive || meaningfulPendingDraft || modalState is not null ||
+            roomMapLinkModalState != AreaMapPanePresentation.RoomMapLinkModalState.Closed ||
+            commandGate.CurrentCount == 0 || sceneActionPending || recheckingRoomLogic ||
+            headerSaveStatus.State == V2RoomHeaderSaveState.Saving || targetRoomId == Guid.Empty ||
+            displayedRoomId != sourceRoomId || RoomId != sourceRoomId ||
+            refresh is null || refresh.IsLoading || refresh.CurrentRoomId != sourceRoomId ||
+            refresh.RefreshGeneration != sourceGeneration || refresh.View is null) return false;
+        if (requiredMapGeneration is { } mapGeneration &&
+            (!showMapContext || refresh.View.Header.IsArchived || mapLoads?.View is null || mapLoads.AppliedGeneration != mapGeneration)) return false;
+        applicationNavigationActive = true;
+        Navigation.NavigateTo($"/rooms/{targetRoomId}");
+        return true;
+    }
+    public async Task BeginModalTestCommitAsync()
+    {
+        if (modalState is not { Stage: V2ModalRuntimeStage.ProposalOpen } state) return;
+        modalState = state with { Stage = V2ModalRuntimeStage.Committing };
+        StateHasChanged();
+    }
+    private async Task ApplyModalAsync()
+    {
+        if (modalState?.TransitionMetadataOperation is { }) { await CompleteTransitionMetadataModalAsync(); return; }
+        if (modalState?.CheckMetadataOperation is { }) { await CompleteCheckMetadataModalAsync(); return; }
+        if (modalState?.RoomReferenceRenameProposal is { }) { await CompleteRoomReferenceRenameModalAsync(updateReferences: true); return; }
+        if (modalState?.SubroomReferenceRenameProposal is { }) { await CompleteSubroomReferenceRenameModalAsync(updateReferences: true); return; }
+        if (modalState?.RoomPermanentDeleteOperation is { }) { await CompleteRoomDeleteModalAsync(); return; }
+        if (modalState?.ConnectionPermanentDeleteOperation is { }) { await CompleteConnectionDeleteModalAsync(); return; }
+        if (modalState?.ConnectionAnnotationDisableOperation is { }) { await CompleteConnectionAnnotationDisableModalAsync(); return; }
+        if (modalState?.DirectAnnotationRemoveOperation is { }) { await CompleteDirectAnnotationRemovalModalAsync(); return; }
+        if (modalState?.SubroomGeometryOperation is { }) { await CompleteSubroomGeometryModalAsync(); return; }
+        if (modalState?.SubroomRemoveOperation is { }) { await CompleteSubroomRemoveModalAsync(); return; }
+        if (modalState?.SceneDimensionsOperation is { }) { await CompleteSceneDimensionsModalAsync(); return; }
+        if (modalState?.SceneImageCaptureOperation is { }) { await CompleteSceneImageCaptureModalAsync(); return; }
+        if (modalState?.DeleteConfirmationIntent is not null) { await CompleteChildDeleteModalAsync(); return; }
+        if (modalState?.TransitionOperation is null) { await BeginModalTestCommitAsync(); return; }
+        await CompleteTransitionModalAsync(updateInverse: true);
+    }
+    private async Task DoNotUpdateModalAsync()
+    {
+        if (modalState?.RoomReferenceRenameProposal is { }) { await CompleteRoomReferenceRenameModalAsync(updateReferences: false); return; }
+        if (modalState?.SubroomReferenceRenameProposal is { }) { await CompleteSubroomReferenceRenameModalAsync(updateReferences: false); return; }
+        if (modalState?.TransitionOperation is null) { await BeginModalTestCommitAsync(); return; }
+        await CompleteTransitionModalAsync(updateInverse: false);
+    }
+    private async Task CompleteTransitionModalAsync(bool updateInverse)
+    {
+        if (modalState is not { Stage: V2ModalRuntimeStage.ProposalOpen } state) return;
+        modalState = state with { Stage = V2ModalRuntimeStage.Committing }; StateHasChanged();
+        await commandGate.WaitAsync();
+        try
+        {
+            var operation = state.TransitionOperation!;
+            V2TransitionCommandOutcome outcome = operation switch
+            {
+                V2TransitionInverseEditModalOperation edit => updateInverse
+                    ? await CommitTransitionModalCommandAsync("transition-inverse-update", () => Commands.ApplyInverseAsync(RoomId, edit.Proposal, true), SceneRefreshImpact.TransitionInverseEditProposal)
+                    : await CommitTransitionModalCommandAsync("transition-inverse-do-not-update", () => Commands.ApplyInverseAsync(RoomId, edit.Proposal, false), SceneRefreshImpact.TransitionInverseEditProposal),
+                V2TransitionInverseCreateModalOperation create => updateInverse
+                    ? await CommitTransitionModalCommandAsync("transition-create-inverse-update", () => Commands.ApplyCreateInverseAsync(RoomId, create.Proposal, true), SceneRefreshImpact.TransitionInverseCreateProposal)
+                    : await CommitTransitionModalCommandAsync("transition-create-inverse-do-not-update", () => Commands.ApplyCreateInverseAsync(RoomId, create.Proposal, false), SceneRefreshImpact.TransitionInverseCreateProposal),
+                V2TransitionPermanentDeleteModalOperation delete => await CommitTransitionModalCommandAsync("transition-permanent-delete", () => Commands.DeleteTransitionAsync(RoomId, delete.EntityId), SceneRefreshImpact.ArchiveRestoreDelete),
+                _ => new(V2TransitionCommandStatus.Unexpected)
+            };
+            if (outcome.Status == V2TransitionCommandStatus.Committed) { SetRefreshDiagnostic(); QueueModalFocus(state, state.PendingTargetId is null ? V2ModalFocusOutcome.Initiator : V2ModalFocusOutcome.PendingTarget); }
+            else
+            {
+                // A stale explicit status-action proposal has no source save to retain,
+                // but its source/target evidence is no longer a valid room view.
+                if (operation is V2TransitionInverseEditModalOperation { Proposal.IsTargetOnlyStatusAction: true } && refresh?.CurrentRoomId == RoomId)
+                {
+                    var before = refresh.LastAppliedRefresh?.Sequence;
+                    if (!await refresh.RefreshAsync(RoomId) && refresh.LastAppliedRefresh?.Sequence != before) SetRefreshDiagnostic();
+                }
+                QueueModalFocus(state, V2ModalFocusOutcome.Correction);
+            }
+            ClearModalState(false); StateHasChanged();
+        }
+        finally { commandGate.Release(); }
+    }
+    private async Task CompleteTransitionMetadataModalAsync()
+    {
+        if (modalState is not { Stage: V2ModalRuntimeStage.ProposalOpen, TransitionMetadataOperation: { } operation } state) return;
+        modalState = state with { Stage = V2ModalRuntimeStage.Committing }; StateHasChanged();
+        await commandGate.WaitAsync();
+        try
+        {
+            var outcome = refresh is null || refresh.CurrentRoomId != RoomId
+                ? new V2TransitionCommandOutcome(V2TransitionCommandStatus.Missing, "This room is not loaded.")
+                : await refresh.CommitTransitionCommandAsync(RoomId, "transition-metadata", () => Commands.SaveTransitionMetadataAsync(RoomId, operation.Baseline, operation.Draft), sceneRelevant: SceneRefreshImpact.TransitionMetadata(operation.Baseline, operation.Draft));
+            if (outcome.Status == V2TransitionCommandStatus.Committed) { retainedTransitionMetadataDrafts.Remove(operation.Baseline.EntityId); SetRefreshDiagnostic(); QueueModalFocus(state, V2ModalFocusOutcome.Initiator); ClearModalState(false); }
+            else
+            {
+                // Ordinary conflict/missing outcomes refresh before correction focus;
+                // no partial row patch or scene/map load is substituted.
+                if (refresh is not null && refresh.CurrentRoomId == RoomId)
+                {
+                    var before = refresh.LastAppliedRefresh?.Sequence;
+                    if (!await refresh.RefreshAsync(RoomId) && refresh.LastAppliedRefresh?.Sequence != before) SetRefreshDiagnostic();
+                }
+                if (outcome.Status == V2TransitionCommandStatus.Conflict) retainedTransitionMetadataDrafts[operation.Baseline.EntityId] = operation.Draft;
+                QueueTransitionMetadataCorrectionFocus(state, operation.Baseline.EntityId, outcome.Status); ClearModalState(false);
+            }
+            StateHasChanged();
+        }
+        finally { commandGate.Release(); }
+    }
+    private async Task CompleteCheckMetadataModalAsync()
+    {
+        if (modalState is not { Stage: V2ModalRuntimeStage.ProposalOpen, CheckMetadataOperation: { } operation } state) return;
+        modalState = state with { Stage = V2ModalRuntimeStage.Committing }; StateHasChanged(); await commandGate.WaitAsync();
+        try
+        {
+            var outcome = refresh is null || refresh.CurrentRoomId != RoomId ? new V2CheckCommandOutcome(V2CheckCommandStatus.Missing, "This room is not loaded.") : await refresh.CommitCheckCommandAsync(RoomId, "check-metadata", () => Commands.SaveCheckMetadataAsync(RoomId, operation.Baseline, operation.Draft), sceneRelevant: SceneRefreshImpact.CheckMetadata(operation.Baseline, operation.Draft));
+            if (outcome.Status == V2CheckCommandStatus.Committed) { retainedCheckMetadataDrafts.Remove(operation.Baseline.EntityId); SetRefreshDiagnostic(); QueueModalFocus(state, V2ModalFocusOutcome.Initiator); }
+            else
+            {
+                if (refresh is not null && refresh.CurrentRoomId == RoomId) { var before = refresh.LastAppliedRefresh?.Sequence; if (!await refresh.RefreshAsync(RoomId) && refresh.LastAppliedRefresh?.Sequence != before) SetRefreshDiagnostic(); }
+                if (outcome.Status == V2CheckCommandStatus.Conflict) retainedCheckMetadataDrafts[operation.Baseline.EntityId] = operation.Draft;
+                QueueCheckMetadataCorrectionFocus(state, operation.Baseline.EntityId, outcome.Status);
+            }
+            ClearModalState(false); StateHasChanged();
+        }
+        finally { commandGate.Release(); }
+    }
+    private async Task CompleteRoomReferenceRenameModalAsync(bool updateReferences)
+    {
+        if (modalState is not { Stage: V2ModalRuntimeStage.ProposalOpen, RoomReferenceRenameProposal: { } proposal } state) return;
+        modalState = state with { Stage = V2ModalRuntimeStage.Committing }; StateHasChanged();
+        await commandGate.WaitAsync();
+        try
+        {
+            var outcome = refresh is null || refresh.CurrentRoomId != RoomId
+                ? new V2RoomHeaderCommandOutcome(V2RoomHeaderCommandStatus.Missing, "This room is not loaded.", null, proposal.SourceCurrent)
+                : await CommitRoomReferenceRenameAsync(proposal, updateReferences);
+            if (outcome.Status == V2RoomHeaderCommandStatus.Committed)
+            {
+                if (outcome.MapResolutionChanged && mapLoads is not null)
+                    await mapLoads.LoadAsync(RoomId, null, refresh!.RefreshGeneration, OwnsMapLoad);
+                SetRefreshDiagnostic(); ResetHeaderDraft(); QueueModalFocus(state, state.PendingTargetId is null ? V2ModalFocusOutcome.Initiator : V2ModalFocusOutcome.PendingTarget);
+            }
+            else
+            {
+                // Captured-target conflicts and missing sources require a fresh complete
+                // room view before retaining the correction draft; no partial patch applies.
+                if (refresh is not null && refresh.CurrentRoomId == RoomId)
+                {
+                    var before = refresh.LastAppliedRefresh?.Sequence;
+                    if (!await refresh.RefreshAsync(RoomId) && refresh.LastAppliedRefresh?.Sequence != before) SetRefreshDiagnostic();
+                    if (view is not null) headerBaseline = RoomEditorV2CommandService.HeaderFromView(view.Header);
+                }
+                headerDraft = outcome.RetainedDraft ?? proposal.SourceCurrent;
+                ApplyHeaderOutcome(outcome);
+                QueueModalFocus(state, V2ModalFocusOutcome.Correction);
+            }
+            ClearModalState(false); StateHasChanged();
+        }
+        finally { commandGate.Release(); }
+    }
+    private async Task<V2RoomHeaderCommandOutcome> CommitRoomReferenceRenameAsync(RoomReferenceRenameProposal proposal, bool updateReferences)
+    {
+        // Classification comes from the committed command's observed map-scene
+        // resolution delta.  The page never guesses from the modal outcome.
+        var outcome = await Commands.ApplyRoomReferenceRenameAsync(RoomId, proposal, updateReferences);
+        return refresh is null || refresh.CurrentRoomId != RoomId
+            ? outcome
+            : await refresh.CommitRoomHeaderCommandAsync(RoomId,
+                updateReferences ? "room-reference-update" : "room-reference-do-not-update",
+                () => Task.FromResult(outcome), outcome.MapResolutionChanged);
+    }
+    private async Task CompleteSubroomReferenceRenameModalAsync(bool updateReferences)
+    {
+        if (modalState is not { Stage: V2ModalRuntimeStage.ProposalOpen, SubroomReferenceRenameProposal: { } proposal } state) return;
+        modalState = state with { Stage = V2ModalRuntimeStage.Committing }; StateHasChanged();
+        await commandGate.WaitAsync();
+        try
+        {
+            var outcome = refresh is null || refresh.CurrentRoomId != RoomId ? new V2SubroomCommandOutcome(V2SubroomCommandStatus.Missing, "This room is not loaded.", null, proposal.SourceCurrent) : await refresh.CommitSubroomCommandAsync(RoomId, updateReferences ? "subroom-reference-update" : "subroom-reference-do-not-update", () => Commands.ApplySubroomReferenceRenameAsync(RoomId, proposal, updateReferences), SceneRefreshImpact.SubroomReferenceProposal);
+            if (outcome.Status == V2SubroomCommandStatus.Committed) { SetRefreshDiagnostic(); QueueModalFocus(state, state.PendingTargetId is null ? V2ModalFocusOutcome.Initiator : V2ModalFocusOutcome.PendingTarget); }
+            else { if (refresh is not null && refresh.CurrentRoomId == RoomId) { var before = refresh.LastAppliedRefresh?.Sequence; if (!await refresh.RefreshAsync(RoomId) && refresh.LastAppliedRefresh?.Sequence != before) SetRefreshDiagnostic(); } subroomTable?.RetainSubroomReferenceConflict(proposal.SourceBaseline, outcome.RetainedDraft ?? proposal.SourceCurrent); QueueModalFocus(state, V2ModalFocusOutcome.Correction); }
+            ClearModalState(false); StateHasChanged();
+        }
+        finally { commandGate.Release(); }
+    }
+    private Task<V2TransitionCommandOutcome> CommitTransitionModalCommandAsync(string name, Func<Task<V2TransitionCommandOutcome>> command, bool sceneRelevant = false)
+        => refresh is null || refresh.CurrentRoomId != RoomId
+            ? Task.FromResult(new V2TransitionCommandOutcome(V2TransitionCommandStatus.Missing, "This room is not loaded."))
+            : refresh.CommitTransitionCommandAsync(RoomId, name, command, sceneRelevant);
+    private async Task CompleteConnectionDeleteModalAsync()
+    {
+        if (modalState is not { Stage: V2ModalRuntimeStage.ProposalOpen } state || state.ConnectionPermanentDeleteOperation is not { } delete) return;
+        modalState = state with { Stage = V2ModalRuntimeStage.Committing }; StateHasChanged();
+        await commandGate.WaitAsync();
+        try
+        {
+            var outcome = refresh is null || refresh.CurrentRoomId != RoomId
+                ? new V2ConnectionCommandOutcome(V2ConnectionCommandStatus.Missing, "This room is not loaded.")
+                : await refresh.CommitConnectionCommandAsync(RoomId, "connection-permanent-delete", () => Commands.DeleteConnectionAsync(RoomId, delete.EntityId), SceneRefreshImpact.ArchiveRestoreDelete);
+            if (outcome.Status == V2ConnectionCommandStatus.Committed) { SetRefreshDiagnostic(); QueueModalFocus(state, V2ModalFocusOutcome.Initiator); }
+            else QueueModalFocus(state, V2ModalFocusOutcome.Correction);
+            ClearModalState(false); StateHasChanged();
+        }
+        finally { commandGate.Release(); }
+    }
+    private async Task CompleteConnectionAnnotationDisableModalAsync()
+    {
+        if (modalState is not { Stage: V2ModalRuntimeStage.ProposalOpen, ConnectionAnnotationDisableOperation: { } operation } state) return;
+        modalState = state with { Stage = V2ModalRuntimeStage.Committing }; StateHasChanged();
+        await commandGate.WaitAsync();
+        try
+        {
+            var outcome = refresh is null || refresh.CurrentRoomId != RoomId
+                ? new V2ConnectionCommandOutcome(V2ConnectionCommandStatus.Missing, "This room is not loaded.")
+                : await refresh.CommitConnectionCommandAsync(RoomId, "connection-annotation-disable", () => Commands.DisableConnectionAnnotationAsync(RoomId, operation.EntityId), true);
+            if (outcome.Status == V2ConnectionCommandStatus.Committed) { selectedSceneItem = new(V2SceneSelectedItemKind.Connection, operation.EntityId); placementRequest = null; SetRefreshDiagnostic(); QueueModalFocus(state, V2ModalFocusOutcome.Initiator); }
+            else QueueModalFocus(state, V2ModalFocusOutcome.Correction);
+            ClearModalState(false); StateHasChanged();
+        }
+        finally { commandGate.Release(); }
+    }
+    private async Task CompleteDirectAnnotationRemovalModalAsync()
+    {
+        if (modalState is not { Stage: V2ModalRuntimeStage.ProposalOpen, DirectAnnotationRemoveOperation: { } operation } state) return;
+        modalState = state with { Stage = V2ModalRuntimeStage.Committing }; StateHasChanged(); await commandGate.WaitAsync();
+        try
+        {
+            if (operation.RecordKind == "transition" && operation.TransitionBaseline is { } transition)
+            {
+                var outcome = refresh is null ? new V2TransitionCommandOutcome(V2TransitionCommandStatus.Missing) : await refresh.CommitTransitionCommandAsync(RoomId, "transition-annotation-remove", () => Commands.RemoveTransitionAnnotationAsync(RoomId, transition), true);
+                if (outcome.Status == V2TransitionCommandStatus.Committed) { selectedSceneItem = new(V2SceneSelectedItemKind.Transition, operation.EntityId); placementRequest = null; SetRefreshDiagnostic(); QueueModalFocus(state, V2ModalFocusOutcome.Initiator); } else QueueModalFocus(state, V2ModalFocusOutcome.Correction);
+            }
+            else if (operation.RecordKind == "check" && operation.CheckBaseline is { } check)
+            {
+                var outcome = refresh is null ? new V2CheckCommandOutcome(V2CheckCommandStatus.Missing) : await refresh.CommitCheckCommandAsync(RoomId, "check-annotation-remove", () => Commands.RemoveCheckAnnotationAsync(RoomId, check), true);
+                if (outcome.Status == V2CheckCommandStatus.Committed) { selectedSceneItem = new(V2SceneSelectedItemKind.Check, operation.EntityId); placementRequest = null; SetRefreshDiagnostic(); QueueModalFocus(state, V2ModalFocusOutcome.Initiator); } else QueueModalFocus(state, V2ModalFocusOutcome.Correction);
+            }
+            ClearModalState(false); StateHasChanged();
+        }
+        finally { commandGate.Release(); }
+    }
+    private async Task CompleteSubroomGeometryModalAsync()
+    {
+        if (modalState is not { Stage: V2ModalRuntimeStage.ProposalOpen, SubroomGeometryOperation: { } operation } state) return;
+        modalState = state with { Stage = V2ModalRuntimeStage.Committing }; StateHasChanged(); await commandGate.WaitAsync();
+        try
+        {
+            var d = operation.Draft;
+            var outcome = refresh is null || refresh.CurrentRoomId != RoomId ? new V2SubroomCommandOutcome(V2SubroomCommandStatus.Missing) : await refresh.CommitSubroomCommandAsync(RoomId, "subroom-geometry", () => Commands.SaveSubroomGeometryAsync(RoomId, operation.Baseline, d.X, d.Y, d.Width, d.Height), SceneRefreshImpact.SubroomGeometry);
+            if (outcome.Status == V2SubroomCommandStatus.Committed) { SetRefreshDiagnostic(); selectedSceneItem = new(V2SceneSelectedItemKind.Subroom, operation.Baseline.EntityId); QueueModalFocus(state, V2ModalFocusOutcome.Initiator); }
+            else QueueModalFocus(state, V2ModalFocusOutcome.Correction);
+            ClearModalState(false); StateHasChanged();
+        }
+        finally { commandGate.Release(); }
+    }
+    private async Task CompleteSubroomRemoveModalAsync()
+    {
+        if (modalState is not { Stage: V2ModalRuntimeStage.ProposalOpen, SubroomRemoveOperation: { } operation } state) return;
+        modalState = state with { Stage = V2ModalRuntimeStage.Committing }; StateHasChanged(); await commandGate.WaitAsync();
+        try
+        {
+            var outcome = refresh is null || refresh.CurrentRoomId != RoomId ? new V2SubroomCommandOutcome(V2SubroomCommandStatus.Missing) : await refresh.CommitSubroomCommandAsync(RoomId, "subroom-geometry-remove", () => Commands.SaveSubroomGeometryAsync(RoomId, operation.Baseline, null, null, null, null), SceneRefreshImpact.SubroomGeometry);
+            if (outcome.Status == V2SubroomCommandStatus.Committed) { selectedSceneItem = new(V2SceneSelectedItemKind.Subroom, operation.Baseline.EntityId); placementRequest = null; SetRefreshDiagnostic(); QueueModalFocus(state, V2ModalFocusOutcome.Initiator); }
+            else QueueModalFocus(state, V2ModalFocusOutcome.Correction);
+            ClearModalState(false); StateHasChanged();
+        }
+        finally { commandGate.Release(); }
+    }
+    private async Task CompleteSceneDimensionsModalAsync()
+    {
+        if (modalState is not { Stage: V2ModalRuntimeStage.ProposalOpen, SceneDimensionsOperation: { } operation } state) return;
+        if (!TryParseSceneDimensions(operation.Draft, out var draft, out var error))
+        {
+            var invalid = operation.Draft with { ValidationMessage = error };
+            modalState = state with { Content = invalid, SceneDimensionsOperation = operation with { Draft = invalid } };
+            StateHasChanged(); return;
+        }
+        modalState = state with { Stage = V2ModalRuntimeStage.Committing }; StateHasChanged(); await commandGate.WaitAsync();
+        try
+        {
+            // The SQLite command is completion-bound. Capture the operation's
+            // source page identity immediately before admitting it so a route
+            // switch cannot make the destination look like the source after
+            // the await resumes.
+            var sourceRoomId = operation.Baseline.RoomId;
+            var sourceGeneration = refresh?.RefreshGeneration;
+            var outcome = refresh is null || refresh.CurrentRoomId != RoomId
+                ? new V2RoomSceneDimensionsCommandOutcome(V2RoomSceneDimensionsCommandStatus.Missing, "This room is not loaded.")
+                : await refresh.CommitRoomSceneDimensionsCommandAsync(RoomId, "room-scene-dimensions", () => Commands.SaveRoomSceneDimensionsAsync(RoomId, operation.Baseline, draft));
+            // A completion-bound durable command may finish after this page has
+            // been disposed or switched rooms. Its database result is valid, but
+            // it must not restore old modal/focus/refresh state to this page.
+            if (!IsActiveSceneDimensionsOperation(sourceRoomId, sourceGeneration,
+                    outcome.Status == V2RoomSceneDimensionsCommandStatus.Committed))
+            {
+                suppressStaleSceneDimensionsCompletionRender = true;
+                return;
+            }
+            if (outcome.Status == V2RoomSceneDimensionsCommandStatus.Committed) { SetRefreshDiagnostic(); ResetHeaderDraft(); QueueModalFocus(state, V2ModalFocusOutcome.Initiator); ClearModalState(false); }
+            else if (outcome.Status == V2RoomSceneDimensionsCommandStatus.Unchanged) { QueueModalFocus(state, V2ModalFocusOutcome.Initiator); ClearModalState(false); }
+            else
+            {
+                if (refresh is not null && refresh.CurrentRoomId == RoomId) { var before = refresh.LastAppliedRefresh?.Sequence; if (!await refresh.RefreshAsync(RoomId) && refresh.LastAppliedRefresh?.Sequence != before) SetRefreshDiagnostic(); }
+                QueueModalFocus(state, V2ModalFocusOutcome.Correction); ClearModalState(false);
+            }
+            StateHasChanged();
+        }
+        finally { commandGate.Release(); }
+    }
+    private bool IsActiveSceneDimensionsOperation(Guid sourceRoomId, long? sourceGeneration, bool committed) =>
+        !disposed
+        && RoomId == sourceRoomId
+        && displayedRoomId == sourceRoomId
+        && refresh is not null
+        && refresh.CurrentRoomId == sourceRoomId
+        // A committed dimensions command itself performs exactly one refresh,
+        // advancing the iterator once. Any other advance is a route/refresh
+        // supersession and invalidates the operation's page effects.
+        && refresh.RefreshGeneration == sourceGeneration + (committed ? 1 : 0);
+    private static bool TryParseSceneDimensions(V2SceneDimensionsDialogView text, out RoomSceneDimensionsDraft draft, out string error)
+    {
+        var widthBlank = string.IsNullOrWhiteSpace(text.Width); var heightBlank = string.IsNullOrWhiteSpace(text.Height);
+        if (widthBlank && heightBlank) { draft = new(null, null); error = ""; return true; }
+        if (widthBlank || heightBlank) { draft = new(null, null); error = "Enter both dimensions or leave both blank."; return false; }
+        if (!double.TryParse(text.Width, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var width) || !double.TryParse(text.Height, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var height) || !double.IsFinite(width) || !double.IsFinite(height) || width <= 0 || height <= 0)
+        { draft = new(null, null); error = "Dimensions must be finite positive values."; return false; }
+        draft = new(width, height); error = ""; return true;
+    }
+    private async Task CompleteSceneImageCaptureModalAsync()
+    {
+        if (modalState is not { Stage: V2ModalRuntimeStage.ProposalOpen, SceneImageCaptureOperation: { } operation } state) return;
+        if (!TryParseSceneImageDraft(operation.Draft, out var draft))
+        {
+            var invalid = operation.Draft with { AvailabilitySummary = "Enter finite positive scales and finite pan values." };
+            modalState = state with { Content = invalid, SceneImageCaptureOperation = operation with { Draft = invalid } }; StateHasChanged(); return;
+        }
+        // Keep the V1-parity capture surface in place while generation runs; its
+        // modal-local content renders progress in the established footer slot.
+        modalState = state with { Stage = V2ModalRuntimeStage.Committing, Content = operation.Draft }; StateHasChanged(); await commandGate.WaitAsync();
+        try
+        {
+            var sourceRoom = RoomId; var generation = refresh?.RefreshGeneration;
+            var outcome = refresh is null || refresh.CurrentRoomId != RoomId ? new V2SceneImageCaptureCommandOutcome(V2SceneImageCaptureCommandStatus.Missing, "This room is not loaded.") : await refresh.CommitSceneImageCommandAsync(RoomId, "scene-image-capture", () => Commands.ApplySceneImageCaptureAsync(RoomId, draft));
+            if (disposed || RoomId != sourceRoom || refresh?.CurrentRoomId != sourceRoom || refresh.RefreshGeneration != generation + (outcome.Status == V2SceneImageCaptureCommandStatus.Committed ? 1 : 0))
+            {
+                // Async event completion otherwise schedules an additional render on
+                // the current route after this completion-bound source command.
+                suppressStaleSceneImageCaptureCompletionRender = true;
+                return;
+            }
+            if (outcome.Status == V2SceneImageCaptureCommandStatus.Committed) { SetRefreshDiagnostic(); ResetHeaderDraft(); QueueModalFocus(state, V2ModalFocusOutcome.Initiator); ClearModalState(false); }
+            else { var failed = operation.Draft with { AvailabilitySummary = outcome.Message ?? "Scene image capture failed." }; modalState = state with { Content = failed, Stage = V2ModalRuntimeStage.ProposalOpen, SceneImageCaptureOperation = operation with { Draft = failed } }; QueueModalFocus(state, V2ModalFocusOutcome.Correction); }
+            StateHasChanged();
+        }
+        finally { commandGate.Release(); }
+    }
+    private static bool TryParseSceneImageDraft(V2SceneImageCaptureDialogView text, out SceneImageCaptureDraft draft)
+    {
+        double x = 0, y = 0, panX = 0, panY = 0;
+        var ok = double.TryParse(text.ScaleXPercent, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out x)
+            && double.TryParse(text.ScaleYPercent, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out y)
+            && double.TryParse(text.PanXPercent, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out panX)
+            && double.TryParse(text.PanYPercent, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out panY)
+            && double.IsFinite(x) && double.IsFinite(y) && double.IsFinite(panX) && double.IsFinite(panY) && x > 0 && y > 0;
+        draft = new(x, y, panX, panY); return ok;
+    }
+    private async Task CompleteChildDeleteModalAsync()
+    {
+        if (modalState is not { Stage: V2ModalRuntimeStage.ProposalOpen, DeleteConfirmationIntent: { } delete } state) return;
+        modalState = state with { Stage = V2ModalRuntimeStage.Committing }; StateHasChanged();
+        await commandGate.WaitAsync();
+        try
+        {
+            switch (delete.Kind)
+            {
+                case V2DeleteConfirmationKind.Subroom:
+                {
+                    var outcome = refresh is null || refresh.CurrentRoomId != RoomId
+                        ? new V2SubroomCommandOutcome(V2SubroomCommandStatus.Missing, "This room is not loaded.")
+                        : await refresh.CommitSubroomCommandAsync(RoomId, "subroom-permanent-delete", () => Commands.DeleteSubroomAsync(RoomId, delete.EntityId), SceneRefreshImpact.ArchiveRestoreDelete);
+                    if (outcome.Status == V2SubroomCommandStatus.Committed) { SetRefreshDiagnostic(); QueueModalFocus(state, V2ModalFocusOutcome.Initiator); }
+                    else QueueModalFocus(state, V2ModalFocusOutcome.Correction);
+                    break;
+                }
+                case V2DeleteConfirmationKind.Check:
+                {
+                    var outcome = refresh is null || refresh.CurrentRoomId != RoomId
+                        ? new V2CheckCommandOutcome(V2CheckCommandStatus.Missing, "This room is not loaded.")
+                        : await refresh.CommitCheckCommandAsync(RoomId, "check-permanent-delete", () => Commands.DeleteCheckAsync(RoomId, delete.EntityId), SceneRefreshImpact.ArchiveRestoreDelete);
+                    if (outcome.Status == V2CheckCommandStatus.Committed) { SetRefreshDiagnostic(); QueueModalFocus(state, V2ModalFocusOutcome.Initiator); }
+                    else QueueModalFocus(state, V2ModalFocusOutcome.Correction);
+                    break;
+                }
+            }
+            ClearModalState(false); StateHasChanged();
+        }
+        finally { commandGate.Release(); }
+    }
+    private async Task CompleteRoomDeleteModalAsync()
+    {
+        if (modalState is not { Stage: V2ModalRuntimeStage.ProposalOpen, RoomPermanentDeleteOperation: { } delete } state) return;
+        modalState = state with { Stage = V2ModalRuntimeStage.Committing }; StateHasChanged();
+        await commandGate.WaitAsync();
+        try
+        {
+            var outcome = refresh is null || refresh.CurrentRoomId != RoomId || delete.RoomId != RoomId
+                ? new V2RoomLifecycleCommandOutcome(V2RoomLifecycleCommandStatus.Missing, "This room is not loaded.")
+                : await refresh.CommitRoomLifecycleCommandAsync(RoomId, "room-permanent-delete", () => Commands.DeleteRoomAsync(RoomId), SceneRefreshImpact.RoomLifecycle);
+            if (outcome.Status == V2RoomLifecycleCommandStatus.Committed)
+            {
+                // The missing refresh has cleared the complete room view. Successful
+                // deletion intentionally follows its lifecycle destination, not field focus.
+                headerBaseline = null; headerDraft = null; meaningfulPendingDraft = false; showArchivedChildren = false;
+                refreshDiagnostic = null; ClearModalState(); StateHasChanged();
+                Navigation.NavigateTo("/", replace: true);
+            }
+            else { QueueModalFocus(state, V2ModalFocusOutcome.Correction); ClearModalState(false); StateHasChanged(); }
+        }
+        finally { commandGate.Release(); }
+    }
+    /// <summary>Test-only completion point models the already-complete refresh required before committed focus.</summary>
+    public async Task CompleteModalTestCommitAfterRefreshAsync()
+    {
+        if (modalState is not { Stage: V2ModalRuntimeStage.Committing } state) return;
+        QueueModalFocus(state, state.PendingTargetId is null ? V2ModalFocusOutcome.Initiator : V2ModalFocusOutcome.PendingTarget);
+        ClearModalState(false);
+        StateHasChanged();
+    }
+    public async Task CompleteModalTestFailureAsync()
+    {
+        if (modalState is not { } state) return;
+        QueueModalFocus(state, V2ModalFocusOutcome.Correction);
+        ClearModalState(false);
+        StateHasChanged();
+    }
+    private async Task CancelModalAsync()
+    {
+        if (modalState is not { Stage: V2ModalRuntimeStage.ProposalOpen } state) return;
+        if (state.TransitionOperation is V2TransitionInverseEditModalOperation edit)
+        {
+            var reverted = Commands.RevertInverse(edit.Proposal);
+            if (reverted.RetainedDraft is { } draft) transitionTable?.RetainRevertedDraft(edit.Proposal.SourceBaseline, draft);
+        }
+        if (state.TransitionOperation is V2TransitionInverseCreateModalOperation create)
+        {
+            var reverted = Commands.RevertCreateInverse(create.Proposal);
+            if (reverted.RetainedDraft is { } draft) transitionTable?.RetainRevertedCreateDraft(draft);
+        }
+        if (state.RoomReferenceRenameProposal is { } rename)
+        {
+            var reverted = Commands.RevertRoomReferenceRename(rename);
+            headerDraft = reverted.RetainedDraft ?? headerDraft;
+            headerSaveStatus = new(V2RoomHeaderSaveState.Saved);
+        }
+        if (state.SubroomReferenceRenameProposal is { } subroomRename)
+        {
+            var reverted = Commands.RevertSubroomReferenceRename(subroomRename);
+            if (reverted.RetainedDraft is { } draft) subroomTable?.RetainSubroomReferenceConflict(subroomRename.SourceBaseline, draft);
+        }
+        QueueModalFocus(state, V2ModalFocusOutcome.Initiator);
+        ClearModalState(false);
+        StateHasChanged();
+    }
+    private void QueueModalFocus(V2ModalRuntimeState state, V2ModalFocusOutcome outcome) => pendingModalFocus = new(state.InitiatorId, state.PendingTargetId, outcome);
+    private void QueueTransitionMetadataCorrectionFocus(V2ModalRuntimeState state, Guid transitionId, V2TransitionCommandStatus status)
+    {
+        // The stable modal initiator remains correction focus for conflicts. A
+        // Missing transition has no surviving row/action after its required full
+        // refresh, so use the one settled page-level fallback instead of DOM or
+        // row-index recovery.
+        var rowMissing = view?.Transitions.ActiveRows.Concat(view.Transitions.ArchivedRows).All(x => x.EntityId != transitionId) != false;
+        pendingModalFocus = status == V2TransitionCommandStatus.Missing && rowMissing
+            ? new(RoomFriendlyNameFocusId, null, V2ModalFocusOutcome.Correction)
+            : new(state.InitiatorId, state.PendingTargetId, V2ModalFocusOutcome.Correction);
+    }
+    private void QueueCheckMetadataCorrectionFocus(V2ModalRuntimeState state, Guid checkId, V2CheckCommandStatus status)
+    {
+        var rowMissing = view?.Checks.ActiveRows.Concat(view.Checks.ArchivedRows).All(x => x.EntityId != checkId) != false;
+        pendingModalFocus = status == V2CheckCommandStatus.Missing && rowMissing
+            ? new(RoomFriendlyNameFocusId, null, V2ModalFocusOutcome.Correction)
+            : new(state.InitiatorId, state.PendingTargetId, V2ModalFocusOutcome.Correction);
+    }
+    private void ClearModalState(bool discardPendingFocus = true) { modalState = null; modalFocusRequested = false; if (discardPendingFocus) pendingModalFocus = null; }
+}

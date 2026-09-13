@@ -1,0 +1,61 @@
+@inject MapLinkService MapLinks
+
+<div class="confirmation-backdrop"><section class="confirmation-modal map-link-modal" role="dialog" aria-modal="true" aria-labelledby="map-link-title">
+    <h2 id="map-link-title">map links</h2>
+    <input class="map-link-search" @bind="search" @bind:event="oninput" placeholder="search map links" autocomplete="off" aria-label="Search map links" />
+    <datalist id="map-link-room-references">@foreach (var room in data?.ActiveRooms ?? []) { <option value="@room.ReferenceId"></option> }</datalist>
+    <div class="map-link-table-wrap"><table class="map-link-table"><thead><tr><th>zone</th><th>cache key</th><th>chunks</th><th>room reference</th><th>state</th></tr></thead><tbody>
+        <Virtualize TItem="MapLinkRow" Items="FilteredRows" Context="row" ItemSize="28" SpacerElement="tr">
+            <tr><td>@row.ZoneInGameId</td><td>@row.CacheKey</td><td>@row.ChunkIndexes</td><td><input list="map-link-room-references" value="@DraftFor(row)" @onchange="args => SetDraft(row.MapSceneId, args.Value?.ToString())" autocomplete="off" /></td><td class="@(row.ResolutionStatus is { } status && status != ReferenceResolutionStatus.Resolved ? "danger" : "")">@(row.ResolutionStatus?.ToString() ?? "unlinked")</td></tr>
+        </Virtualize>
+    </tbody></table></div>
+    @if (mergeResult is not null) { <p class="map-link-merge-result">@mergeResult</p> }
+    <div class="confirmation-actions"><button type="button" @onclick="MergeAsync">merge map scenes into rooms</button><button type="button" @onclick="ApplyAsync">apply</button><button type="button" @onclick="CloseAsync">cancel</button></div>
+</section></div>
+
+@code {
+    [Parameter] public Guid? ResolvedRoomId { get; set; }
+    [Parameter] public Guid? MapSceneId { get; set; }
+    [Parameter] public EventCallback<bool> OnClosed { get; set; }
+    [Parameter] public EventCallback OnApplying { get; set; }
+
+    private MapLinkEditorData? data;
+    private readonly Dictionary<Guid, string?> drafts = [];
+    private string search = string.Empty;
+    private string? mergeResult;
+    private bool durableChanged;
+
+    protected override async Task OnInitializedAsync()
+    {
+        data = await MapLinks.GetAsync(ResolvedRoomId, MapSceneId);
+        foreach (var row in data.Rows) drafts[row.MapSceneId] = row.RoomReferenceText;
+    }
+
+    private List<MapLinkRow> FilteredRows => data?.Rows.Where(row => string.IsNullOrWhiteSpace(search) || $"{row.ZoneInGameId} {row.CacheKey} {row.ChunkIndexes} {row.RoomReferenceText} {row.ResolutionStatus} {row.LinkedRoomFriendlyName}".Contains(search.Trim(), StringComparison.OrdinalIgnoreCase)).ToList() ?? [];
+    private string? DraftFor(MapLinkRow row) => drafts.GetValueOrDefault(row.MapSceneId, row.RoomReferenceText);
+    private void SetDraft(Guid id, string? value) => drafts[id] = value;
+    private Task CloseAsync() => OnClosed.InvokeAsync(durableChanged);
+    private async Task ApplyAsync()
+    {
+        await OnApplying.InvokeAsync();
+        await MapLinks.SaveAsync(drafts.Select(x => new MapLinkDraft(x.Key, x.Value)).ToList());
+        await OnClosed.InvokeAsync(true);
+    }
+
+    private async Task MergeAsync()
+    {
+        var dirtyDrafts = data!.Rows
+            .Where(row => DraftFor(row) != row.RoomReferenceText)
+            .ToDictionary(row => row.MapSceneId, row => DraftFor(row));
+        var merged = await MapLinks.MergeBlankMapScenesIntoRoomsAsync();
+        if (merged > 0) durableChanged = true;
+        data = await MapLinks.GetAsync(ResolvedRoomId, MapSceneId);
+        drafts.Clear();
+        foreach (var row in data.Rows)
+        {
+            drafts[row.MapSceneId] = dirtyDrafts.GetValueOrDefault(row.MapSceneId, row.RoomReferenceText);
+        }
+
+        mergeResult = merged == 1 ? "merged 1 map scene" : $"merged {merged} map scenes";
+    }
+}

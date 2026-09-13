@@ -1,0 +1,28 @@
+@using Silksong_Rando_Logic_Manager.Components.RoomEditorV2.Contracts
+<table class="logic-table connection-table v2-read-only-table">
+    <thead><tr><th class="connection-state-heading">state</th><th>alias</th><th>name</th><th>source</th><th>destination</th><th>requirements</th><th>notes</th><th>todo</th><th>verify</th></tr></thead>
+    <tbody>
+    @foreach (var row in Rows)
+    {
+        <tr>
+            <td class="connection-state @SeverityClass(Max(row.PathwaySeverity, row.NoSubroomSeverity))" title="@row.PathwayState"><i class="@PathwayIcon(row.PathwayState)" role="img" aria-label="@row.PathwayState"></i></td>
+            <td class="@SeverityClass(row.AliasSeverity)">@row.Alias</td>
+            <td class="@SeverityClass(row.FriendlyNameSeverity)">@row.FriendlyName</td>
+            <td class="@SeverityClass(row.SourceReferenceSeverity)" title="@row.SourceReferenceState">@row.SourceSubroomReferenceText</td>
+            <td class="@SeverityClass(row.DestinationReferenceSeverity)" title="@row.DestinationReferenceState">@row.DestinationSubroomReferenceText</td>
+            <td class="@RequirementsClass(row.RequirementsSeverity, row.IsTodo)">@row.Requirements</td>
+            <td class="detail-cell">@row.Notes</td>
+            <td class="checkbox-cell @(row.IsTodo ? "todo" : null)" aria-label="@(row.IsTodo ? "Connection is TODO" : "Connection is not TODO")">@(row.IsTodo ? "✓" : "")</td>
+            <td class="verification-cell" aria-label="Connection verification: @VerificationText(row.IsVerified)">@VerificationText(row.IsVerified)</td>
+        </tr>
+    }
+    </tbody>
+</table>
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<ConnectionRowView> Rows { get; set; } = [];
+    private static V2Severity Max(V2Severity first, V2Severity second) => (V2Severity)Math.Max((int)first, (int)second);
+    private static string? SeverityClass(V2Severity severity) => severity switch { V2Severity.Warning => "warning", V2Severity.Danger => "danger", _ => null };
+    private static string? RequirementsClass(V2Severity severity, bool todo) => severity switch { V2Severity.Warning => "warning", V2Severity.Danger => "danger", _ when todo => "todo", _ => null };
+    private static string VerificationText(bool? value) => value switch { true => "verified", false => "not verified", null => "unknown" };
+    private static string PathwayIcon(string state) => state switch { "one-way" => "fa-solid fa-arrow-right connection-state-one-way", "bidirectional" => "fa-solid fa-arrow-right-arrow-left", "ambiguous" => "fa-solid fa-circle-exclamation", _ => "fa-solid fa-triangle-exclamation" };
+}

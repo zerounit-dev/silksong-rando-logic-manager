@@ -1,0 +1,60 @@
+@using Silksong_Rando_Logic_Manager.Components.RoomEditorV2.Contracts
+@using Silksong_Rando_Logic_Manager.Components.RequirementCatalogue
+@using Microsoft.JSInterop
+@inject IJSRuntime JS
+
+@if (Content is not null)
+{
+    @if (Content is V2RequirementSyntaxGuideDialogView guide)
+    {
+        <RequirementSyntaxGuideModal Reference="guide.Reference" DialogId="v2-page-modal-dialog" Manage="ManageRequirementCatalogue" Close="Backdrop" />
+    }
+    else
+    {
+    <div class="confirmation-backdrop v2-page-modal-backdrop" role="presentation" @onclick="Backdrop">
+        <section id="v2-page-modal-dialog" class="confirmation-modal v2-page-modal @(Content is V2SceneImageCaptureDialogView ? "scene-image-capture-modal" : "")" data-v2-modal-stage="@Stage" role="dialog" aria-modal="true" aria-labelledby="v2-page-modal-title" tabindex="-1" @onclick:stopPropagation="true" @onkeydown="KeyDown">
+            @switch (Content)
+            {
+                case V2ReferenceUpdateProposalView reference: <V2ReferenceUpdateProposalContent View="reference" Revert="Cancel" DoNotUpdate="DoNotUpdate" Update="Apply" Disabled="@(Stage == V2ModalRuntimeStage.Committing)" /> break;
+                case V2InverseSetupProposalView inverse: <V2InverseSetupProposalContent View="inverse" Revert="Cancel" DoNotUpdate="DoNotUpdate" Update="Apply" Disabled="@(Stage == V2ModalRuntimeStage.Committing)" /> break;
+                case V2PermanentDeleteDialogView delete: <V2PermanentDeleteDialogContent View="delete" Cancel="Cancel" Confirm="Apply" Disabled="@(Stage == V2ModalRuntimeStage.Committing)" /> break;
+                case V2InGameMetadataDialogView metadata when MetadataDraft is not null: <V2InGameMetadataDialogContent View="metadata" Draft="MetadataDraft" Disabled="@(Stage == V2ModalRuntimeStage.Committing)" DraftChanged="MetadataDraftChanged" Cancel="Cancel" Apply="Apply" /> break;
+                case V2InGameMetadataDialogView metadata when CheckMetadataDraft is not null: <V2CheckInGameMetadataDialogContent View="metadata" Draft="CheckMetadataDraft" Disabled="@(Stage == V2ModalRuntimeStage.Committing)" DraftChanged="CheckMetadataDraftChanged" Cancel="Cancel" Apply="Apply" /> break;
+                case V2SceneDimensionsDialogView dimensions: <V2SceneDimensionsDialogContent View="dimensions" Disabled="@(Stage == V2ModalRuntimeStage.Committing)" DraftChanged="SceneDimensionsDraftChanged" Cancel="Cancel" Apply="Apply" /> break;
+                case V2SceneImageCaptureDialogView capture: <V2SceneImageCaptureDialogContent View="capture" Disabled="@(Stage == V2ModalRuntimeStage.Committing)" DraftChanged="SceneImageCaptureDraftChanged" Reset="SceneImageCaptureReset" Cancel="Cancel" Apply="Apply" /> break;
+                case V2SceneImageGenerationProgressView progress: <section data-scene-image-generation-progress="true" role="status" aria-live="assertive"><h2 id="v2-page-modal-title">generating scene image</h2><p id="v2-page-modal-description">@progress.Message</p></section> break;
+                case V2CheckDisableDialogView checkDisable: <V2CheckDisableDialogContent View="checkDisable" /> break;
+                case V2ConnectionRemoveDialogView connectionRemove: <V2ConnectionRemoveDialogContent View="connectionRemove" Cancel="Cancel" Confirm="Apply" Disabled="@(Stage == V2ModalRuntimeStage.Committing)" /> break;
+                case V2DirectAnnotationRemoveDialogView directRemove: <V2DirectAnnotationRemoveDialogContent View="directRemove" Cancel="Cancel" Confirm="Apply" Disabled="@(Stage == V2ModalRuntimeStage.Committing)" /> break;
+                case V2SubroomGeometryDialogView geometry: <V2SubroomGeometryDialogContent View="geometry" DraftChanged="SubroomGeometryDraftChanged" Cancel="Cancel" Apply="Apply" Disabled="@(Stage == V2ModalRuntimeStage.Committing)" /> break;
+                case V2SubroomRemoveDialogView subroomRemove: <V2SubroomRemoveDialogContent View="subroomRemove" Cancel="Cancel" Confirm="Apply" Disabled="@(Stage == V2ModalRuntimeStage.Committing)" /> break;
+            }
+        </section>
+    </div>
+    }
+}
+
+@code {
+    [Parameter] public V2PageModalContentView? Content { get; set; }
+    [Parameter] public EventCallback Cancel { get; set; }
+    [Parameter] public EventCallback Apply { get; set; }
+    [Parameter] public EventCallback DoNotUpdate { get; set; }
+    [Parameter] public bool FocusRequested { get; set; }
+    [Parameter] public V2ModalRuntimeStage? Stage { get; set; }
+    [Parameter] public TransitionInGameMetadataDraft? MetadataDraft { get; set; }
+    [Parameter] public EventCallback<TransitionInGameMetadataDraft> MetadataDraftChanged { get; set; }
+    [Parameter] public CheckInGameMetadataDraft? CheckMetadataDraft { get; set; }
+    [Parameter] public EventCallback<CheckInGameMetadataDraft> CheckMetadataDraftChanged { get; set; }
+    [Parameter] public EventCallback<V2SubroomGeometryDialogView> SubroomGeometryDraftChanged { get; set; }
+    [Parameter] public EventCallback<V2SceneDimensionsDialogView> SceneDimensionsDraftChanged { get; set; }
+    [Parameter] public EventCallback<V2SceneImageCaptureDialogView> SceneImageCaptureDraftChanged { get; set; }
+    [Parameter] public EventCallback SceneImageCaptureReset { get; set; }
+    [Parameter] public EventCallback ManageRequirementCatalogue { get; set; }
+    private Task Backdrop() => Stage == V2ModalRuntimeStage.ProposalOpen ? Cancel.InvokeAsync() : Task.CompletedTask;
+    private Task KeyDown(KeyboardEventArgs args) => args.Key == "Escape" && Stage == V2ModalRuntimeStage.ProposalOpen ? Cancel.InvokeAsync() : Task.CompletedTask;
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (Content is not null && FocusRequested)
+            await JS.InvokeVoidAsync("focusV2ModalDialog", "v2-page-modal-dialog");
+    }
+}

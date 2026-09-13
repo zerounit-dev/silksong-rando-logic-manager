@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="Silksong Rando Logic Manager/Silksong Rando Logic Manager/Silksong Rando Logic Manager.csproj" />
+  <Project Path="tests/Silksong Rando Logic Manager.Tests/Silksong Rando Logic Manager.Tests.csproj" />
+  <Project Path="tools/DatabaseBackup/DatabaseBackup.csproj" />
+  <Project Path="tools/SceneImageBuilder/SceneImageBuilder.csproj" />
+</Solution>

@@ -1,0 +1,35 @@
+@using Silksong_Rando_Logic_Manager.Components.RoomEditorV2.Contracts
+
+<div class="room-actions">
+        @if (!View.IsArchived)
+        {
+            <button class="room-content-toggle" type="button" @onclick="RequestRecheckRoomLogic" disabled="@View.RecheckRoomLogicBusy"><i class="fa-solid fa-rotate" aria-hidden="true"></i> @(View.RecheckRoomLogicBusy ? "rechecking room logic…" : "recheck room logic")</button>
+        }
+        <button class="room-content-toggle" type="button" title="@(View.ShowArchivedChildren ? "Hide archived room contents" : "Show archived room contents")" aria-label="@(View.ShowArchivedChildren ? "Hide archived room contents" : "Show archived room contents")" aria-pressed="@(View.ShowArchivedChildren ? "true" : "false")" @onclick="ToggleArchivedChildren"><i class="fa-solid @(View.ShowArchivedChildren ? "fa-eye-slash" : "fa-eye")" aria-hidden="true"></i> @(View.ShowArchivedChildren ? "hide archived room contents" : "show archived room contents")</button>
+        @if (View.IsArchived)
+        {
+            <button id="room-restore" class="icon-button" type="button" aria-label="restore room" title="restore room" @onclick="Restore"><i class="fa-solid fa-rotate-left" aria-hidden="true"></i></button>
+            <button id="room-permanent-delete" class="icon-button" type="button" aria-label="delete room permanently" title="delete room permanently" @onclick="PermanentDelete"><i class="fa-solid fa-trash" aria-hidden="true"></i></button>
+        }
+    else
+    {
+        <button id="room-archive" class="archive-room-button" type="button" @onclick="Archive"><i class="fa-solid fa-box-archive" aria-hidden="true"></i> archive room</button>
+    }
+    <button id="room-zone-export" class="icon-button room-current-export" type="button" aria-label="export zone" title="@(View.CanExportZone ? "Export every active and archived room in this room group." : "Export zone is unavailable because this room is not in a room group.")" disabled="@(!View.CanExportZone)" @onclick="ExportZone"><i class="fa-solid fa-file-export" aria-hidden="true"></i> export zone</button>
+    <button id="room-current-export" class="icon-button room-current-export" type="button" aria-label="export current room" title="export current room" @onclick="ExportCurrentRoom"><i class="fa-solid fa-file-export" aria-hidden="true"></i> export room</button>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public RoomLifecycleContentControlsView View { get; set; } = null!;
+    [Parameter] public EventCallback ToggleArchivedChildren { get; set; }
+    [Parameter] public EventCallback<RoomLifecycleContentControlsIntent> Intent { get; set; }
+    [Parameter] public EventCallback Archive { get; set; }
+    [Parameter] public EventCallback Restore { get; set; }
+    [Parameter] public EventCallback PermanentDelete { get; set; }
+    [Parameter] public EventCallback<RoomExportIntent> CurrentRoomExport { get; set; }
+    [Parameter] public EventCallback<RoomExportIntent> ZoneExport { get; set; }
+    [Parameter, EditorRequired] public Guid RoomId { get; set; }
+    private Task RequestRecheckRoomLogic() => Intent.InvokeAsync(RoomLifecycleContentControlsIntent.RecheckRoomLogic);
+    private Task ExportCurrentRoom() => CurrentRoomExport.InvokeAsync(new(RoomId));
+    private Task ExportZone() => ZoneExport.InvokeAsync(new(RoomId));
+}

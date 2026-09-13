@@ -1,0 +1,205 @@
+@using Microsoft.AspNetCore.Components.Rendering
+@using Silksong_Rando_Logic_Manager.Services
+
+<section class="requirement-syntax-guide" aria-label="Requirement syntax guide">
+    <h2 id="v2-page-modal-title">syntax guide</h2>
+    <div class="requirement-syntax-guide-tabs" role="tablist" aria-label="Syntax guide section">
+        <button id="requirement-syntax-guide-tab-how-to-write" type="button" role="tab" aria-selected="@(tab == GuideTab.HowToWrite)" aria-controls="requirement-syntax-guide-content" class="@(tab == GuideTab.HowToWrite ? "selected" : null)" @onclick="() => tab = GuideTab.HowToWrite">How to write</button>
+        <button id="requirement-syntax-guide-tab-location-types" type="button" role="tab" aria-selected="@(tab == GuideTab.LocationTypes)" aria-controls="requirement-syntax-guide-content" class="@(tab == GuideTab.LocationTypes ? "selected" : null)" @onclick="() => tab = GuideTab.LocationTypes">Location types</button>
+        <button id="requirement-syntax-guide-tab-requirement-types" type="button" role="tab" aria-selected="@(tab == GuideTab.RequirementTypes)" aria-controls="requirement-syntax-guide-content" class="@(tab == GuideTab.RequirementTypes ? "selected" : null)" @onclick="() => tab = GuideTab.RequirementTypes">Requirement types</button>
+        <button id="requirement-syntax-guide-tab-items" type="button" role="tab" aria-selected="@(tab == GuideTab.Items)" aria-controls="requirement-syntax-guide-content" class="@(tab == GuideTab.Items ? "selected" : null)" @onclick="() => tab = GuideTab.Items">Items</button>
+    </div>
+    <div id="requirement-syntax-guide-content" class="requirement-syntax-guide-content" role="tabpanel" aria-labelledby="@ActiveTabId">
+        @if (tab == GuideTab.HowToWrite)
+        {
+            <div class="requirement-syntax-guide-prose">
+                <section>
+                    <h3>Write a requirement</h3>
+                    <p>A requirement is a recognized phrase such as <code><span class="guide-token-requirement">dash</span></code>, <code><span class="guide-token-requirement">break vines</span> <span class="guide-token-direction">left</span></code>, or <code><span class="guide-token-difficulty">hard</span> <span class="guide-token-requirement">spike pogo</span></code>.</p>
+                    <p>The Requirement types view shows each accepted pattern. Words in braces are replaced with the described value, and <code>?</code> marks an optional value. Requirement types and Items are the current accepted vocabulary.</p>
+                    <p>Use <code><span class="guide-token-requirement">none</span></code> when nothing is required. Use <code><span class="guide-token-requirement">invalid</span></code> when the requirement can never be met.</p>
+                </section>
+                <section>
+                    <h3>Combine requirements</h3>
+                    <p>Use uppercase <code class="guide-token-fixed">AND</code> or <code class="guide-token-fixed">OR</code> throughout one chain: <code><span class="guide-token-requirement">dash</span> <span class="guide-token-fixed">AND</span> <span class="guide-token-requirement">clawline</span> <span class="guide-token-fixed">AND</span> <span class="guide-token-requirement">silk soar</span></code> or <code><span class="guide-token-requirement">dash</span> <span class="guide-token-fixed">OR</span> <span class="guide-token-requirement">clawline</span></code>. When mixing them, use parentheses to make the grouping explicit: <code><span class="guide-token-requirement">dash</span> <span class="guide-token-fixed">AND</span> (<span class="guide-token-requirement">clawline</span> <span class="guide-token-fixed">OR</span> <span class="guide-token-requirement">silk soar</span>)</code>.</p>
+                </section>
+                <section>
+                    <h3>Add a difficulty</h3>
+                    <p>The only <span class="guide-token-difficulty">difficulty</span> values are <code class="guide-token-difficulty">easy</code>, <code class="guide-token-difficulty">medium</code>, and <code class="guide-token-difficulty">hard</code>. A required <span class="guide-token-difficulty">difficulty</span> appears before its requirement type: <code><span class="guide-token-difficulty">{difficulty}</span> <span class="guide-token-requirement">heal stall</span></code>, for example <code><span class="guide-token-difficulty">medium</span> <span class="guide-token-requirement">heal stall</span></code>.</p>
+                    <p>An optional <span class="guide-token-difficulty">difficulty</span> uses <code><span class="guide-token-difficulty">{difficulty?}</span> <span class="guide-token-requirement">scuttlebrace</span></code>. Write <code><span class="guide-token-requirement">scuttlebrace</span></code> or add a <span class="guide-token-difficulty">difficulty</span>, as in <code><span class="guide-token-difficulty">hard</span> <span class="guide-token-requirement">scuttlebrace</span></code>.</p>
+                </section>
+                <section>
+                    <h3>Add a direction</h3>
+                    <p>The only <span class="guide-token-direction">direction</span> values are <code class="guide-token-direction">left</code>, <code class="guide-token-direction">right</code>, <code class="guide-token-direction">up</code>, and <code class="guide-token-direction">down</code>. A <span class="guide-token-direction">direction</span> follows the requirement type: <code><span class="guide-token-requirement">break vines</span> <span class="guide-token-direction">{direction}</span></code>. Examples are <code><span class="guide-token-requirement">break vines</span> <span class="guide-token-direction">left</span></code> and <code><span class="guide-token-requirement">open airlock</span> <span class="guide-token-direction">right</span></code>.</p>
+                </section>
+                <section>
+                    <h3>Require an item or amount</h3>
+                    <p>Use <code><span class="guide-token-requirement">have</span> <span class="guide-token-item">{item}</span></code> for <span class="guide-token-item">item</span> ownership, for example <code><span class="guide-token-requirement">have</span> <span class="guide-token-item">curveclaw</span></code>. <span class="guide-token-amount">Amount</span> requirements use their own requirement type followed by a positive whole number, such as <code><span class="guide-token-requirement">mossberries</span> <span class="guide-token-amount">5</span></code> and <code><span class="guide-token-requirement">tool slots unlocked</span> <span class="guide-token-amount">2</span></code>. Do not use <code><span class="guide-token-requirement">have</span></code> for an <span class="guide-token-amount">amount</span> unless that exact requirement type exists in the managed catalogue.</p>
+                    <p><code><span class="guide-token-requirement">scuttlebrace</span></code> means the player can perform the movement technique: owning <span class="guide-token-item">Scuttlebrace</span>, having <span class="guide-token-requirement">Dash</span>, and having an available <span class="guide-token-item">yellow tool slot</span> to equip it. <code><span class="guide-token-requirement">have</span> <span class="guide-token-item">scuttlebrace</span></code> means ownership only; it does not by itself require Dash, an available slot, or the ability to use the technique.</p>
+                </section>
+                <section>
+                    <h3>Refer to another check</h3>
+                    <table class="requirement-syntax-guide-table requirement-syntax-guide-checks">
+                        <thead><tr><th>Where to search</th><th>Syntax</th><th>Example</th></tr></thead>
+                        <tbody>
+                            <tr><td>This room</td><td><code><span class="guide-token-requirement">complete</span> <span class="guide-token-check-local">&lt;check name&gt;</span></code></td><td><code><span class="guide-token-requirement">complete</span> <span class="guide-token-check-local">bellway pay gate</span></code></td></tr>
+                            <tr><td>One named room</td><td><code><span class="guide-token-requirement">complete</span> <span class="guide-token-check-in">&lt;check name&gt;</span> <span class="guide-token-fixed">IN</span> <span class="guide-token-room-in">&lt;room reference&gt;</span></code></td><td><code><span class="guide-token-requirement">complete</span> <span class="guide-token-check-in">bell beast boss fight</span> <span class="guide-token-fixed">IN</span> <span class="guide-token-room-in">the marrow bellway</span></code></td></tr>
+                            <tr><td>Full catalogue</td><td><code><span class="guide-token-requirement">complete</span> <span class="guide-token-fixed">THE</span> <span class="guide-token-check-the">&lt;check name&gt;</span></code></td><td><code><span class="guide-token-requirement">complete</span> <span class="guide-token-fixed">THE</span> <span class="guide-token-check-the">lace 1 boss fight</span></code></td></tr>
+                        </tbody>
+                    </table>
+                    <p><code class="guide-token-fixed">IN</code> and <code class="guide-token-fixed">THE</code> must be uppercase. A <span class="guide-token-room-in">room reference</span> selects the named room, and each form requires exactly one complete active <span class="guide-token-check-local">check name</span> match. Each form searches only the place shown and never falls back elsewhere. Other check requirement types use the same forms.</p>
+                </section>
+                <section>
+                    <h3>Add a note</h3>
+                    <p>Put one plain, nonnested <span class="guide-token-note">note</span> immediately after one requirement: <code><span class="guide-token-requirement">break wall</span> <span class="guide-token-direction">right</span> <span class="guide-token-note">(shortcut)</span></code> or <code><span class="guide-token-requirement">none</span> <span class="guide-token-note">(stand on pressure plate)</span></code>. A <span class="guide-token-note">note</span> cannot contain another pair of parentheses. It adds context, not another requirement. Parentheses around requirements instead group <code class="guide-token-fixed">AND</code>/<code class="guide-token-fixed">OR</code>.</p>
+                </section>
+                <section>
+                    <h3>What the highlighting means</h3>
+                    <p>Unrecognized or incorrectly written text is <span class="guide-diagnostic-danger">red</span>. Missing required content, or a room or check that cannot be found uniquely, is <span class="guide-diagnostic-warning">orange</span>.</p>
+                    <p>Highlighting is guidance only. The text remains savable exactly as written.</p>
+                </section>
+            </div>
+        }
+        else if (tab == GuideTab.LocationTypes)
+        {
+            <table class="requirement-syntax-guide-table requirement-syntax-guide-reference requirement-syntax-guide-location-types"><thead><tr><th>Name</th><th>Description</th><th>Examples</th></tr></thead><tbody>
+            @foreach (var group in Reference.LocationTypes.GroupBy(type => type.Group, StringComparer.Ordinal))
+            {
+                <tr class="requirement-syntax-guide-category"><th colspan="3">@group.Key</th></tr>
+                @foreach (var type in group)
+                {
+                    <tr class="requirement-syntax-guide-reference-row"><td class="requirement-syntax-guide-location-name">@type.Name</td><td>@type.Description</td><td>@type.Examples</td></tr>
+                }
+            }
+            </tbody></table>
+        }
+        else if (tab == GuideTab.RequirementTypes)
+        {
+            <label class="requirement-syntax-guide-search">search <input aria-label="Search requirement types" @bind="predicateSearch" @bind:event="oninput" /></label>
+            <table class="requirement-syntax-guide-table requirement-syntax-guide-reference"><thead><tr><th class="requirement-syntax-guide-requirement-type-pattern">How to write it</th><th>Other accepted names</th><th>Notes</th></tr></thead><tbody>
+            @foreach (var group in PredicateGroups)
+            {
+                @if (group.Category is not null) { <tr class="requirement-syntax-guide-category"><th colspan="3">@group.Category</th></tr> }
+                @foreach (var predicate in group.Rows)
+                {
+                    var aliases = predicate.ParsedAliases;
+                    <tr class="requirement-syntax-guide-reference-row"><td class="catalogue-monospace requirement-syntax-guide-requirement-type-pattern">@TokenizedPattern(predicate.InputSyntax.Replace("{predicate}", aliases[0], StringComparison.Ordinal))</td><td>@string.Join(", ", aliases.Skip(1))</td><td class="guide-token-note">@predicate.Notes</td></tr>
+                }
+            }
+            </tbody></table>
+        }
+        else
+        {
+            <label class="requirement-syntax-guide-search">search <input aria-label="Search items" @bind="itemSearch" @bind:event="oninput" /></label>
+            <table class="requirement-syntax-guide-table requirement-syntax-guide-reference"><thead><tr><th>Item name</th><th>Other accepted names</th><th>Notes</th></tr></thead><tbody>
+            @foreach (var group in ItemGroups)
+            {
+                @if (group.Category is not null) { <tr class="requirement-syntax-guide-category"><th colspan="3">@group.Category</th></tr> }
+                @foreach (var item in group.Rows)
+                {
+                    var aliases = item.ParsedAliases;
+                    <tr class="requirement-syntax-guide-reference-row"><td class="guide-token-item">@aliases[0]</td><td class="guide-token-item">@string.Join(", ", aliases.Skip(1))</td><td class="guide-token-note">@item.Notes</td></tr>
+                }
+            }
+            </tbody></table>
+        }
+    </div>
+    <div class="requirement-catalogue-modal-footer requirement-syntax-guide-footer"><div class="requirement-catalogue-modal-alternatives"><button type="button" class="catalogue-modal-action catalogue-modal-alternative" @onclick="Manage">manage requirement catalogue</button></div><div class="requirement-catalogue-modal-commit-group"><button type="button" class="catalogue-modal-action catalogue-modal-close" @onclick="Close">close</button></div></div>
+</section>
+
+@code {
+    private enum GuideTab { HowToWrite, LocationTypes, RequirementTypes, Items }
+    private sealed record PredicateGroup(string? Category, IReadOnlyList<RequirementPredicateReferenceView> Rows);
+    private sealed record ItemGroup(string? Category, IReadOnlyList<RequirementItemReferenceView> Rows);
+
+    [Parameter, EditorRequired] public RequirementCatalogueReferenceView Reference { get; set; } = null!;
+    [Parameter] public EventCallback Manage { get; set; }
+    [Parameter] public EventCallback Close { get; set; }
+
+    private GuideTab tab;
+    private string predicateSearch = "", itemSearch = "";
+    private string ActiveTabId => tab switch
+    {
+        GuideTab.HowToWrite => "requirement-syntax-guide-tab-how-to-write",
+        GuideTab.LocationTypes => "requirement-syntax-guide-tab-location-types",
+        GuideTab.RequirementTypes => "requirement-syntax-guide-tab-requirement-types",
+        _ => "requirement-syntax-guide-tab-items"
+    };
+
+    private IReadOnlyList<PredicateGroup> PredicateGroups => GroupPredicates(Reference.Predicates, predicateSearch);
+    private IReadOnlyList<ItemGroup> ItemGroups => GroupItems(Reference.Items, itemSearch);
+
+    private static IReadOnlyList<PredicateGroup> GroupPredicates(IReadOnlyList<RequirementPredicateReferenceView> rows, string search)
+    {
+        var groups = new List<PredicateGroup>();
+        AddPredicateGroup(groups, null, rows.Where(x => string.IsNullOrWhiteSpace(x.Category)), search);
+        foreach (var category in rows.Where(x => !string.IsNullOrWhiteSpace(x.Category)).Select(x => x.Category!).Distinct(StringComparer.Ordinal))
+            AddPredicateGroup(groups, category, rows.Where(x => string.Equals(x.Category, category, StringComparison.Ordinal)), search);
+        return groups;
+    }
+
+    private static void AddPredicateGroup(List<PredicateGroup> groups, string? category, IEnumerable<RequirementPredicateReferenceView> candidates, string search)
+    {
+        var matches = candidates.Where(x => Matches(search, x.Name, x.Category, x.Aliases)).ToArray();
+        if (matches.Length > 0)
+            groups.Add(new(category, matches));
+    }
+
+    private static IReadOnlyList<ItemGroup> GroupItems(IReadOnlyList<RequirementItemReferenceView> rows, string search)
+    {
+        var groups = new List<ItemGroup>();
+        AddItemGroup(groups, null, rows.Where(x => string.IsNullOrWhiteSpace(x.Category)), search);
+        foreach (var category in rows.Where(x => !string.IsNullOrWhiteSpace(x.Category)).Select(x => x.Category!).Distinct(StringComparer.Ordinal))
+            AddItemGroup(groups, category, rows.Where(x => string.Equals(x.Category, category, StringComparison.Ordinal)), search);
+        return groups;
+    }
+
+    private static void AddItemGroup(List<ItemGroup> groups, string? category, IEnumerable<RequirementItemReferenceView> candidates, string search)
+    {
+        var matches = candidates.Where(x => Matches(search, x.Name, x.Category, x.Aliases)).ToArray();
+        if (matches.Length > 0)
+            groups.Add(new(category, matches));
+    }
+
+    private static RenderFragment TokenizedPattern(string pattern) => builder =>
+    {
+        var sequence = 0;
+        var cursor = 0;
+        while (cursor < pattern.Length)
+        {
+            var opening = pattern.IndexOf('{', cursor);
+            if (opening < 0)
+            {
+                builder.AddContent(sequence++, pattern[cursor..]);
+                break;
+            }
+
+            if (opening > cursor)
+                builder.AddContent(sequence++, pattern[cursor..opening]);
+            var closing = pattern.IndexOf('}', opening);
+            if (closing < 0)
+            {
+                builder.AddContent(sequence++, pattern[opening..]);
+                break;
+            }
+
+            var placeholder = pattern[opening..(closing + 1)];
+            builder.OpenElement(sequence++, "span");
+            builder.AddAttribute(sequence++, "class", placeholder switch
+            {
+                "{difficulty}" or "{difficulty?}" => "guide-token-difficulty",
+                "{direction}" => "guide-token-direction",
+                "{item}" => "guide-token-item",
+                "{quantity}" => "guide-token-amount",
+                "{check}" => "guide-token-check-local",
+                _ => "guide-token-requirement"
+            });
+            builder.AddContent(sequence++, placeholder);
+            builder.CloseElement();
+            cursor = closing + 1;
+        }
+    };
+
+    private static bool Matches(string search, string name, string? category, string aliases) =>
+        string.IsNullOrWhiteSpace(search) || new[] { name, category ?? "", aliases }.Any(x => x.Contains(search, StringComparison.OrdinalIgnoreCase));
+}

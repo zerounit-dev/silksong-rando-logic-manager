@@ -1,0 +1,62 @@
+@implements IAsyncDisposable
+
+<div class="room-context-zone-pane" aria-label="Area map pane">
+    @if (View is null)
+    {
+        <div class="room-map-context-empty"><span>No imported map frames yet.</span><button type="button" @onclick="OpenUnfiltered">edit map links</button></div>
+    }
+    else
+    {
+        <AreaMapSurface View="View" Compact="true" HostGeneration="HostGeneration" LinkedRoomActivated="LinkedRoomActivated" MapLinkRequested="OpenMapLinks" />
+    }
+</div>
+
+@if (showMapLinks)
+{
+    <MapLinkEditor ResolvedRoomId="mapLinkResolvedRoomId" MapSceneId="mapLinkSceneId" OnApplying="MapLinksApplyingAsync" OnClosed="CloseMapLinksAsync" />
+}
+
+@code {
+    [Parameter] public AreaMapSurfaceView? View { get; set; }
+    [Parameter] public EventCallback<AreaMapSurface.LinkedMapRoomIntent> LinkedRoomActivated { get; set; }
+    [Parameter] public long HostGeneration { get; set; }
+    [Parameter] public EventCallback MapLinksChanged { get; set; }
+    [Parameter] public EventCallback<RoomMapLinkModalStateIntent> ModalStateChanged { get; set; }
+    private bool showMapLinks;
+    private Guid? mapLinkResolvedRoomId;
+    private Guid? mapLinkSceneId;
+
+    private Guid? modalRoomId;
+    private async Task OpenMapLinks(AreaMapSurface.MapLinkContextIntent intent)
+    {
+        mapLinkResolvedRoomId = intent.ResolvedRoomId;
+        mapLinkSceneId = intent.MapSceneId;
+        showMapLinks = true;
+        modalRoomId = View?.Context.CurrentRoomId;
+        if (modalRoomId is { } roomId) await ModalStateChanged.InvokeAsync(new(roomId, RoomMapLinkModalState.Open));
+    }
+    private Task OpenUnfiltered() => OpenMapLinks(new(null, null));
+    private async Task CloseMapLinksAsync(bool changed)
+    {
+        showMapLinks = false;
+        await NotifyClosedAsync();
+        if (changed) await MapLinksChanged.InvokeAsync();
+    }
+    private Task MapLinksApplyingAsync() => modalRoomId is { } roomId
+        ? ModalStateChanged.InvokeAsync(new(roomId, RoomMapLinkModalState.Applying))
+        : Task.CompletedTask;
+    protected override async Task OnParametersSetAsync()
+    {
+        var roomId = View?.Context.CurrentRoomId;
+        if (modalRoomId is not null && modalRoomId != roomId) { showMapLinks = false; await NotifyClosedAsync(); }
+    }
+    private async Task NotifyClosedAsync()
+    {
+        if (modalRoomId is not { } roomId) return;
+        modalRoomId = null;
+        await ModalStateChanged.InvokeAsync(new(roomId, RoomMapLinkModalState.Closed));
+    }
+    public async ValueTask DisposeAsync() => await NotifyClosedAsync();
+    public enum RoomMapLinkModalState { Closed, Open, Applying }
+    public sealed record RoomMapLinkModalStateIntent(Guid RoomId, RoomMapLinkModalState State);
+}

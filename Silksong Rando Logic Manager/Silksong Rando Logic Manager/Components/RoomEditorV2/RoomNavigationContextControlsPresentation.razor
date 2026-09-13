@@ -1,0 +1,16 @@
+@using Silksong_Rando_Logic_Manager.Components.RoomEditorV2.Contracts
+
+@if (!View.IsArchived)
+{
+    <div class="document-navigation-actions">
+        <button class="back-to-map-button" type="button" @onclick="BackToMap"><i class="fa-solid fa-map" aria-hidden="true"></i> back to map</button>
+        <button class="room-map-context-toggle room-map-context-toggle-hide" type="button" aria-pressed="true" aria-label="Hide map context" title="Hide map context" @onclick="ToggleMapContext"><i class="fa-solid fa-eye-slash" aria-hidden="true"></i> hide map context</button>
+        <button class="room-map-context-toggle room-map-context-toggle-show" type="button" aria-pressed="false" aria-label="Show map context" title="Show map context" @onclick="ToggleMapContext"><i class="fa-solid fa-eye" aria-hidden="true"></i> show map context</button>
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public RoomNavigationContextControlsView View { get; set; } = null!;
+    [Parameter] public EventCallback BackToMap { get; set; }
+    [Parameter] public EventCallback ToggleMapContext { get; set; }
+}

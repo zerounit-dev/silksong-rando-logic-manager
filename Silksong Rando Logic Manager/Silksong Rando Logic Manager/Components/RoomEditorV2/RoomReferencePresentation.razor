@@ -1,0 +1,15 @@
+@using Silksong_Rando_Logic_Manager.Components.RoomEditorV2.Contracts
+
+<label>
+    ref <textarea class="@SeverityClass(View.Severity)" aria-label="Room reference ID" rows="1" autocomplete="off" readonly="@(!Editable)" @oninput="Changed" @onblur="Save">@Value</textarea>
+</label>
+
+@code {
+    [Parameter, EditorRequired] public RoomReferenceView View { get; set; } = null!;
+    [Parameter] public string? Value { get; set; }
+    [Parameter] public bool Editable { get; set; }
+    [Parameter] public EventCallback<string> ValueChanged { get; set; }
+    [Parameter] public EventCallback Save { get; set; }
+    private Task Changed(ChangeEventArgs args) => ValueChanged.InvokeAsync(args.Value?.ToString() ?? "");
+    private static string SeverityClass(V2Severity severity) => severity switch { V2Severity.Warning => "warning", V2Severity.Danger => "danger", _ => string.Empty };
+}

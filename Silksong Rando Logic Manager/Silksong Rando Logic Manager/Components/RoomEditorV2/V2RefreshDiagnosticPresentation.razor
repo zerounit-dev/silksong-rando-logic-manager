@@ -1,0 +1,11 @@
+@using Silksong_Rando_Logic_Manager.Components.RoomEditorV2.Contracts
+
+@if (Diagnostic is not null)
+{
+    <span class="text-secondary v2-refresh-diagnostic">refresh #@Diagnostic.Sequence · server @Milliseconds(Diagnostic.ServerElapsed) ms</span>
+}
+
+@code {
+    [Parameter] public V2RefreshDiagnosticView? Diagnostic { get; set; }
+    private static string Milliseconds(TimeSpan value) => value.TotalMilliseconds.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture);
+}

@@ -1,0 +1,74 @@
+@using Silksong_Rando_Logic_Manager.Components.RoomEditorV2.Contracts
+@using System.Globalization
+@using Microsoft.JSInterop
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+<h2 id="v2-page-modal-title">@(IsRecapture ? "recapture scene image" : "capture scene image")</h2>
+@if (View.Preview is { } preview)
+{
+    <svg @ref="capturePreview" class="scene-image-capture-preview" data-v2-scene-capture-preview="true" data-base-viewbox="@ViewBox(preview)" viewBox="@ViewBox(preview)" role="img" aria-label="Scene image capture preview">
+        <image class="scene-image-capture-source" data-v2-scene-capture-source="true" href="/data/scene-source/preview.webp" x="@N(ImageX(preview))" y="@N(ImageY(preview))" width="@N(ImageWidth(preview))" height="@N(ImageHeight(preview))" preserveAspectRatio="none" />
+        <rect class="scene-layout-room-bounds" data-v2-scene-capture-bounds="true" x="0" y="@N(-preview.Height)" width="@N(preview.Width)" height="@N(preview.Height)" />
+        @foreach (var frame in preview.Frames) { <g class="scene-layout-subroom" data-v2-scene-capture-frame="true"><rect class="scene-layout-subroom-body" x="@N(frame.X)" y="@N(-frame.Y-frame.Height)" width="@N(frame.Width)" height="@N(frame.Height)" /><svg:text x="@N(frame.X+frame.Width/2)" y="@N(-frame.Y-frame.Height/2)" text-anchor="middle" dominant-baseline="central">@frame.Label</svg:text></g> }
+        @foreach (var marker in preview.Markers) { var y = -marker.Y; <g class="@($"scene-layout-marker scene-layout-{marker.Kind}")" data-v2-scene-capture-marker="@marker.Kind">@if (marker.Kind == "check") { <circle cx="@N(marker.X)" cy="@N(y)" r="1.5" /> } else { <rect x="@N(marker.X-7)" y="@N(y-4)" width="14" height="8" rx=".8" /><svg:text x="@N(marker.X)" y="@N(y)" text-anchor="middle" dominant-baseline="central">@marker.Label</svg:text> }</g> }
+    </svg>
+    <p class="scene-image-capture-legend">wheel: zoom | drag: pan | Ctrl+wheel: uniform scale | Ctrl+drag: pan image | Ctrl+Shift+drag: scale X/Y</p>
+}
+<div class="scene-image-capture-fields">
+    <label>scale X <input @ref="scaleX" type="number" step="any" aria-label="Scene image scale X" value="@View.ScaleXPercent" @oninput="e => Change(scaleX: e.Value?.ToString())" disabled="@Disabled" /></label>
+    <label>scale Y <input @ref="scaleY" type="number" step="any" aria-label="Scene image scale Y" value="@View.ScaleYPercent" @oninput="e => Change(scaleY: e.Value?.ToString())" disabled="@Disabled" /></label>
+    <label>pan X <input @ref="panX" type="number" step="any" aria-label="Scene image pan X" value="@View.PanXPercent" @oninput="e => Change(panX: e.Value?.ToString())" disabled="@Disabled" /></label>
+    <label>pan Y <input @ref="panY" type="number" step="any" aria-label="Scene image pan Y" value="@View.PanYPercent" @oninput="e => Change(panY: e.Value?.ToString())" disabled="@Disabled" /></label>
+</div>
+@if (HasError) { <p class="scene-upload-error" role="alert">@View.AvailabilitySummary</p> }
+else if (HasInformation) { <p class="text-secondary" role="status">@View.AvailabilitySummary</p> }
+<div class="confirmation-actions">@if (Disabled) { <span data-scene-image-generation-progress="true">generating scene image...</span> } else { <button type="button" @onclick="Reset">reset estimate</button><span></span><button type="button" @onclick="Cancel">cancel</button><button type="button" @onclick="ApplyCapture" disabled="@(!View.IsAvailable)">apply</button> }</div>
+@code {
+    [Parameter, EditorRequired] public V2SceneImageCaptureDialogView View { get; set; } = null!;
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public EventCallback<V2SceneImageCaptureDialogView> DraftChanged { get; set; }
+    [Parameter] public EventCallback Reset { get; set; }
+    [Parameter] public EventCallback Cancel { get; set; }
+    [Parameter] public EventCallback Apply { get; set; }
+    private ElementReference capturePreview, scaleX, scaleY, panX, panY;
+    private bool previewInitialized;
+    private long appliedBrowserResetVersion;
+    private bool IsRecapture => string.Equals(View.ApplyLabel, "Apply recapture", StringComparison.Ordinal);
+    private bool HasError => !View.IsAvailable;
+    private bool HasInformation => !string.Equals(View.AvailabilitySummary, "Scene image capture is ready.", StringComparison.Ordinal);
+    private Task Change(string? scaleX = null, string? scaleY = null, string? panX = null, string? panY = null) => DraftChanged.InvokeAsync(View with { ScaleXPercent = scaleX ?? View.ScaleXPercent, ScaleYPercent = scaleY ?? View.ScaleYPercent, PanXPercent = panX ?? View.PanXPercent, PanYPercent = panY ?? View.PanYPercent });
+    private async Task ApplyCapture()
+    {
+        // Preview gestures are browser-only. Their displayed local values cross the
+        // component boundary only at this explicit durable-command boundary.
+        var local = await JS.InvokeAsync<V2SceneImageCapturePreviewValues?>("readV2SceneImageCapturePreview", capturePreview);
+        if (local is not null)
+            await DraftChanged.InvokeAsync(View with { ScaleXPercent = local.ScaleXPercent, ScaleYPercent = local.ScaleYPercent, PanXPercent = local.PanXPercent, PanYPercent = local.PanYPercent });
+        await Apply.InvokeAsync();
+    }
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!previewInitialized && View.Preview is not null)
+        {
+            await JS.InvokeVoidAsync("initializeV2SceneImageCapturePreview", capturePreview, scaleX, scaleY, panX, panY);
+            previewInitialized = true;
+            appliedBrowserResetVersion = View.BrowserResetVersion;
+        }
+        else if (previewInitialized && appliedBrowserResetVersion != View.BrowserResetVersion)
+        {
+            await JS.InvokeVoidAsync("resetV2SceneImageCapturePreview", capturePreview, View.ScaleXPercent, View.ScaleYPercent, View.PanXPercent, View.PanYPercent);
+            appliedBrowserResetVersion = View.BrowserResetVersion;
+        }
+        else if (previewInitialized) await JS.InvokeVoidAsync("reconcileV2SceneImageCapturePreview", capturePreview);
+    }
+    public async ValueTask DisposeAsync() { if (!previewInitialized) return; try { await JS.InvokeVoidAsync("disposeV2SceneImageCapturePreview", capturePreview); } catch (JSDisconnectedException) { } }
+    private double ScaleX => Number(View.ScaleXPercent, 100); private double ScaleY => Number(View.ScaleYPercent, 100);
+    private double ImageWidth(V2SceneImageCapturePreviewView preview) => preview.Width * 100d / ScaleX;
+    private double ImageHeight(V2SceneImageCapturePreviewView preview) => preview.Height * 100d / ScaleY;
+    private double ImageX(V2SceneImageCapturePreviewView preview) => (preview.Width - ImageWidth(preview)) / 2d + Finite(View.PanXPercent, 0) / 100d * ImageWidth(preview);
+    private double ImageY(V2SceneImageCapturePreviewView preview) => -preview.Height + (preview.Height - ImageHeight(preview)) / 2d + Finite(View.PanYPercent, 0) / 100d * ImageHeight(preview);
+    private static double Number(string value, double fallback) => double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var result) && double.IsFinite(result) && result > 0 ? result : fallback;
+    private static double Finite(string value, double fallback) => double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var result) && double.IsFinite(result) ? result : fallback;
+    private static string N(double value) => value.ToString("0.###", CultureInfo.InvariantCulture);
+    private static string ViewBox(V2SceneImageCapturePreviewView preview) => $"{N(-preview.Width*.1)} {N(-preview.Height*1.1)} {N(preview.Width*1.2)} {N(preview.Height*1.2)}";
+}

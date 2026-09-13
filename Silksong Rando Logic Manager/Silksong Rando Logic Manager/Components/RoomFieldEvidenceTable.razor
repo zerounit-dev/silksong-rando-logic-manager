@@ -1,0 +1,25 @@
+<table class="distributed-import-child-table">
+    <thead><tr>@foreach (var field in Fields) { <th>@field.FieldName</th> }</tr></thead>
+    <tbody>
+        <tr class="@(HasChanges ? "distributed-import-changed-current" : null)">
+            @foreach (var field in Fields)
+            {
+                <td><span class="@(field.Evidence == DistributedComparisonEvidence.Changed || field.Evidence == DistributedComparisonEvidence.Current ? "distributed-import-current" : field.Evidence == DistributedComparisonEvidence.Incoming ? "distributed-import-incoming" : null)">@(field.Evidence == DistributedComparisonEvidence.Incoming ? field.IncomingValue : field.CurrentValue)</span></td>
+            }
+        </tr>
+        @if (HasChanges)
+        {
+            <tr class="distributed-import-changed-incoming">
+                @foreach (var field in Fields)
+                {
+                    <td><span class="@(field.Evidence == DistributedComparisonEvidence.Changed ? "distributed-import-incoming" : null)">@(field.Evidence == DistributedComparisonEvidence.Changed ? field.IncomingValue : null)</span></td>
+                }
+            </tr>
+        }
+    </tbody>
+</table>
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<DistributedComparisonValue> Fields { get; set; } = [];
+    private bool HasChanges => Fields.Any(x => x.Evidence == DistributedComparisonEvidence.Changed);
+}

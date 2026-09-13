@@ -1,0 +1,14 @@
+<div class="confirmation-backdrop requirement-syntax-guide-backdrop" role="presentation" @onclick="Close">
+    <section id="@DialogId" class="confirmation-modal requirement-syntax-guide-modal" role="dialog" aria-modal="true" aria-labelledby="v2-page-modal-title" tabindex="-1" @onclick:stopPropagation="true" @onkeydown="KeyDown">
+        <RequirementSyntaxGuideContent Reference="Reference" Manage="Manage" Close="Close" />
+    </section>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public RequirementCatalogueReferenceView Reference { get; set; } = null!;
+    [Parameter, EditorRequired] public string DialogId { get; set; } = null!;
+    [Parameter] public EventCallback Manage { get; set; }
+    [Parameter] public EventCallback Close { get; set; }
+
+    private Task KeyDown(KeyboardEventArgs args) => args.Key == "Escape" ? Close.InvokeAsync() : Task.CompletedTask;
+}

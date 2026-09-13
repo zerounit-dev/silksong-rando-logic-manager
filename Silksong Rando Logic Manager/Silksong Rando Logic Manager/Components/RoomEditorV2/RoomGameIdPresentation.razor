@@ -1,0 +1,14 @@
+@using Silksong_Rando_Logic_Manager.Components.RoomEditorV2.Contracts
+
+<label>game <textarea class="@SeverityClass(View.Severity)" aria-label="Room game ID" readonly="@(!Editable)" rows="1" @bind="value" @bind:event="oninput" @onblur="Blur"></textarea></label>
+
+@code {
+    [Parameter, EditorRequired] public RoomGameIdView View { get; set; } = null!;
+    [Parameter] public bool Editable { get; set; }
+    [Parameter] public EventCallback<string?> ValueChanged { get; set; }
+    [Parameter] public EventCallback Save { get; set; }
+    private string? value;
+    protected override void OnParametersSet() => value = View.InGameId;
+    private async Task Blur() { await ValueChanged.InvokeAsync(value); await Save.InvokeAsync(); }
+    private static string SeverityClass(V2Severity severity) => severity switch { V2Severity.Warning => "warning", V2Severity.Danger => "danger", _ => string.Empty };
+}

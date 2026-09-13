@@ -1,0 +1,24 @@
+@using Silksong_Rando_Logic_Manager.Components.RoomEditorV2.Contracts
+<table class="logic-table check-table v2-read-only-table">
+    <thead><tr><th>type</th><th>name</th><th>subroom</th><th>requirements</th><th>notes</th><th>todo</th><th>verify</th></tr></thead>
+    <tbody>
+    @foreach (var row in Rows)
+    {
+        <tr>
+            <td class="@SeverityClass(row.LocationTypeSeverity)">@row.LocationTypeDisplayName</td>
+            <td class="@SeverityClass(row.FriendlyNameSeverity)">@row.FriendlyName</td>
+            <td class="@SeverityClass(row.SubroomReferenceSeverity)" title="@row.SubroomReferenceState">@row.SubroomReferenceText</td>
+            <td class="@RequirementsClass(row.RequirementsSeverity, row.IsTodo)">@row.Requirements</td>
+            <td class="detail-cell">@row.Notes</td>
+            <td class="checkbox-cell @(row.IsTodo ? "todo" : null)" aria-label="@(row.IsTodo ? "Check is TODO" : "Check is not TODO")">@(row.IsTodo ? "✓" : "")</td>
+            <td class="verification-cell" aria-label="Check verification: @VerificationText(row.IsVerified)">@VerificationText(row.IsVerified)</td>
+        </tr>
+    }
+    </tbody>
+</table>
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<CheckRowView> Rows { get; set; } = [];
+    private static string? SeverityClass(V2Severity severity) => severity switch { V2Severity.Warning => "warning", V2Severity.Danger => "danger", _ => null };
+    private static string? RequirementsClass(V2Severity severity, bool todo) => severity switch { V2Severity.Warning => "warning", V2Severity.Danger => "danger", _ when todo => "todo", _ => null };
+    private static string VerificationText(bool? value) => value switch { true => "verified", false => "not verified", null => "unknown" };
+}

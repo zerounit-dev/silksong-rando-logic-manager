@@ -1,0 +1,19 @@
+@using Silksong_Rando_Logic_Manager.Components.RoomEditorV2.Contracts
+<table class="logic-table subroom-table v2-read-only-table">
+    <thead><tr><th>name</th><th>reference</th><th>notes</th></tr></thead>
+    <tbody>
+    @foreach (var row in Rows)
+    {
+        <tr>
+            <td class="@SeverityClass(row.FriendlyNameSeverity)">@row.FriendlyName</td>
+            <td class="@SeverityClass(Max(row.ReferenceIdSeverity, row.UsageSeverity))">@row.ReferenceId</td>
+            <td class="detail-cell">@row.Notes</td>
+        </tr>
+    }
+    </tbody>
+</table>
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<SubroomRowView> Rows { get; set; } = [];
+    private static V2Severity Max(V2Severity first, V2Severity second) => (V2Severity)Math.Max((int)first, (int)second);
+    private static string? SeverityClass(V2Severity severity) => severity switch { V2Severity.Warning => "warning", V2Severity.Danger => "danger", _ => null };
+}

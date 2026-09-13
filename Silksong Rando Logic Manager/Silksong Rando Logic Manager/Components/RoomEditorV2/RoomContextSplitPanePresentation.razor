@@ -1,0 +1,41 @@
+@using Silksong_Rando_Logic_Manager.Components.RoomEditorV2.Contracts
+
+<div class="room-map-context-height-host" data-v2-map-context-height-host="true">
+<section class="room-map-context @(View.IsMapVisible ? "with-zone-map" : "scene-layout-only")" aria-label="Room map context">
+    @if (View.IsMapVisible)
+    {
+        <AreaMapPanePresentation View="Map" HostGeneration="MapOwnerGeneration" LinkedRoomActivated="LinkedRoomActivated" MapLinksChanged="MapLinksChanged" ModalStateChanged="MapLinkModalStateChanged" />
+        <div class="room-context-divider" aria-hidden="true"></div>
+    }
+    <SceneContextPanePresentation View="Scene" Placement="Placement" SelectedItem="SelectedItem" ActionBox="ActionBox" ActionRequested="ActionRequested" OwnerMounted="OwnerMounted" SelectionChanged="SelectionChanged" PlacementCommitted="PlacementCommitted" PlacementCancelled="PlacementCancelled" MarkerDragCommitted="MarkerDragCommitted" SceneNudgeCommitted="SceneNudgeCommitted" FrameGeometryCommitted="FrameGeometryCommitted" Capture="Capture" SceneDimensions="SceneDimensions" RoomId="RoomId" />
+</section>
+    <div class="room-map-context-height-handle" data-v2-map-context-height-handle="true" aria-hidden="true"></div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public RoomContextPresentationView View { get; set; } = null!;
+    [Parameter] public SceneLayoutView? Scene { get; set; }
+    [Parameter] public SceneAnnotationPlacementRequest? Placement { get; set; }
+    [Parameter] public V2SceneSelectedItem? SelectedItem { get; set; }
+    [Parameter] public V2SceneActionBoxView? ActionBox { get; set; }
+    [Parameter] public Func<Guid, long, V2SceneAction, Task>? ActionRequested { get; set; }
+    [Parameter] public Func<Guid, long, Task>? OwnerMounted { get; set; }
+    [Parameter] public Func<V2SceneSelectionCallback, Task>? SelectionChanged { get; set; }
+    [Parameter] public Func<Guid, long, SceneAnnotationPlacementRequest, double, double, Task<bool>>? PlacementCommitted { get; set; }
+    [Parameter] public Func<Guid, long, SceneAnnotationPlacementRequest, Task<bool>>? PlacementCancelled { get; set; }
+    [Parameter] public Func<Guid, long, string, Guid, double, double, Task<bool>>? MarkerDragCommitted { get; set; }
+    [Parameter] public Func<Guid, long, string, Guid, double, double, Task<bool>>? SceneNudgeCommitted { get; set; }
+    [Parameter] public Func<Guid, long, Guid, double, double, double, double, Task<bool>>? FrameGeometryCommitted { get; set; }
+    [Parameter] public bool ClearSceneSelectionAfterRefresh { get; set; }
+    [Parameter] public Func<Task>? SceneSelectionCleared { get; set; }
+    [Parameter] public Guid? SelectMarkerAfterRefresh { get; set; }
+    [Parameter] public Func<Task>? SceneMarkerSelected { get; set; }
+    [Parameter] public EventCallback Capture { get; set; }
+    [Parameter] public EventCallback SceneDimensions { get; set; }
+    [Parameter] public Guid RoomId { get; set; }
+    [Parameter] public AreaMapSurfaceView? Map { get; set; }
+    [Parameter] public EventCallback<AreaMapSurface.LinkedMapRoomIntent> LinkedRoomActivated { get; set; }
+    [Parameter] public long MapOwnerGeneration { get; set; }
+    [Parameter] public EventCallback MapLinksChanged { get; set; }
+    [Parameter] public EventCallback<AreaMapPanePresentation.RoomMapLinkModalStateIntent> MapLinkModalStateChanged { get; set; }
+}

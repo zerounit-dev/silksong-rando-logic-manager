@@ -1,0 +1,352 @@
+@page "/requirements"
+@rendermode InteractiveServer
+@implements IAsyncDisposable
+@inject RequirementCatalogueService Catalogue
+@inject RequirementCatalogueImportParser ImportParser
+@inject RequirementCatalogueImportService Imports
+@inject IRequirementValidationService RequirementValidation
+@inject IRoomGraphExportService RoomGraphExport
+@inject WorkspaceChangeNotifier WorkspaceChanges
+@inject IJSRuntime JS
+@inject ILogger<RequirementCatalogue> Logger
+@inject DiagnosticState Diagnostics
+@using Microsoft.AspNetCore.Components.Rendering
+@using Silksong_Rando_Logic_Manager.Components.RequirementCatalogue
+
+<PageTitle>Requirement catalogue</PageTitle>
+
+<section class="requirement-catalogue-page" aria-busy="@CatalogueBusy" inert="@(roomGraphFailures is not null ? "" : null)">
+    <h1 tabindex="-1">requirement catalogue</h1>
+    <div class="requirement-catalogue-actions" aria-label="Catalogue commands">
+        <div class="requirement-catalogue-context-actions">
+            <button type="button" class="requirement-catalogue-action" @onclick="OpenSyntaxGuideAsync" disabled="@(DefinitionModalOpen || CatalogueBusy)"><i class="fa-solid fa-book" aria-hidden="true"></i>syntax guide</button>
+            <button type="button" class="requirement-catalogue-action" @onclick="OpenImportPickerAsync" disabled="@(DefinitionModalOpen || CatalogueBusy)"><i class="fa-solid fa-file-import" aria-hidden="true"></i>import catalogue</button>
+            <a class="button requirement-catalogue-action" href="@LocalRequirementCatalogueDownloadEndpoints.ExportPath" aria-disabled="@(DefinitionModalOpen || CatalogueBusy)" @onclick:preventDefault="@(DefinitionModalOpen || CatalogueBusy)"><i class="fa-solid fa-file-export" aria-hidden="true"></i>export catalogue</a>
+            <InputFile id="requirement-catalogue-import" class="requirement-catalogue-import-input" accept="application/json,.json" OnChange="ReadImportAsync" />
+        </div>
+        <div class="requirement-catalogue-context-actions">
+            <button type="button" class="requirement-catalogue-action" @onclick="RecheckAllRequirementsAsync" disabled="@(ModalOpen || CatalogueBusy)"><i class="fa-solid fa-rotate" aria-hidden="true"></i>@(rechecking ? "rechecking all room requirements…" : "recheck all room requirements")</button>
+            <button type="button" class="requirement-catalogue-action" @onclick="ExportRoomGraphAsync" disabled="@(ModalOpen || CatalogueBusy)"><i class="fa-solid fa-diagram-project" aria-hidden="true"></i>@(exportingRoomGraph ? "exporting room graph…" : "export room graph")</button>
+        </div>
+    </div>
+    @if (!string.IsNullOrWhiteSpace(message)) { <p class="requirement-catalogue-message" role="status">@message</p> }
+    <div class="requirement-catalogue-tabs" role="tablist" aria-label="Requirement catalogue type">
+        <button id="requirement-catalogue-tab-predicates" type="button" role="tab" aria-selected="@(tab == CatalogueTab.Predicates)" aria-controls="requirement-catalogue-panel-predicates" class="@(tab == CatalogueTab.Predicates ? "selected" : null)" @onclick="() => SelectTabAsync(CatalogueTab.Predicates)" disabled="@(DefinitionModalOpen || CatalogueBusy)">Predicates</button>
+        <button id="requirement-catalogue-tab-items" type="button" role="tab" aria-selected="@(tab == CatalogueTab.Items)" aria-controls="requirement-catalogue-panel-items" class="@(tab == CatalogueTab.Items ? "selected" : null)" @onclick="() => SelectTabAsync(CatalogueTab.Items)" disabled="@(DefinitionModalOpen || CatalogueBusy)">Items</button>
+    </div>
+    @if (tab == CatalogueTab.Predicates)
+    {
+        <section id="requirement-catalogue-panel-predicates" role="tabpanel" aria-labelledby="requirement-catalogue-tab-predicates">
+        <div class="requirement-catalogue-toolbar"><label>search <input @bind="predicateSearch" @bind:event="oninput" disabled="@(DefinitionModalOpen || CatalogueBusy)" /></label><div class="requirement-catalogue-content-actions"><button type="button" class="requirement-catalogue-action" @onclick="NewPredicate" disabled="@(DefinitionModalOpen || CatalogueBusy)"><i class="fa-solid fa-plus" aria-hidden="true"></i>add predicate</button></div></div>
+        <table class="requirement-catalogue-table" data-requirement-catalogue-table="predicate">
+            <thead><tr><th>drag</th><th>Name</th><th>Category</th><th>Input Syntax / aliases</th><th>Output Syntax</th><th>Notes</th><th>actions</th></tr></thead>
+            <tbody>
+            @foreach (var row in FilterPredicates())
+            {
+                <tr data-requirement-catalogue-row data-catalogue-kind="predicate" data-catalogue-id="@row.Id">
+                    <td class="reorder-cell"><button type="button" draggable="true" class="reorder-handle catalogue-drag-handle" data-requirement-catalogue-grip disabled="@(PredicateFiltered || DefinitionModalOpen || CatalogueBusy)" title="@(PredicateFiltered ? "clear search to reorder" : "drag to reorder")" aria-label="@(PredicateFiltered ? "clear search to reorder" : "drag predicate")"><i class="fa-solid fa-grip-vertical" aria-hidden="true"></i></button></td>
+                    <td class="requirement-catalogue-name">@row.Name</td><td class="requirement-catalogue-single-line">@row.Category</td><td><div class="catalogue-monospace requirement-predicate-input-syntax">@row.InputSyntax.Replace("{predicate}", row.ParsedAliases[0], StringComparison.Ordinal)</div>@if (row.ParsedAliases.Count > 1) { <div class="requirement-predicate-additional-aliases">alternatives: @string.Join(", ", row.ParsedAliases.Skip(1))</div> }</td><td class="catalogue-monospace requirement-catalogue-single-line">@row.OutputSyntax</td><td class="requirement-catalogue-notes">@row.Notes</td>
+                    <td class="row-actions catalogue-row-actions"><button type="button" class="icon-button" @onclick="() => EditPredicate(row)" disabled="@(DefinitionModalOpen || CatalogueBusy)" title="edit predicate" aria-label="edit predicate"><i class="fa-solid fa-pen" aria-hidden="true"></i></button><button type="button" class="icon-button" @onclick="() => ConfirmDelete(row.Id, row.Name, true)" disabled="@(DefinitionModalOpen || CatalogueBusy)" title="delete predicate" aria-label="delete predicate"><i class="fa-solid fa-trash" aria-hidden="true"></i></button></td>
+                </tr>
+            }
+            <tr class="catalogue-drop-tail" data-requirement-catalogue-tail="predicate"><td colspan="7"></td></tr>
+            </tbody>
+        </table>
+        </section>
+    }
+    else
+    {
+        <section id="requirement-catalogue-panel-items" role="tabpanel" aria-labelledby="requirement-catalogue-tab-items">
+        <div class="requirement-catalogue-toolbar"><label>search <input @bind="itemSearch" @bind:event="oninput" disabled="@(DefinitionModalOpen || CatalogueBusy)" /></label><div class="requirement-catalogue-content-actions"><button type="button" class="requirement-catalogue-action" @onclick="NewItem" disabled="@(DefinitionModalOpen || CatalogueBusy)"><i class="fa-solid fa-plus" aria-hidden="true"></i>add item</button></div></div>
+        <table class="requirement-catalogue-table" data-requirement-catalogue-table="item">
+            <thead><tr><th>drag</th><th>Name</th><th>Category</th><th>Aliases</th><th>Output Value</th><th>Notes</th><th>actions</th></tr></thead>
+            <tbody>
+            @foreach (var row in FilterItems())
+            {
+                <tr data-requirement-catalogue-row data-catalogue-kind="item" data-catalogue-id="@row.Id">
+                    <td class="reorder-cell"><button type="button" draggable="true" class="reorder-handle catalogue-drag-handle" data-requirement-catalogue-grip disabled="@(ItemFiltered || DefinitionModalOpen || CatalogueBusy)" title="@(ItemFiltered ? "clear search to reorder" : "drag to reorder")" aria-label="@(ItemFiltered ? "clear search to reorder" : "drag item")"><i class="fa-solid fa-grip-vertical" aria-hidden="true"></i></button></td>
+                    <td class="requirement-catalogue-name">@row.Name</td><td class="requirement-catalogue-single-line">@row.Category</td><td>@row.Aliases</td><td class="catalogue-monospace requirement-catalogue-single-line">@row.OutputValue</td><td class="requirement-catalogue-notes">@row.Notes</td>
+                    <td class="row-actions catalogue-row-actions"><button type="button" class="icon-button" @onclick="() => EditItem(row)" disabled="@(DefinitionModalOpen || CatalogueBusy)" title="edit item" aria-label="edit item"><i class="fa-solid fa-pen" aria-hidden="true"></i></button><button type="button" class="icon-button" @onclick="() => ConfirmDelete(row.Id, row.Name, false)" disabled="@(DefinitionModalOpen || CatalogueBusy)" title="delete item" aria-label="delete item"><i class="fa-solid fa-trash" aria-hidden="true"></i></button></td>
+                </tr>
+            }
+            <tr class="catalogue-drop-tail" data-requirement-catalogue-tail="item"><td colspan="7"></td></tr>
+            </tbody>
+        </table>
+        </section>
+    }
+</section>
+
+@if (predicateDraft is not null) { @DefinitionDialog(true) }
+@if (itemDraft is not null) { @DefinitionDialog(false) }
+@if (DefinitionModalOpen)
+{
+    <datalist id="requirement-catalogue-categories">
+        @foreach (var category in predicateDraft is not null ? categories.PredicateCategories : categories.ItemCategories) { <option value="@category" /> }
+    </datalist>
+}
+@if (deleteConfirmation is not null)
+{
+    <div class="confirmation-backdrop requirement-catalogue-backdrop" role="presentation" @onclick="CloseDelete"><section class="confirmation-modal" role="dialog" aria-modal="true" aria-labelledby="requirement-catalogue-delete-title" tabindex="-1" @onclick:stopPropagation="true" @onkeydown="DeleteKeyDown"><h2 id="requirement-catalogue-delete-title">delete definition?</h2><p>Delete <strong>@deleteConfirmation.Name</strong> permanently? Its owned aliases will also be deleted.</p><p>Existing authored requirements are not changed, but they may become unrecognized until another matching definition is added.</p><div class="requirement-catalogue-modal-footer"><div class="requirement-catalogue-modal-alternatives"></div><div class="requirement-catalogue-modal-commit-group"><button type="button" class="catalogue-modal-action catalogue-modal-cancel" @onclick="CloseDelete">Cancel</button><button type="button" class="catalogue-modal-action catalogue-modal-destructive" @onclick="DeleteAsync">delete</button></div></div></section></div>
+}
+@if (pendingImport is not null)
+{
+    <div class="confirmation-backdrop requirement-catalogue-backdrop" role="presentation" @onclick="CancelImport"><section class="confirmation-modal" role="dialog" aria-modal="true" aria-labelledby="requirement-catalogue-import-title" tabindex="-1" @onclick:stopPropagation="true" @onkeydown="ImportKeyDown"><h2 id="requirement-catalogue-import-title">replace catalogue?</h2><p>This permanently replaces the complete local predicate, item, and alias catalogue. Existing authored Requirements text may parse differently.</p>@if (!string.IsNullOrWhiteSpace(message)) { <p class="requirement-catalogue-message" role="status">@message</p> }<div class="requirement-catalogue-modal-footer"><div class="requirement-catalogue-modal-alternatives"></div><div class="requirement-catalogue-modal-commit-group"><button type="button" class="catalogue-modal-action catalogue-modal-cancel" @onclick="CancelImport">Cancel</button><button type="button" class="catalogue-modal-action catalogue-modal-destructive" @onclick="ReplaceImportAsync">Replace</button></div></div></section></div>
+}
+@if (syntaxGuide is not null)
+{
+    <RequirementSyntaxGuideModal Reference="syntaxGuide" DialogId="requirement-syntax-guide-dialog" Manage="ManageSyntaxGuide" Close="CloseSyntaxGuide" />
+}
+@if (roomGraphFailures is not null)
+{
+    <div class="confirmation-backdrop requirement-catalogue-backdrop" role="presentation" @onclick="CloseRoomGraphFailures">
+        <section class="confirmation-modal room-graph-failure-modal" role="dialog" aria-modal="true" aria-labelledby="room-graph-failure-title" tabindex="-1" data-room-graph-failure-dialog @onclick:stopPropagation="true" @onkeydown="RoomGraphFailureKeyDown">
+            <h2 id="room-graph-failure-title">Room graph export failed</h2>
+            <div class="room-graph-failure-content">
+                @if (roomGraphFailures.Any(x => x.RoomRecordId is null))
+                {
+                    <h3>global configuration</h3>
+                    <ul>@foreach (var failure in roomGraphFailures.Where(x => x.RoomRecordId is null)) { <li>@failure.Cause</li> }</ul>
+                }
+                @foreach (var group in roomGraphFailures.Where(x => x.RoomRecordId is not null).GroupBy(x => x.RoomRecordId))
+                {
+                    var first = group.First();
+                    <h3>@first.RoomName@if (!string.IsNullOrWhiteSpace(first.RoomId)) { <span class="room-graph-failure-room-id"> (@first.RoomId)</span> } <a href="@($"/rooms/{first.RoomRecordId}")" target="_blank" rel="noopener noreferrer">[navigate]</a></h3>
+                    <ul>
+                        @foreach (var failure in group)
+                        {
+                            <li>@if (!string.IsNullOrWhiteSpace(failure.ChildKind)) { <strong>@failure.ChildKind@if (!string.IsNullOrWhiteSpace(failure.ChildName)) { <text> “@failure.ChildName”</text> }<text>: </text></strong> }@failure.Cause</li>
+                        }
+                    </ul>
+                }
+            </div>
+            <div class="requirement-catalogue-modal-footer"><div class="requirement-catalogue-modal-alternatives"></div><div class="requirement-catalogue-modal-commit-group"><button type="button" class="catalogue-modal-action catalogue-modal-close" data-room-graph-failure-close @onclick="CloseRoomGraphFailures">Close</button></div></div>
+        </section>
+    </div>
+}
+
+@code {
+    private enum CatalogueTab { Predicates, Items }
+    private abstract class DefinitionDraft { public Guid? Id; public string Name = ""; public string? Category; public string Aliases = ""; public string Notes = ""; public bool AliasTouched; }
+    private sealed class PredicateDraft : DefinitionDraft { public string InputSyntax = RequirementCatalogueLanguage.InputSyntaxOptions[0].PersistedValue; public string OutputSyntax = ""; }
+    private sealed class ItemDraft : DefinitionDraft { public string OutputValue = ""; }
+    private sealed record DeleteConfirmation(Guid Id, string Name, bool Predicate);
+    private RequirementCatalogueManagerView view = new([], []);
+    private RequirementCategorySuggestionsView categories = new([], []);
+    private CatalogueTab tab;
+    private string predicateSearch = "", itemSearch = "", message = "", definitionMessage = "";
+    private IReadOnlyList<RequirementCatalogueValidationIssue> definitionIssues = [];
+    private string? pendingDefinitionFocusId;
+    private bool loading, rechecking, exportingRoomGraph, modalWasOpen, restoreInitiatorFocus;
+    private int definitionDraftSequence;
+    private Task? dragInitialization;
+    private PredicateDraft? predicateDraft;
+    private ItemDraft? itemDraft;
+    private DeleteConfirmation? deleteConfirmation;
+    private RequirementCatalogueSnapshot? pendingImport;
+    private RequirementCatalogueReferenceView? syntaxGuide;
+    private IReadOnlyList<RoomGraphExportFailure>? roomGraphFailures;
+    private DotNetObjectReference<RequirementCatalogue>? dotNetReference;
+    private bool DefinitionModalOpen => predicateDraft is not null || itemDraft is not null;
+    private bool ModalOpen => DefinitionModalOpen || deleteConfirmation is not null || pendingImport is not null || syntaxGuide is not null || roomGraphFailures is not null;
+    private bool CatalogueBusy => loading || rechecking || exportingRoomGraph;
+    private bool PredicateFiltered => !string.IsNullOrWhiteSpace(predicateSearch);
+    private bool ItemFiltered => !string.IsNullOrWhiteSpace(itemSearch);
+
+    protected override async Task OnInitializedAsync() => await ReloadAsync();
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            dotNetReference = DotNetObjectReference.Create(this);
+            dragInitialization = JS.InvokeVoidAsync("requirementCatalogueDrag.initialize", dotNetReference).AsTask();
+            await dragInitialization;
+        }
+        if (ModalOpen && !modalWasOpen) await JS.InvokeVoidAsync("requirementCatalogueDrag.focusModal");
+        if (!ModalOpen && modalWasOpen && restoreInitiatorFocus)
+        {
+            restoreInitiatorFocus = false;
+            await JS.InvokeVoidAsync("requirementCatalogueDrag.restoreModalFocus");
+        }
+        if (DefinitionModalOpen)
+        {
+            await JS.InvokeVoidAsync("requirementCatalogueDrag.initializeDefinitionDraft", definitionDraftSequence);
+        }
+        if (pendingDefinitionFocusId is { } focusId) { pendingDefinitionFocusId = null; await JS.InvokeVoidAsync("requirementCatalogueDrag.focusField", focusId); }
+        modalWasOpen = ModalOpen;
+    }
+
+    private async Task ReloadAsync()
+    {
+        loading = true;
+        try { view = await Catalogue.LoadManagerAsync(); categories = await Catalogue.LoadCategorySuggestionsAsync(); }
+        finally { loading = false; }
+    }
+    private async Task RecheckAllRequirementsAsync()
+    {
+        if (ModalOpen || CatalogueBusy) return;
+        rechecking = true;
+        message = "Rechecking all active requirements…";
+        try
+        {
+            var result = await RequirementValidation.RecheckAllAsync();
+            message = $"Requirements rechecked: {result.Successful} successful, {result.Failed} failed, {result.Unknown} unknown.";
+            WorkspaceChanges.NotifyChanged(WorkspaceChangeScope.Sidebar);
+        }
+        catch (RequirementValidationOperationException exception)
+        {
+            message = exception.Message;
+        }
+        catch (Exception exception)
+        {
+            Logger.LogError(exception, "Unexpected global requirement recheck failure.");
+            Diagnostics.Show(exception.ToString());
+        }
+        finally
+        {
+            rechecking = false;
+        }
+    }
+    private async Task ExportRoomGraphAsync()
+    {
+        if (ModalOpen || CatalogueBusy) return;
+        exportingRoomGraph = true;
+        message = "Generating room graph…";
+        try
+        {
+            var result = await RoomGraphExport.GenerateAsync();
+            if (result.Succeeded)
+            {
+                message = "";
+                await JS.InvokeVoidAsync("downloadFileFromBytes", RoomGraphExportResult.FileName, result.Content!);
+            }
+            else
+            {
+                message = "";
+                roomGraphFailures = result.Failures;
+            }
+        }
+        catch (Exception exception)
+        {
+            Logger.LogError(exception, "Unexpected room graph export failure.");
+            Diagnostics.Show(exception.ToString());
+        }
+        finally
+        {
+            exportingRoomGraph = false;
+        }
+    }
+    private void CloseRoomGraphFailures() { restoreInitiatorFocus = true; roomGraphFailures = null; }
+    private Task RoomGraphFailureKeyDown(KeyboardEventArgs args) { if (args.Key == "Escape") CloseRoomGraphFailures(); return Task.CompletedTask; }
+    private IEnumerable<RequirementPredicateView> FilterPredicates() => view.Predicates.Where(x => Matches(predicateSearch, x.Name, x.Category, x.Aliases));
+    private IEnumerable<RequirementItemView> FilterItems() => view.Items.Where(x => Matches(itemSearch, x.Name, x.Category, x.Aliases));
+    private static bool Matches(string search, string name, string? category, string aliases) => string.IsNullOrWhiteSpace(search) || new[] { name, category ?? "", aliases }.Any(x => x.Contains(search, StringComparison.OrdinalIgnoreCase));
+    private async Task SelectTabAsync(CatalogueTab next) { if (tab == next) return; await ClearDragAsync(); tab = next; }
+    private void NewPredicate() { ClearDefinitionOperationStatus(); predicateDraft = new(); definitionDraftSequence++; }
+    private void NewItem() { ClearDefinitionOperationStatus(); itemDraft = new(); definitionDraftSequence++; }
+    private void EditPredicate(RequirementPredicateView value) { ClearDefinitionOperationStatus(); predicateDraft = new() { Id = value.Id, Name = value.Name, Category = value.Category, InputSyntax = value.InputSyntax, Aliases = value.Aliases, OutputSyntax = value.OutputSyntax, Notes = value.Notes, AliasTouched = true }; definitionDraftSequence++; }
+    private void EditItem(RequirementItemView value) { ClearDefinitionOperationStatus(); itemDraft = new() { Id = value.Id, Name = value.Name, Category = value.Category, Aliases = value.Aliases, OutputValue = value.OutputValue, Notes = value.Notes, AliasTouched = true }; definitionDraftSequence++; }
+    [JSInvokable]
+    public async Task ApplyPredicateDraft(int sequence, ApplyRequirementPredicate command)
+    {
+        if (predicateDraft is null || definitionDraftSequence != sequence) return;
+        var result = await Catalogue.ApplyAsync(command);
+        await AppliedAsync(result, () => predicateDraft = null, command.Name, sequence);
+    }
+    [JSInvokable]
+    public async Task ApplyItemDraft(int sequence, ApplyRequirementItem command)
+    {
+        if (itemDraft is null || definitionDraftSequence != sequence) return;
+        var result = await Catalogue.ApplyAsync(command);
+        await AppliedAsync(result, () => itemDraft = null, command.Name, sequence);
+    }
+    [JSInvokable]
+    public Task CloseDefinitionDraft(int sequence)
+    {
+        if (!DefinitionModalOpen || definitionDraftSequence != sequence) return Task.CompletedTask;
+        restoreInitiatorFocus = true;
+        CloseDefinition();
+        return InvokeAsync(StateHasChanged);
+    }
+    private async Task AppliedAsync(RequirementCatalogueCommandOutcome result, Action close, string? submittedName, int sequence)
+    {
+        if (result.Status == RequirementCatalogueCommandStatus.Committed)
+        {
+            if (definitionDraftSequence != sequence || !DefinitionModalOpen) return;
+            close();
+            ClearDefinitionOperationStatus();
+            await ReloadAsync();
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+        if (definitionDraftSequence != sequence) return;
+        definitionIssues = PresentDefinitionIssues(result.ValidationIssues, submittedName);
+        definitionMessage = definitionIssues.Count == 0 ? result.Message ?? "" : "";
+        pendingDefinitionFocusId = definitionIssues.FirstOrDefault() is { } issue
+            ? DefinitionFieldId(issue.Field)
+            : result.Status is RequirementCatalogueCommandStatus.Missing or RequirementCatalogueCommandStatus.Failed
+                ? DefinitionApplyId
+                : null;
+        await InvokeAsync(StateHasChanged);
+    }
+    private static IReadOnlyList<RequirementCatalogueValidationIssue> PresentDefinitionIssues(IReadOnlyList<RequirementCatalogueValidationIssue> issues, string? submittedName)
+    {
+        var relevant = issues.Where(issue => issue.DefinitionName == submittedName || issue.CollidingDefinitionName == submittedName).ToArray();
+        return relevant.Select(issue => issue.Field == "Aliases" && !string.IsNullOrWhiteSpace(issue.CollidingDefinitionName)
+            ? issue with { Field = "Aliases", Message = $"Alias collides with '{issue.CollidingDefinitionName}'. Choose a different alias." }
+            : issue).ToArray();
+    }
+    private void ClearDefinitionOperationStatus() { definitionMessage = ""; definitionIssues = []; pendingDefinitionFocusId = null; }
+    private void ConfirmDelete(Guid id, string name, bool predicate) => deleteConfirmation = new(id, name, predicate);
+    private void CloseDelete() { restoreInitiatorFocus = true; deleteConfirmation = null; }
+    private async Task DeleteAsync() { var confirmation = deleteConfirmation!; var result = confirmation.Predicate ? await Catalogue.DeleteAsync(new DeleteRequirementPredicate(confirmation.Id)) : await Catalogue.DeleteAsync(new DeleteRequirementItem(confirmation.Id)); if (result.Status == RequirementCatalogueCommandStatus.Committed) { deleteConfirmation = null; await ReloadAsync(); } else message = result.Message ?? ""; }
+    private async Task OpenImportPickerAsync() => await JS.InvokeVoidAsync("requirementCatalogueDrag.openImportPicker", "requirement-catalogue-import");
+    private async Task OpenSyntaxGuideAsync() { if (ModalOpen) return; syntaxGuide = await Catalogue.LoadReferenceAsync(); }
+    private void CloseSyntaxGuide() { restoreInitiatorFocus = true; syntaxGuide = null; }
+    private void ManageSyntaxGuide() => syntaxGuide = null;
+    private async Task ReadImportAsync(InputFileChangeEventArgs args)
+    {
+        message = "";
+        try { await using var stream = args.File.OpenReadStream(RequirementCatalogueImportParser.MaximumImportBytes); using var memory = new MemoryStream(); await stream.CopyToAsync(memory); var parsed = ImportParser.Parse(memory.ToArray()); if (parsed.IsAccepted) pendingImport = parsed.Snapshot; else message = parsed.Errors.FirstOrDefault() ?? "The catalogue document is invalid."; }
+        catch (Exception exception) { Logger.LogError(exception, "Unexpected requirement catalogue document read failure."); Diagnostics.Show(exception.ToString()); }
+    }
+    private void CancelImport() { restoreInitiatorFocus = true; pendingImport = null; }
+    private async Task ReplaceImportAsync() { var outcome = await Imports.ReplaceConfirmedAsync(pendingImport!); if (outcome.Status == RequirementCatalogueImportStatus.Committed) { pendingImport = null; await ReloadAsync(); } else message = outcome.ValidationIssues.FirstOrDefault()?.Message ?? outcome.Message ?? ""; }
+    [JSInvokable] public async Task Drop(string kind, string id, int targetIndex) { if (CatalogueBusy || DefinitionModalOpen || (kind == "predicate" && PredicateFiltered) || (kind == "item" && ItemFiltered) || !Guid.TryParse(id, out var definitionId)) return; var outcome = kind == "predicate" ? await Catalogue.ReorderAsync(new ReorderRequirementPredicate(definitionId, targetIndex)) : await Catalogue.ReorderAsync(new ReorderRequirementItem(definitionId, targetIndex)); if (outcome.Status == RequirementCatalogueCommandStatus.Committed) { await ReloadAsync(); await InvokeAsync(StateHasChanged); } else message = outcome.Message ?? ""; }
+    private Task ClearDragAsync() => dragInitialization is { IsCompletedSuccessfully: true } ? JS.InvokeVoidAsync("requirementCatalogueDrag.cleanup").AsTask() : Task.CompletedTask;
+    private Task DeleteKeyDown(KeyboardEventArgs args) { if (args.Key == "Escape") CloseDelete(); return Task.CompletedTask; }
+    private Task ImportKeyDown(KeyboardEventArgs args) { if (args.Key == "Escape") CancelImport(); return Task.CompletedTask; }
+    public async ValueTask DisposeAsync() { try { if (dragInitialization is { IsCompletedSuccessfully: true }) await JS.InvokeVoidAsync("requirementCatalogueDrag.dispose"); } catch (Microsoft.JSInterop.JSDisconnectedException) { } finally { dotNetReference?.Dispose(); } }
+
+    private RenderFragment DefinitionDialog(bool Predicate) => builder =>
+    {
+        var sequence = 0;
+        DefinitionDraft draft = Predicate ? predicateDraft! : itemDraft!;
+        builder.OpenElement(sequence++, "div"); builder.AddAttribute(sequence++, "class", "confirmation-backdrop requirement-catalogue-backdrop"); builder.AddAttribute(sequence++, "role", "presentation"); builder.AddAttribute(sequence++, "data-requirement-definition-backdrop", "true");
+        builder.OpenElement(sequence++, "section"); builder.AddAttribute(sequence++, "class", "confirmation-modal requirement-definition-modal"); builder.AddAttribute(sequence++, "role", "dialog"); builder.AddAttribute(sequence++, "aria-modal", "true"); builder.AddAttribute(sequence++, "aria-labelledby", "requirement-catalogue-definition-title"); builder.AddAttribute(sequence++, "tabindex", "-1"); builder.AddAttribute(sequence++, "data-requirement-definition", "true"); builder.AddAttribute(sequence++, "data-definition-sequence", definitionDraftSequence); builder.AddAttribute(sequence++, "data-definition-kind", Predicate ? "predicate" : "item"); builder.AddAttribute(sequence++, "data-definition-id", draft.Id); builder.AddAttribute(sequence++, "data-definition-name", draft.Name); builder.AddAttribute(sequence++, "data-definition-category", draft.Category); builder.AddAttribute(sequence++, "data-definition-aliases", draft.Aliases); builder.AddAttribute(sequence++, "data-definition-notes", draft.Notes); builder.AddAttribute(sequence++, "data-definition-alias-touched", draft.AliasTouched); if (Predicate) { builder.AddAttribute(sequence++, "data-definition-input-syntax", predicateDraft!.InputSyntax); builder.AddAttribute(sequence++, "data-definition-output-syntax", predicateDraft.OutputSyntax); } else builder.AddAttribute(sequence++, "data-definition-output-value", itemDraft!.OutputValue);
+        builder.AddMarkupContent(sequence++, Predicate ? "<h2 id=\"requirement-catalogue-definition-title\">predicate definition</h2>" : "<h2 id=\"requirement-catalogue-definition-title\">item definition</h2>");
+        builder.OpenElement(sequence++, "div"); builder.AddAttribute(sequence++, "class", "requirement-definition-form-content");
+        if (!string.IsNullOrWhiteSpace(definitionMessage)) { builder.OpenElement(sequence++, "p"); builder.AddAttribute(sequence++, "class", "requirement-catalogue-message"); builder.AddAttribute(sequence++, "role", "status"); builder.AddAttribute(sequence++, "data-requirement-definition-apply-result", "true"); builder.AddContent(sequence++, definitionMessage); builder.CloseElement(); }
+        Text(builder, ref sequence, "Name"); Text(builder, ref sequence, "Category", true);
+        if (Predicate) { SelectInputSyntax(builder, ref sequence); Text(builder, ref sequence, "Output Syntax", fullWidth: true); Aliases(builder, ref sequence); Textarea(builder, ref sequence, "Notes", "requirement-definition-notes", true); }
+        else { Aliases(builder, ref sequence); Text(builder, ref sequence, "Output Value", false, true); Textarea(builder, ref sequence, "Notes", "requirement-definition-notes", true); }
+        builder.CloseElement();
+        builder.OpenElement(sequence++, "div"); builder.AddAttribute(sequence++, "class", "requirement-catalogue-modal-footer");
+        builder.OpenElement(sequence++, "div"); builder.AddAttribute(sequence++, "class", "requirement-catalogue-modal-alternatives"); builder.CloseElement();
+        builder.OpenElement(sequence++, "div"); builder.AddAttribute(sequence++, "class", "requirement-catalogue-modal-commit-group");
+        Button(builder, ref sequence, "Cancel", "cancel"); Button(builder, ref sequence, "Apply", "apply");
+        builder.CloseElement();
+        builder.CloseElement();
+        builder.CloseElement();
+        builder.CloseElement();
+    };
+    private const string DefinitionApplyId = "requirement-catalogue-definition-apply";
+    private static string DefinitionFieldId(string field) => $"requirement-catalogue-definition-{field.ToLowerInvariant()}";
+    private void Text(RenderTreeBuilder b, ref int s, string label, bool categories = false, bool fullWidth = false) { var field = label.Replace(" ", ""); FieldStart(b, ref s, fullWidth); b.OpenElement(s++, "label"); b.AddContent(s++, label); b.OpenElement(s++, "input"); b.AddAttribute(s++, "id", DefinitionFieldId(field)); b.AddAttribute(s++, "data-requirement-definition-field", field); if (categories) b.AddAttribute(s++, "list", "requirement-catalogue-categories"); b.CloseElement(); b.CloseElement(); Messages(b, ref s, field); b.CloseElement(); }
+    private void SelectInputSyntax(RenderTreeBuilder b, ref int s) { FieldStart(b, ref s, true); b.OpenElement(s++, "label"); b.AddContent(s++, "Input Syntax"); b.OpenElement(s++, "select"); b.AddAttribute(s++, "id", DefinitionFieldId("InputSyntax")); b.AddAttribute(s++, "data-requirement-definition-field", "InputSyntax"); foreach (var option in RequirementCatalogueLanguage.InputSyntaxOptions) { b.OpenElement(s++, "option"); b.AddAttribute(s++, "value", option.PersistedValue); b.AddContent(s++, option.DisplayLabel + "  " + option.PersistedValue); b.CloseElement(); } b.CloseElement(); b.CloseElement(); Messages(b, ref s, "InputSyntax"); b.CloseElement(); }
+    private void Aliases(RenderTreeBuilder b, ref int s) { FieldStart(b, ref s, true); b.OpenElement(s++, "label"); b.AddContent(s++, "Aliases"); b.OpenElement(s++, "input"); b.AddAttribute(s++, "id", DefinitionFieldId("Aliases")); b.AddAttribute(s++, "data-requirement-definition-field", "Aliases"); b.AddAttribute(s++, "class", "requirement-definition-alias-editor"); b.AddAttribute(s++, "data-requirement-catalogue-alias-editor", "true"); b.CloseElement(); b.CloseElement(); Messages(b, ref s, "Aliases"); b.CloseElement(); }
+    private void Textarea(RenderTreeBuilder b, ref int s, string label, string cssClass, bool fullWidth = false) { var field = label.Replace(" ", ""); FieldStart(b, ref s, fullWidth); b.OpenElement(s++, "label"); b.AddContent(s++, label); b.OpenElement(s++, "textarea"); b.AddAttribute(s++, "id", DefinitionFieldId(field)); b.AddAttribute(s++, "data-requirement-definition-field", field); b.AddAttribute(s++, "class", cssClass); b.CloseElement(); b.CloseElement(); Messages(b, ref s, field); b.CloseElement(); }
+    private static void FieldStart(RenderTreeBuilder b, ref int s, bool fullWidth = false) { b.OpenElement(s++, "div"); b.AddAttribute(s++, "class", fullWidth ? "requirement-definition-field requirement-definition-field-full" : "requirement-definition-field"); }
+    private void Messages(RenderTreeBuilder b, ref int s, string field) { b.OpenElement(s++, "div"); b.AddAttribute(s++, "data-requirement-definition-local-messages", field); b.CloseElement(); foreach (var issue in definitionIssues.Where(issue => issue.Field == field)) { b.OpenElement(s++, "p"); b.AddAttribute(s++, "class", "requirement-catalogue-message"); b.AddAttribute(s++, "role", "status"); b.AddAttribute(s++, "data-requirement-definition-apply-result", "true"); b.AddContent(s++, issue.Message); b.CloseElement(); } }
+    private static void Button(RenderTreeBuilder b, ref int s, string text, string action) { b.OpenElement(s++, "button"); b.AddAttribute(s++, "type", "button"); b.AddAttribute(s++, "class", $"catalogue-modal-action catalogue-modal-{action}"); if (action == "apply") b.AddAttribute(s++, "id", DefinitionApplyId); b.AddAttribute(s++, "data-requirement-definition-action", action); b.AddContent(s++, text); b.CloseElement(); }
+    private void CloseDefinition() { predicateDraft = null; itemDraft = null; ClearDefinitionOperationStatus(); }
+}

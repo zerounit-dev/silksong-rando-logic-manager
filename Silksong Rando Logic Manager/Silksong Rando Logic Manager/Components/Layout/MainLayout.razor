@@ -1,0 +1,23 @@
+﻿@inherits LayoutComponentBase
+<DiagnosticErrorBoundary>
+    <ChildContent>
+        <div class="app-shell">
+            <aside class="sidebar" aria-label="Room navigation">
+                <NavMenu />
+            </aside>
+
+            <main class="workspace">
+                <article class="content">
+                    @Body
+                </article>
+            </main>
+        </div>
+        <SceneReview />
+        <DistributedImportWizard />
+    </ChildContent>
+    <ErrorContent>
+        <span class="diagnostic-boundary-fallback">The diagnostic modal contains the error details.</span>
+    </ErrorContent>
+</DiagnosticErrorBoundary>
+
+<DiagnosticModal />

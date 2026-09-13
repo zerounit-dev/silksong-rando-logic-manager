@@ -1,0 +1,39 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <base href="/" />
+    <link rel="stylesheet" href="@Assets["app.css"]" />
+    <link rel="stylesheet" href="@Assets["lib/fontawesome/css/all.min.css"]" />
+    <link rel="stylesheet" href="@Assets["Silksong_Rando_Logic_Manager.styles.css"]" />
+    <ImportMap />
+    <link rel="icon" type="image/png" href="favicon.png" />
+    <style id="room-context-preferences" data-permanent>
+        :root { --room-map-context-ratio-term: 9; }
+        .room-editor-v2 .room-map-context-height-host { display: block; }
+        .room-editor-v2 .room-map-context-toggle-show { display: none; }
+        .room-editor-v2 .room-map-context-toggle-hide { display: inline-block; }
+        .room-editor-v2 .room-map-context > .room-context-zone-pane { display: flex; }
+        .room-editor-v2 .room-map-context > .room-context-divider { display: block; }
+        .room-editor-v2 .room-map-context > .room-context-scene-pane { flex-basis: 0; }
+        .map-wireframe .map-overlay-image, .map-wireframe [data-map-owner="unlinked"] { display: inline; }
+        .map-wireframe[data-has-overlay="true"] [data-map-owner="linked"] { fill: transparent; stroke: transparent; pointer-events: all; cursor: pointer; }
+        .map-wireframe[data-has-overlay="true"] [data-map-owner="linked"]:is(:hover, :focus) { stroke: rgb(255 255 255 / 35%); stroke-width: 1px; }
+    </style>
+    <script src="@Assets["editor.js"]"></script>
+    <HeadOutlet />
+</head>
+
+<body>
+    <Routes />
+    <ReconnectModal />
+    <FatalCircuitFallback />
+    <script src="@Assets["requirement-catalogue.js"]"></script>
+    <script src="@Assets["map-navigation.js"]"></script>
+    <script src="@Assets["fatal-circuit-fallback.js"]"></script>
+    <script src="@Assets["_framework/blazor.web.js"]"></script>
+</body>
+
+</html>

@@ -1,0 +1,11 @@
+@using Silksong_Rando_Logic_Manager.Components.RoomEditorV2.Contracts
+
+<footer class="room-reminder-footer" aria-label="Room options reminder">
+    <strong>@View.Prose</strong>
+    <button id="room-syntax-guide" type="button" @onmousedown:preventDefault="true" @onclick="() => Intent.InvokeAsync(RoomReminderFooterIntent.OpenSyntaxGuide)">syntax guide</button>
+</footer>
+
+@code {
+    [Parameter, EditorRequired] public RoomReminderFooterView View { get; set; } = null!;
+    [Parameter, EditorRequired] public EventCallback<RoomReminderFooterIntent> Intent { get; set; }
+}

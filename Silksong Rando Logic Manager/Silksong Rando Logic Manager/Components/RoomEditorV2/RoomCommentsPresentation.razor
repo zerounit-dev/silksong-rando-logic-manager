@@ -1,0 +1,29 @@
+@using Markdig
+@using Microsoft.AspNetCore.Components
+@using Silksong_Rando_Logic_Manager.Components.RoomEditorV2.Contracts
+
+<section class="document-section" aria-labelledby="room-comments-heading">
+    <h2 id="room-comments-heading">comments</h2>
+    <div class="document-comments" aria-label="Room comments" @onclick="BeginEdit">
+        @if (editing)
+        {
+            <textarea class="markdown-editor" aria-label="Room comments" readonly="@(!Editable)" @bind="draft" @bind:event="oninput" @onblur="Blur"></textarea>
+        }
+        else
+        {
+            <div class="markdown-preview">@((MarkupString)Markdown.ToHtml(View.Markdown ?? string.Empty, Pipeline))</div>
+        }
+    </div>
+</section>
+
+@code {
+    private static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder().DisableHtml().Build();
+    [Parameter, EditorRequired] public RoomCommentsView View { get; set; } = null!;
+    [Parameter] public EventCallback<string> DraftChanged { get; set; }
+    [Parameter] public EventCallback Save { get; set; }
+    [Parameter] public bool Editable { get; set; } = true;
+    private bool editing; private string draft = string.Empty;
+    protected override void OnParametersSet() { if (!editing) draft = View.Markdown ?? string.Empty; }
+    private void BeginEdit() { if (Editable) editing = true; }
+    private async Task Blur() { editing = false; await DraftChanged.InvokeAsync(draft); await Save.InvokeAsync(); }
+}

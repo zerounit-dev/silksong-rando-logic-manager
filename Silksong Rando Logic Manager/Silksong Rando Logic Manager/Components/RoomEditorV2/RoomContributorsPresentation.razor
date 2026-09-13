@@ -1,0 +1,13 @@
+@using Silksong_Rando_Logic_Manager.Components.RoomEditorV2.Contracts
+
+<label>contributors <textarea aria-label="Room contributors" readonly="@(!Editable)" rows="1" @bind="value" @bind:event="oninput" @onblur="Blur"></textarea></label>
+
+@code {
+    [Parameter, EditorRequired] public RoomContributorsView View { get; set; } = null!;
+    [Parameter] public bool Editable { get; set; }
+    [Parameter] public EventCallback<string?> ValueChanged { get; set; }
+    [Parameter] public EventCallback Save { get; set; }
+    private string? value;
+    protected override void OnParametersSet() => value = View.Contributors;
+    private async Task Blur() { await ValueChanged.InvokeAsync(value); await Save.InvokeAsync(); }
+}

@@ -1,0 +1,21 @@
+@using Silksong_Rando_Logic_Manager.Components.RoomEditorV2.Contracts
+
+<div class="document-action-row">
+    <RoomNavigationContextControlsPresentation View="NavigationContext" BackToMap="BackToMap" ToggleMapContext="ToggleMapContext" />
+    <RoomLifecycleContentControlsPresentation View="LifecycleContent" RoomId="RoomId" ToggleArchivedChildren="ToggleArchivedChildren" Intent="LifecycleContentIntent" Archive="Archive" Restore="Restore" PermanentDelete="PermanentDelete" CurrentRoomExport="CurrentRoomExport" ZoneExport="ZoneExport" />
+</div>
+
+@code {
+    [Parameter, EditorRequired] public RoomNavigationContextControlsView NavigationContext { get; set; } = null!;
+    [Parameter, EditorRequired] public RoomLifecycleContentControlsView LifecycleContent { get; set; } = null!;
+    [Parameter, EditorRequired] public Guid RoomId { get; set; }
+    [Parameter] public EventCallback BackToMap { get; set; }
+    [Parameter] public EventCallback ToggleMapContext { get; set; }
+    [Parameter] public EventCallback ToggleArchivedChildren { get; set; }
+    [Parameter] public EventCallback<RoomLifecycleContentControlsIntent> LifecycleContentIntent { get; set; }
+    [Parameter] public EventCallback Archive { get; set; }
+    [Parameter] public EventCallback Restore { get; set; }
+    [Parameter] public EventCallback PermanentDelete { get; set; }
+    [Parameter] public EventCallback<RoomExportIntent> CurrentRoomExport { get; set; }
+    [Parameter] public EventCallback<RoomExportIntent> ZoneExport { get; set; }
+}

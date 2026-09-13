@@ -1,0 +1,344 @@
+@page "/"
+@rendermode InteractiveServer
+@using Microsoft.AspNetCore.Components
+@using System.Text.Json
+@inject MapManifestParser ManifestParser
+@inject MapManifestService ManifestService
+@inject MapOverlayService OverlayService
+@inject MapOverlayPlacementService OverlayPlacementService
+@inject IAreaMapLoader AreaMaps
+@inject NavigationManager Navigation
+@inject DiagnosticState Diagnostics
+@inject IJSRuntime JS
+
+<PageTitle>Silksong Logic</PageTitle>
+
+<section class="map-wireframe-workspace">
+    <header class="map-wireframe-header">
+        <h1>Silksong Logic</h1>
+        @if (isProcessing)
+        {
+            <span class="map-processing" aria-live="assertive"><i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i> applying map manifest</span>
+        }
+    </header>
+
+    @if (landingView?.State == LandingAreaMapState.NoImportedMap)
+    {
+        <p class="map-empty">No imported map frames yet.</p>
+        @EmptyMapControls
+    }
+    else if (landingView?.State == LandingAreaMapState.UnusableGeometry)
+    {
+        <p class="map-empty">The imported map has no available chunk geometry.</p>
+        @EmptyMapControls
+    }
+    else if (mapView is not null)
+    {
+        <AreaMapSurface View="mapView" LinkedRoomActivated="NavigateToRoom" MapLinkRequested="OpenMapLinks">
+            <LeadingControls>
+                <InputFile id="map-manifest-input" class="map-manifest-input" OnChange="UploadAsync" accept="application/json,.json" disabled="@isProcessing" />
+                <label class="map-manifest-picker @(isProcessing ? "disabled" : "")" for="map-manifest-input"><i class="fa-solid fa-file-arrow-up" aria-hidden="true"></i> map manifest</label>
+                <button type="button" class="map-manifest-picker" @onclick="() => OpenMapLinks()"><i class="fa-solid fa-link" aria-hidden="true"></i> edit map links</button>
+                @if (mapView.Decoration.Overlay is not null) { <button type="button" class="map-manifest-picker" @onclick="OpenOverlayEditor"><i class="fa-solid fa-sliders" aria-hidden="true"></i> calibrate image</button> }
+            </LeadingControls>
+            <ControlStatus>@MapStatus</ControlStatus>
+        </AreaMapSurface>
+    }
+</section>
+
+@if (showMapLinks)
+{
+    <MapLinkEditor ResolvedRoomId="mapLinkResolvedRoomId" MapSceneId="mapLinkSceneId" OnClosed="CloseMapLinksAsync" />
+}
+
+@if (reconciliationPlan is not null)
+{
+    <div class="confirmation-backdrop"><section class="confirmation-modal map-reconciliation-modal" role="dialog" aria-modal="true" aria-labelledby="map-reconciliation-title">
+        <h2 id="map-reconciliation-title">@(reviewNavigation.FocusedZone is null ? "zone change summary" : $"review zone: {reviewNavigation.FocusedZone}")</h2>
+        <p>@reconciliationPlan.Manifest.ExcludedAnnotations annotation records excluded. Apply only commits the selected importer-owned operations.</p>
+        <div class="map-reconciliation-toolbar">@if (reviewNavigation.FocusedZone is not null) { <button type="button" @onclick="BackToSummary">back to zone change summary</button><button type="button" @onclick="PreviousZone" disabled="@(!CanMoveZone(-1))">previous zone</button><button type="button" @onclick="NextZone" disabled="@(!CanMoveZone(1))">next zone</button><input class="map-reconciliation-search" value="@reviewNavigation.Search" @oninput="SetReconciliationSearch" placeholder="search this zone" autocomplete="off" aria-label="Search zone changes" /><div class="map-reconciliation-filters" role="radiogroup" aria-label="Change type"><input id="map-review-filter-all" type="radio" name="map-review-filter" checked="@(reviewNavigation.ChangeFilter is null)" @onchange="() => SetReconciliationFilter(null)" /><label for="map-review-filter-all">All</label>@foreach (var filter in ReconciliationKinds) { var id = $"map-review-filter-{filter}"; <input id="@id" type="radio" name="map-review-filter" checked="@(reviewNavigation.ChangeFilter == filter)" @onchange="() => SetReconciliationFilter(filter)" /><label for="@id">@filter</label> }</div> }<div class="confirmation-actions"><button type="button" @onclick="CloseReconciliationReview">cancel</button><button type="button" class="scene-import-button" @onclick="ApplyReconciliationAsync">apply selected</button></div></div>
+        <div class="map-reconciliation-table-wrap">
+            <div class="map-reconciliation-review-content" @key="ReviewBranchKey">
+            @if (reviewNavigation.FocusedZone is null)
+            {
+                var viewport = MapManifestReviewViewport.FromBounds(reviewState!.SummaryViewBounds());
+                <svg class="map-manifest-preview" viewBox="@viewport.ViewBox" role="img" aria-label="Read-only zone change summary">
+                    <g transform="@viewport.MapUnitToSvgTransform">
+                        @foreach (var shape in reviewState.SummaryShapes()) { <rect class="@PreviewClass(shape)" x="@shape.Bounds.MinX" y="@shape.Bounds.MinY" width="@(shape.Bounds.MaxX - shape.Bounds.MinX)" height="@(shape.Bounds.MaxY - shape.Bounds.MinY)" @onclick="() => OpenZone(RowZone(shape.RowId))" /> }
+                        @foreach (var frame in reviewState.SummaryMapFrameShapes()) { <rect class="@PreviewClass(frame)" x="@frame.Bounds.MinX" y="@frame.Bounds.MinY" width="@(frame.Bounds.MaxX - frame.Bounds.MinX)" height="@(frame.Bounds.MaxY - frame.Bounds.MinY)" /> }
+                    </g>
+                </svg>
+                <div class="map-reconciliation-summary-viewport" data-map-review-bounded-viewport="true">
+                    <table class="map-reconciliation-table map-reconciliation-summary-table">
+                        <colgroup>
+                            <col class="map-review-summary-zone-column" />
+                            <col class="map-review-summary-group-column" />
+                            <col class="map-review-summary-count-column" />
+                            <col class="map-review-summary-count-column" />
+                            <col class="map-review-summary-count-column" />
+                            <col class="map-review-summary-unchanged-column" />
+                            <col class="map-review-summary-review-column" />
+                        </colgroup>
+                        <thead class="map-reconciliation-sticky-heading"><tr><th>Zone</th><th>Matched group</th><th>Added</th><th>Removed</th><th>Changed</th><th>Unchanged</th><th>Review</th></tr></thead>
+                        <tbody>@foreach (var zone in reviewState.Zones) { var added = MapManifestZoneSummaryCountPresentation.Present(MapReconciliationKind.Added, zone.Added); var removed = MapManifestZoneSummaryCountPresentation.Present(MapReconciliationKind.Removed, zone.Removed); var changed = MapManifestZoneSummaryCountPresentation.Present(MapReconciliationKind.Changed, zone.Changed); var unchanged = MapManifestZoneSummaryCountPresentation.Present(MapReconciliationKind.Unchanged, zone.Unchanged); <tr class="@(zone.IsActionable ? "" : "map-review-unchanged-divider")" @onclick="() => OpenZone(zone.ZoneInGameId)"><td>@zone.ZoneInGameId</td><td>@zone.MatchedGroups</td><td><span class="@added.CssClass">@added.Text</span></td><td><span class="@removed.CssClass">@removed.Text</span></td><td><span class="@changed.CssClass">@changed.Text</span></td><td><span class="@unchanged.CssClass">@unchanged.Text</span></td><td><button type="button" @onclick:stopPropagation="true" @onclick="() => OpenZone(zone.ZoneInGameId)">review</button></td></tr> }</tbody>
+                    </table>
+                </div>
+            }
+            else
+            {
+                var viewport = MapManifestReviewViewport.FromBounds(reviewState!.FocusedZoneViewBounds);
+                <svg class="map-manifest-preview" viewBox="@viewport.ViewBox" role="img" aria-label="Read-only zone review preview"><g transform="@viewport.MapUnitToSvgTransform">@foreach (var shape in reviewState.FocusedZoneShapes) { <rect class="@PreviewClass(shape) @(reviewNavigation.HoveredRow == shape.RowId ? "map-review-hover" : "")" x="@shape.Bounds.MinX" y="@shape.Bounds.MinY" width="@(shape.Bounds.MaxX - shape.Bounds.MinX)" height="@(shape.Bounds.MaxY - shape.Bounds.MinY)" /> }</g></svg>
+                var rows = reviewState!.GetRows(reviewNavigation.FocusedZone, reviewNavigation.ChangeFilter, reviewNavigation.Search);
+                <div class="map-reconciliation-focused-viewport" data-map-review-bounded-viewport="true">
+                    <table class="map-reconciliation-table map-reconciliation-focused-table">
+                            <colgroup>
+                            <col class="map-review-focused-entity-column" />
+                            <col class="map-review-focused-change-column" />
+                            <col class="map-review-focused-area-column" />
+                            <col class="map-review-focused-cache-key-column" />
+                            <col class="map-review-focused-chunk-column" />
+                            <col class="map-review-focused-current-column" />
+                            <col class="map-review-focused-proposed-column" />
+                            <col class="map-review-focused-select-column" />
+                        </colgroup>
+                        <thead class="map-reconciliation-sticky-heading"><tr><th>Entity <span class="map-reconciliation-count">@rows.Rows.Count / @rows.Total found</span></th><th>Change</th><th>Area</th><th>cache key</th><th>chunk</th><th>current</th><th>proposed</th><th>select</th></tr></thead><tbody data-map-review-virtualized-rows="true"><Virtualize TItem="MapReconciliationPlanRow" Items="rows.Rows" Context="row" ItemSize="34" OverscanCount="3" SpacerElement="tr"><tr @key="row.Id" class="@(row.Locked ? "map-reconciliation-locked" : "")" data-map-review-row-id="@row.Id" @onmouseenter="() => SetHoveredReviewRow(row.Id)" @onmouseleave="() => SetHoveredReviewRow(null)"><td>@if (row.Entity == MapReconciliationEntity.Zone) { <strong>Zone</strong> } else { @row.Entity }</td><td class="@ChangePresentationClass(row.Kind)"><strong>@row.Kind</strong></td>@{ var area = MapManifestReviewAreaPresentation.Present(row); }<td class="@AreaPresentationClass(area)">@area</td><td>@row.SceneInGameId</td><td>@row.CacheIndex</td><td>@row.CurrentValue</td><td>@row.ProposedValue</td><td><input type="checkbox" checked="@row.Selected" @onchange="args => SetRowSelection(row, args.Value is bool selected && selected)" disabled="@(row.Locked || row.Kind == MapReconciliationKind.Unchanged)" /> @if (row.Locked) { <span>[required]</span> }</td></tr></Virtualize></tbody></table>
+                </div>
+            }
+            </div>
+        </div>
+    </section></div>
+}
+
+@if (overlayDraft is not null && mapView?.Decoration.Overlay is { } calibrationOverlay)
+{
+    <div class="confirmation-backdrop"><section class="confirmation-modal overlay-calibration-modal" role="dialog" aria-modal="true" aria-labelledby="overlay-calibration-title">
+        <h2 id="overlay-calibration-title">calibrate image</h2>
+        <svg id="map-overlay-calibration" class="map-overlay-calibration" viewBox="@ViewBox" data-base-viewbox="@ViewBox" role="img" aria-label="Area map calibration">
+            @if (OverlayDraftPlacement is { } draftPlacement) { <image class="map-overlay-image" href="@calibrationOverlay.ImageUrl" x="@draftPlacement.X" y="@draftPlacement.Y" width="@draftPlacement.Width" height="@draftPlacement.Height" preserveAspectRatio="none" /> }
+            <g transform="@MapUnitToSvgTransform">@foreach (var owner in mapView.Geometry.Owners) { <path class="chunk-frame @(owner.ActiveResolvedRoomId is not null ? "linked-owner" : "unlinked")" d="@owner.SvgPathData" /> }</g>
+        </svg>
+        <p class="overlay-calibration-legend">wheel: zoom | drag: pan | Ctrl+wheel: uniform scale | Ctrl+drag: align | Ctrl+Shift+drag: scale X/Y</p>
+        <div class="overlay-calibration-fields"><label>scale X <input id="overlay-scale-x-percent" type="number" step="any" @bind="overlayDraft.ScaleXPercent" @bind:event="oninput" /></label><label>scale Y <input id="overlay-scale-y-percent" type="number" step="any" @bind="overlayDraft.ScaleYPercent" @bind:event="oninput" /></label><label>left <input id="overlay-left-offset-percent" type="number" step="any" @bind="overlayDraft.LeftOffsetPercent" @bind:event="oninput" /></label><label>bottom <input id="overlay-bottom-offset-percent" type="number" step="any" @bind="overlayDraft.BottomOffsetPercent" @bind:event="oninput" /></label></div>
+        @if (overlayError is not null) { <p class="map-manifest-error" role="alert">@overlayError</p> }
+        <div class="confirmation-actions"><button type="button" @onclick="SaveOverlayAsync">apply</button><button type="button" @onclick="CloseOverlayEditor">cancel</button></div>
+    </section></div>
+}
+
+@code {
+    private LandingAreaMapView? landingView;
+    private AreaMapSurfaceView? mapView => landingView?.Surface;
+    private OverlayDraft? overlayDraft;
+    private string? overlayError;
+    private bool initializeOverlayCalibration;
+    private bool isProcessing;
+    private MapReconciliationPlan? reconciliationPlan;
+    private MapManifestReviewState? reviewState;
+    private readonly MapManifestReviewNavigationState reviewNavigation = new();
+    private MapReconciliationResult? result;
+    private string? uploadError;
+    private bool showMapLinks;
+    private Guid? mapLinkResolvedRoomId;
+    private Guid? mapLinkSceneId;
+
+    [SupplyParameterFromQuery(Name = "editMapLinksForRoom")]
+    public Guid? EditMapLinksForRoom { get; set; }
+    private Guid? openedMapLinkRoom;
+    protected override Task OnInitializedAsync() => LoadAsync();
+    protected override Task OnParametersSetAsync()
+    {
+        // The V2 scene pane emits this typed navigation intent only for a missing
+        // map-link prerequisite. The established landing-page editor owns its UI.
+        if (EditMapLinksForRoom is Guid roomId && openedMapLinkRoom != roomId)
+        {
+            openedMapLinkRoom = roomId;
+            OpenMapLinks(roomId);
+        }
+        return Task.CompletedTask;
+    }
+    private async Task LoadAsync()
+    {
+        landingView = await AreaMaps.LoadLandingAsync();
+    }
+
+    private async Task UploadAsync(InputFileChangeEventArgs args)
+    {
+        if (isProcessing) return;
+        uploadError = null;
+        result = null;
+        isProcessing = true;
+        await InvokeAsync(StateHasChanged);
+        await Task.Yield();
+        try
+        {
+            await using var stream = args.File.OpenReadStream(256 * 1024 * 1024);
+            reviewNavigation.BackToSummary();
+            reconciliationPlan = await ManifestService.BuildPlanAsync(await ManifestParser.ParseAsync(stream));
+            reviewState = new MapManifestReviewState(reconciliationPlan);
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or JsonException or IOException)
+        {
+            uploadError = $"Could not apply map manifest: {exception.Message}";
+        }
+        catch (Exception exception)
+        {
+            uploadError = "Could not apply map manifest. Details are available in the diagnostic modal.";
+            Diagnostics.Show(exception.ToString());
+        }
+        finally
+        {
+            isProcessing = false;
+        }
+    }
+
+    private async Task ApplyReconciliationAsync()
+    {
+        if (reconciliationPlan is null) return;
+        isProcessing = true;
+        try
+        {
+            result = await ManifestService.ApplyPlanAsync(reconciliationPlan);
+            reconciliationPlan = null;
+            reviewState = null;
+            reviewNavigation.BackToSummary();
+            await LoadAsync();
+        }
+        catch (Exception exception)
+        {
+            uploadError = "Could not apply map manifest. Details are available in the diagnostic modal.";
+            Diagnostics.Show(exception.ToString());
+        }
+        finally { isProcessing = false; }
+    }
+
+    private void SetRowSelection(MapReconciliationPlanRow row, bool selected) => reviewState!.SetRowSelected(row, selected);
+    private void SetHoveredReviewRow(Guid? rowId) => reviewNavigation.HoveredRow = rowId;
+
+    private void OpenZone(string? zone)
+    {
+        if (reviewNavigation.OpenZone(zone)) reviewState?.FocusZone(zone);
+    }
+    private bool CanMoveZone(int offset) => reviewState is not null && reviewNavigation.CanMoveZone(reviewState.Zones, offset);
+    private void PreviousZone() => MoveZone(-1);
+    private void NextZone() => MoveZone(1);
+    private void MoveZone(int offset)
+    {
+        if (reviewState is not null && reviewNavigation.MoveZone(reviewState.Zones, offset))
+            reviewState.FocusZone(reviewNavigation.FocusedZone);
+    }
+    private string? RowZone(Guid rowId) => reconciliationPlan?.Rows.SingleOrDefault(x => x.Id == rowId)?.ZoneInGameId;
+    private void SetReconciliationSearch(ChangeEventArgs args) => reviewNavigation.SetSearch(args.Value?.ToString());
+    private void SetReconciliationFilter(MapReconciliationKind? filter) => reviewNavigation.SetChangeFilter(filter);
+    private void BackToSummary()
+    {
+        reviewNavigation.BackToSummary();
+        reviewState?.FocusZone(null);
+    }
+    private void CloseReconciliationReview() { reconciliationPlan = null; reviewState = null; reviewNavigation.BackToSummary(); }
+
+    private static readonly MapReconciliationKind[] ReconciliationKinds = [MapReconciliationKind.Added, MapReconciliationKind.Removed, MapReconciliationKind.Changed, MapReconciliationKind.Unchanged];
+    private static string AreaPresentationClass(MapManifestReviewAreaState state) => state switch
+    {
+        MapManifestReviewAreaState.Grew => "map-review-area-grew",
+        MapManifestReviewAreaState.Shrank => "map-review-area-shrank",
+        _ => "map-review-area-same"
+    };
+    // Always use a non-null branch key so Blazor replaces the summary and focused table subtrees,
+    // including their Virtualize instances, instead of reconciling incompatible table render trees.
+    private string ReviewBranchKey => reviewNavigation.FocusedZone ?? "summary";
+
+    private Task OpenMapLinks(AreaMapSurface.MapLinkContextIntent intent)
+    {
+        OpenMapLinks(intent.ResolvedRoomId, intent.MapSceneId);
+        return Task.CompletedTask;
+    }
+    private void OpenMapLinks(Guid? resolvedRoomId = null, Guid? mapSceneId = null)
+    {
+        mapLinkResolvedRoomId = resolvedRoomId;
+        mapLinkSceneId = mapSceneId;
+        showMapLinks = true;
+    }
+
+    private async Task CloseMapLinksAsync(bool changed)
+    {
+        showMapLinks = false;
+        if (changed) await LoadAsync();
+    }
+
+    private void NavigateToRoom(AreaMapSurface.LinkedMapRoomIntent intent) => Navigation.NavigateTo($"/rooms/{intent.TargetRoomId}");
+
+    private MapOverlayPlacement? OverlayDraftPlacement => TryProjectOverlay(overlayDraft, out var placement) ? placement : null;
+    private bool TryProjectOverlay(OverlayDraft? candidate, out MapOverlayPlacement placement)
+    {
+        placement = null!;
+        var overlay = mapView?.Decoration.Overlay;
+        var bounds = mapView?.Geometry.MapBounds;
+        return candidate is not null && overlay is not null && bounds is not null &&
+            OverlayPlacementService.TryProject(bounds.X, bounds.Y, bounds.X + bounds.Width, bounds.Y + bounds.Height, candidate.ScaleXPercent, candidate.ScaleYPercent, candidate.LeftOffsetPercent, candidate.BottomOffsetPercent, overlay.AspectRatio, out placement);
+    }
+    private void OpenOverlayEditor()
+    {
+        var overlay = mapView!.Decoration.Overlay!;
+        overlayDraft = new() { MapId = overlay.MapId, ScaleXPercent = overlay.ScaleXPercent, ScaleYPercent = overlay.ScaleYPercent, LeftOffsetPercent = overlay.LeftOffsetPercent, BottomOffsetPercent = overlay.BottomOffsetPercent };
+        overlayError = null;
+        initializeOverlayCalibration = true;
+    }
+
+    private void CloseOverlayEditor() { overlayDraft = null; overlayError = null; }
+    private async Task SaveOverlayAsync()
+    {
+        var draft = overlayDraft;
+        if (draft is null || !TryProjectOverlay(draft, out _)) { overlayError = "Scale must be finite and positive; offsets must be finite."; return; }
+        try { await OverlayService.SavePlacementAsync(new(draft.MapId, draft.ScaleXPercent, draft.ScaleYPercent, draft.LeftOffsetPercent, draft.BottomOffsetPercent)); }
+        catch (InvalidOperationException exception)
+        {
+            await LoadAsync();
+            overlayError = exception.Message;
+            return;
+        }
+        CloseOverlayEditor();
+        await LoadAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (initializeOverlayCalibration)
+        {
+            initializeOverlayCalibration = false;
+            await JS.InvokeVoidAsync("mapOverlayCalibration.initialize", "map-overlay-calibration");
+        }
+    }
+
+    private string ViewBox { get { var b = mapView!.Geometry.MapBounds; return $"{b.X} {b.Y} {b.Width} {b.Height}"; } }
+    private string MapUnitToSvgTransform { get { var b = mapView!.Geometry.MapBounds; return $"translate(0 {b.Y * 2 + b.Height}) scale(1 -1)"; } }
+    private static string PreviewClass(MapManifestPreviewShape shape) => MapManifestReviewPreviewPresentation.CssClass(shape);
+    private static string ChangePresentationClass(MapReconciliationKind kind) => kind switch
+    {
+        MapReconciliationKind.Added => "map-review-change-added",
+        MapReconciliationKind.Removed => "map-review-change-removed",
+        MapReconciliationKind.Changed => "map-review-change-changed",
+        _ => "map-review-change-unchanged"
+    };
+    private RenderFragment EmptyMapControls => @<div class="map-manifest-upload"><div class="map-controls-start">
+        <InputFile id="map-manifest-input" class="map-manifest-input" OnChange="UploadAsync" accept="application/json,.json" disabled="@isProcessing" />
+        <label class="map-manifest-picker @(isProcessing ? "disabled" : "")" for="map-manifest-input"><i class="fa-solid fa-file-arrow-up" aria-hidden="true"></i> map manifest</label>
+        <button type="button" class="map-manifest-picker" @onclick="() => OpenMapLinks()"><i class="fa-solid fa-link" aria-hidden="true"></i> edit map links</button>
+    </div>@MapStatus</div>;
+    private RenderFragment MapStatus => @<text>
+        @if (result is not null)
+        {
+            <span class="map-manifest-result" aria-live="polite">new: @result.New; missing: @result.Missing; matched different: @result.MatchedDifferent; matched unchanged: @result.MatchedUnchanged; auto-linked: @result.AutoLinked; unresolved auto-link candidates: @result.UnresolvedAutoLinkCandidates; excluded annotation records: @result.ExcludedAnnotations</span>
+        }
+        @if (uploadError is not null)
+        {
+            <span class="map-manifest-error" role="alert">@uploadError</span>
+        }
+    </text>;
+    private sealed class OverlayDraft
+    {
+        public Guid MapId { get; init; }
+        public double ScaleXPercent { get; set; }
+        public double ScaleYPercent { get; set; }
+        public double LeftOffsetPercent { get; set; }
+        public double BottomOffsetPercent { get; set; }
+    }
+}

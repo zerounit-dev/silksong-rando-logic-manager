@@ -1,0 +1,15 @@
+@using Silksong_Rando_Logic_Manager.Components.RoomEditorV2.Contracts
+
+<span class="room-save-status" data-v2-header-save-state="@Status.State.ToString().ToLowerInvariant()">@Text</span>
+
+@code {
+    [Parameter] public V2RoomHeaderSaveStatus Status { get; set; } = new(V2RoomHeaderSaveState.Saved);
+    private string Text => Status.State switch
+    {
+        V2RoomHeaderSaveState.Saving => "Saving",
+        V2RoomHeaderSaveState.Conflict => "Conflict",
+        V2RoomHeaderSaveState.Failed => "Save failed",
+        V2RoomHeaderSaveState.Missing => "Reload required",
+        _ => "Saved"
+    };
+}
