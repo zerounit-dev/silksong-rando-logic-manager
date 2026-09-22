@@ -260,8 +260,8 @@ public static class SceneRefreshImpact
     // delivered durable routes.  Do not replace them with route-local flags.
     public static bool SubroomSave(SubroomDurableBaseline baseline, SubroomDraft draft) => baseline.FriendlyName != draft.FriendlyName || baseline.ReferenceId != draft.ReferenceId;
     public const bool SubroomGeometry = true;
-    public static bool TransitionSave(TransitionDurableBaseline baseline, TransitionDraft draft) => baseline.Alias != draft.Alias || baseline.FriendlyName != draft.FriendlyName;
-    public static bool CheckSave(CheckDurableBaseline baseline, CheckDraft draft) => baseline.FriendlyName != draft.FriendlyName;
+    public static bool TransitionSave(TransitionDurableBaseline baseline, TransitionDraft draft) => baseline.Alias != draft.Alias || baseline.FriendlyName != draft.FriendlyName || baseline.SourceSubroomReferenceText != draft.SourceSubroomReferenceText;
+    public static bool CheckSave(CheckDurableBaseline baseline, CheckDraft draft) => baseline.FriendlyName != draft.FriendlyName || baseline.SubroomReferenceText != draft.SubroomReferenceText;
     public static bool ConnectionSave(ConnectionDurableBaseline baseline, ConnectionDraft draft) => baseline.Alias != draft.Alias || baseline.FriendlyName != draft.FriendlyName || baseline.SourceSubroomReferenceText != draft.SourceSubroomReferenceText || baseline.DestinationSubroomReferenceText != draft.DestinationSubroomReferenceText;
     public static bool TransitionMetadata(TransitionDurableBaseline baseline, TransitionInGameMetadataDraft draft) => baseline.InGamePositionX != draft.InGamePositionX || baseline.InGamePositionY != draft.InGamePositionY || baseline.AnnotationSceneUnitX != draft.AnnotationSceneUnitX || baseline.AnnotationSceneUnitY != draft.AnnotationSceneUnitY;
     public static bool CheckMetadata(CheckMetadataDurableBaseline baseline, CheckInGameMetadataDraft draft) => baseline.InGamePositionX != draft.InGamePositionX || baseline.InGamePositionY != draft.InGamePositionY || baseline.AnnotationSceneUnitX != draft.AnnotationSceneUnitX || baseline.AnnotationSceneUnitY != draft.AnnotationSceneUnitY;

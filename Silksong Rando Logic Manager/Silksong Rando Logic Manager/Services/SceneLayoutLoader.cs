@@ -30,9 +30,9 @@ public sealed class SceneLayoutLoader(IDbContextFactory<LogicDbContext> contexts
         var subrooms = await db.Subrooms.AsNoTracking().Where(x => x.RoomId == roomId && !x.IsArchived)
             .Select(x => new SceneSubroomLoad(x.Id, x.FriendlyName, x.SceneUnitX, x.SceneUnitY, x.SceneUnitWidth, x.SceneUnitHeight, x.EnableAnnotation)).ToListAsync(cancellationToken);
         var transitions = await db.RoomTransitions.AsNoTracking().Where(x => x.RoomId == roomId && !x.IsArchived && x.EnableAnnotation)
-            .Select(x => new SceneTransitionLoad(x.Id, x.Alias, x.FriendlyName, x.AnnotationSceneUnitX, x.AnnotationSceneUnitY)).ToListAsync(cancellationToken);
+            .Select(x => new SceneTransitionLoad(x.Id, x.Alias, x.FriendlyName, x.AnnotationSceneUnitX, x.AnnotationSceneUnitY, x.ResolvedSourceSubroomId)).ToListAsync(cancellationToken);
         var checks = await db.CheckLocations.AsNoTracking().Where(x => x.RoomId == roomId && !x.IsArchived && x.EnableAnnotation)
-            .Select(x => new SceneCheckLoad(x.Id, x.FriendlyName, x.AnnotationSceneUnitX, x.AnnotationSceneUnitY)).ToListAsync(cancellationToken);
+            .Select(x => new SceneCheckLoad(x.Id, x.FriendlyName, x.AnnotationSceneUnitX, x.AnnotationSceneUnitY, x.ResolvedSubroomId)).ToListAsync(cancellationToken);
         var connections = await db.SubroomConnections.AsNoTracking().Where(x => x.RoomId == roomId && !x.IsArchived)
             .OrderBy(x => x.SortOrder).ThenBy(x => x.Id)
             .Select(x => new SceneConnectionLoad(x.Id, x.Alias, x.FriendlyName, x.SourceSubroomReferenceText, x.DestinationSubroomReferenceText, x.ResolvedSourceSubroomId, x.ResolvedDestinationSubroomId, x.EnableAnnotation, x.SceneUnitX, x.SceneUnitY)).ToListAsync(cancellationToken);
@@ -42,8 +42,8 @@ public sealed class SceneLayoutLoader(IDbContextFactory<LogicDbContext> contexts
 
 internal sealed record SceneRoomLoad(Guid Id, bool Archived, double? Width, double? Height, double? ScaleX, double? ScaleY, double? PanX, double? PanY, bool IsStale, DateTime UpdatedUtc);
 internal sealed record SceneSubroomLoad(Guid Id, string FriendlyName, double? X, double? Y, double? Width, double? Height, bool Enabled);
-internal sealed record SceneTransitionLoad(Guid Id, string Alias, string FriendlyName, double? OverrideX, double? OverrideY);
-internal sealed record SceneCheckLoad(Guid Id, string FriendlyName, double? OverrideX, double? OverrideY);
+internal sealed record SceneTransitionLoad(Guid Id, string Alias, string FriendlyName, double? OverrideX, double? OverrideY, Guid? SourceSubroomId);
+internal sealed record SceneCheckLoad(Guid Id, string FriendlyName, double? OverrideX, double? OverrideY, Guid? SubroomId);
 internal sealed record SceneConnectionLoad(Guid Id, string Alias, string FriendlyName, string Source, string Destination, Guid? SourceId, Guid? DestinationId, bool Enabled, double? X, double? Y);
 
 internal static class SceneLayoutMapper
@@ -54,25 +54,45 @@ internal static class SceneLayoutMapper
         var frames = subrooms.Where(x => x.Enabled && Rectangle(x.X, x.Y, x.Width, x.Height))
             .OrderBy(x => x.FriendlyName, StringComparer.OrdinalIgnoreCase)
             .Select(x => new SceneSubroomFrameView(x.Id, x.FriendlyName, Title(x.FriendlyName), x.X!.Value, x.Y!.Value, x.Width!.Value, x.Height!.Value)).ToArray();
+        var framesById = frames.ToDictionary(x => x.EntityId);
         var markers = new List<SceneMarkerView>();
+        var threads = new List<SceneRelationshipThreadView>();
         foreach (var transition in transitions)
-            AddAnnotation(markers, transition.Id, "exit", transition.Alias, transition.FriendlyName, transition.OverrideX, transition.OverrideY);
+        {
+            var marker = AddAnnotation(markers, transition.Id, "exit", transition.Alias, transition.FriendlyName, transition.OverrideX, transition.OverrideY);
+            AddThread(threads, marker, transition.SourceSubroomId, framesById);
+        }
         foreach (var check in checks)
-            AddAnnotation(markers, check.Id, "check", check.FriendlyName, check.FriendlyName, check.OverrideX, check.OverrideY);
+        {
+            var marker = AddAnnotation(markers, check.Id, "check", check.FriendlyName, check.FriendlyName, check.OverrideX, check.OverrideY);
+            AddThread(threads, marker, check.SubroomId, framesById);
+        }
         if (subrooms.Count > 0)
             foreach (var group in connections.GroupBy(x => Key(x.Alias)).Where(x => ValidConnectionGroup(x.ToArray(), connections)))
             {
                 var rows = group.ToArray(); var first = rows[0];
                 if (!rows.All(x => x.Enabled) || !SynchronizedPair(rows.Select(x => (x.X, x.Y)).ToArray())) continue;
-                if (CompletePair(first.X, first.Y)) markers.Add(new(first.Id, "connection", first.Alias, Title(first.FriendlyName), first.X!.Value, first.Y!.Value));
+                if (!CompletePair(first.X, first.Y)) continue;
+                var marker = new SceneMarkerView(first.Id, "connection", first.Alias, Title(first.FriendlyName), first.X!.Value, first.Y!.Value);
+                markers.Add(marker);
+                foreach (var endpointId in rows.SelectMany(x => new[] { x.SourceId, x.DestinationId }).OfType<Guid>().Distinct())
+                    AddThread(threads, marker, endpointId, framesById);
             }
         var hasTransform = CompletePair(room.ScaleX, room.ScaleY) && CompletePair(room.PanX, room.PanY) && room.ScaleX > 0 && room.ScaleY > 0;
-        return new(validBounds, room.Width, room.Height, frames, markers.OrderBy(x => x.Kind).ThenBy(x => x.Label, StringComparer.OrdinalIgnoreCase).ToArray(), new(hasTransform, room.IsStale, imageExists, room.UpdatedUtc.Ticks));
+        return new(validBounds, room.Width, room.Height, frames, markers.OrderBy(x => x.Kind).ThenBy(x => x.Label, StringComparer.OrdinalIgnoreCase).ToArray(), new(hasTransform, room.IsStale, imageExists, room.UpdatedUtc.Ticks), threads);
     }
 
-    private static void AddAnnotation(List<SceneMarkerView> markers, Guid id, string kind, string label, string friendly, double? overrideX, double? overrideY)
+    private static SceneMarkerView? AddAnnotation(List<SceneMarkerView> markers, Guid id, string kind, string label, string friendly, double? overrideX, double? overrideY)
     {
-        if (CompletePair(overrideX, overrideY)) markers.Add(new(id, kind, label, Title(friendly), overrideX!.Value, overrideY!.Value));
+        if (!CompletePair(overrideX, overrideY)) return null;
+        var marker = new SceneMarkerView(id, kind, label, Title(friendly), overrideX!.Value, overrideY!.Value);
+        markers.Add(marker);
+        return marker;
+    }
+    private static void AddThread(List<SceneRelationshipThreadView> threads, SceneMarkerView? marker, Guid? frameId, IReadOnlyDictionary<Guid, SceneSubroomFrameView> framesById)
+    {
+        if (marker is null || frameId is null) return;
+        if (framesById.TryGetValue(frameId.Value, out var frame)) threads.Add(new(marker.EntityId, frame.EntityId, marker.X, marker.Y, frame.X, frame.Y, frame.Width, frame.Height));
     }
     private static bool ValidConnectionGroup(SceneConnectionLoad[] group, IReadOnlyList<SceneConnectionLoad> all) =>
         group.Length is 1 or 2 && group[0].Alias.Length is >= 1 and <= 3 &&

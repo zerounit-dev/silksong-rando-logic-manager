@@ -306,9 +306,15 @@ public sealed record SceneImageDisplayView(bool HasTransform, bool IsStale, bool
 /// <summary>Read-only scene projection. Coordinates remain lower-left/y-up scene units.</summary>
 public sealed record SceneLayoutView(bool HasValidBounds, double? SceneUnitWidth, double? SceneUnitHeight,
     IReadOnlyList<SceneSubroomFrameView> Frames, IReadOnlyList<SceneMarkerView> Markers,
-    SceneImageDisplayView? Image = null);
+    SceneImageDisplayView? Image = null, IReadOnlyList<SceneRelationshipThreadView>? Threads = null)
+{
+    public IReadOnlyList<SceneRelationshipThreadView> RelationshipThreads => Threads ?? [];
+}
 public sealed record SceneSubroomFrameView(Guid EntityId, string Label, string? Title, double X, double Y, double Width, double Height);
 public sealed record SceneMarkerView(Guid EntityId, string Kind, string Label, string? Title, double X, double Y);
+/// <summary>Resolved-ID-only live-canvas relationship with complete renderable endpoint geometry.</summary>
+public sealed record SceneRelationshipThreadView(Guid MarkerEntityId, Guid FrameEntityId, double MarkerX, double MarkerY,
+    double FrameX, double FrameY, double FrameWidth, double FrameHeight);
 /// <summary>Closed pane-local scene identity. It is transient and never a persistence key or DOM marker.</summary>
 public enum V2SceneSelectedItemKind { Subroom, Transition, Check, Connection }
 /// <summary>One pane-local selection survives a non-renderable durable state; renderability is derived from SceneLayoutView.</summary>

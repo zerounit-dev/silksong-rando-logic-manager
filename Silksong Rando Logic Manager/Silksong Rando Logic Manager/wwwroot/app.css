@@ -217,6 +217,7 @@ button, input, textarea { font: inherit; }
 .scene-layout-connection { fill: #7044be; stroke: #e2d9f3; stroke-width: .12px; cursor: pointer; }
 .scene-layout-connection text { fill: #fff; font-size: 5px; font-weight: 700; pointer-events: none; user-select: none; }
 .scene-layout-subroom-body { fill: rgb(180 185 190 / 42%); stroke: #f8f9fa; stroke-width: 2px; vector-effect: non-scaling-stroke; rx: 2px; }
+.scene-layout-relationship-thread { fill: none; stroke: #ffd700; stroke-width: 2px; opacity: .9; vector-effect: non-scaling-stroke; filter: drop-shadow(0 0 1px rgb(0 0 0 / 85%)); pointer-events: none; }
 .scene-layout-subroom { cursor: pointer; }
 .scene-layout-subroom.selected .scene-layout-subroom-body { stroke: #0dcaf0; filter: drop-shadow(0 0 2px #0dcaf0); cursor: move; }
 [data-scene-layout-marker].selected > :not(text):not(title) { stroke: #0dcaf0; filter: drop-shadow(0 0 2px #0dcaf0); cursor: move; }

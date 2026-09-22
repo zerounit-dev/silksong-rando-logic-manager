@@ -173,7 +173,7 @@ window.initializeV2SceneViewport = (svg, viewKey, ownerGeneration, placementCall
     // settles. Marker-command continuations may update only their owner generation.
     const generation = (Number(svg.__v2SceneViewportGeneration) || 0) + 1;
     svg.__v2SceneViewportGeneration = generation;
-    let down = null, annotationsShown = true, imageShown = true, zoneShown = true, selected = null, armed = null, nudgeTail = Promise.resolve(), nudgeGeometry = null, nudgeEpoch = 0, active = true, draft = null, failedMarker = null, frameVisual = null, currentOwnerGeneration = ownerGeneration;
+    let down = null, annotationsShown = true, imageShown = true, zoneShown = true, selected = null, armed = null, nudgeTail = Promise.resolve(), nudgeGeometry = null, nudgeEpoch = 0, active = true, draft = null, failedMarker = null, frameVisual = null, relationshipThreads = [], currentOwnerGeneration = ownerGeneration;
     const ownsCurrentGeneration = () => active && svg.__v2SceneViewportGeneration === generation;
     // Every scene-owned async continuation captures this owner generation. This
     // is deliberately local to the named scene browser owner: a route/SVG-owner
@@ -190,8 +190,32 @@ window.initializeV2SceneViewport = (svg, viewKey, ownerGeneration, placementCall
     // its browser visual until its one command/refresh settles. Track that visual
     // separately so replacing or disposing this room owner cannot strand it.
     const markerVisuals = new Set();
-    const settleMarkerVisual = item => { item.style.transform=""; markerVisuals.delete(item); };
-    const clearMarkerVisuals = () => { markerVisuals.forEach(item => item.style.transform=""); markerVisuals.clear(); };
+    const markerVisual = id => { let found = null; markerVisuals.forEach(value => { if (value.id === id) found = value; }); return found; };
+    const relationshipGeometry = thread => {
+        const marker = markerVisual(thread.markerId), markerGeometry = marker ? { x: marker.x, y: marker.y } : thread.marker;
+        const frameGeometry = frameVisual?.item?.dataset?.sceneId?.toLowerCase() === thread.frameId ? frameVisual.geometry : thread.frame;
+        return { marker: markerGeometry, frame: frameGeometry };
+    };
+    const renderRelationship = (thread, markerOverride = null, frameOverride = null) => {
+        const activeGeometry = relationshipGeometry(thread), marker = markerOverride || activeGeometry.marker, frame = frameOverride || activeGeometry.frame;
+        const right = frame.x + frame.w, top = frame.y + frame.h;
+        const inside = marker.x >= frame.x && marker.x <= right && marker.y >= frame.y && marker.y <= top;
+        thread.node.style.display = inside ? "none" : "";
+        thread.node.setAttribute("x1", marker.x); thread.node.setAttribute("y1", -marker.y);
+        thread.node.setAttribute("x2", Math.max(frame.x, Math.min(right, marker.x))); thread.node.setAttribute("y2", -Math.max(frame.y, Math.min(top, marker.y)));
+    };
+    const rebuildRelationships = () => {
+        relationshipThreads = [...(svg.querySelectorAll?.("[data-scene-relationship-thread=true]") || [])].map(node => ({
+            node, markerId: node.dataset.sceneThreadMarkerId?.toLowerCase(), frameId: node.dataset.sceneThreadFrameId?.toLowerCase(),
+            marker: { x: Number(node.dataset.sceneThreadMarkerX), y: Number(node.dataset.sceneThreadMarkerY) },
+            frame: { x: Number(node.dataset.sceneThreadFrameX), y: Number(node.dataset.sceneThreadFrameY), w: Number(node.dataset.sceneThreadFrameWidth), h: Number(node.dataset.sceneThreadFrameHeight) }
+        })).filter(thread => thread.markerId && thread.frameId && [thread.marker.x, thread.marker.y, thread.frame.x, thread.frame.y, thread.frame.w, thread.frame.h].every(Number.isFinite) && thread.frame.w > 0 && thread.frame.h > 0);
+        relationshipThreads.forEach(thread => renderRelationship(thread));
+    };
+    const updateMarkerRelationships = (id, geometry = null) => relationshipThreads.forEach(thread => { if (thread.markerId === id.toLowerCase()) renderRelationship(thread, geometry); });
+    const updateFrameRelationships = (id, geometry = null) => relationshipThreads.forEach(thread => { if (thread.frameId === id.toLowerCase()) renderRelationship(thread, null, geometry); });
+    const settleMarkerVisual = item => { const id = item.dataset.sceneId.toLowerCase(), visual = [...markerVisuals].find(value => value.id === id); item.style.transform=""; if (visual) { visual.item.style.transform=""; markerVisuals.delete(visual); updateMarkerRelationships(visual.id); } };
+    const clearMarkerVisuals = () => { markerVisuals.forEach(value => value.item.style.transform=""); markerVisuals.clear(); };
     const annotations = pane.querySelector("[data-scene-annotations=true]"), toggle = pane.querySelector("[data-scene-annotation-toggle=true]"), reset = pane.querySelector("[data-scene-reset-view=true]"), status = pane.querySelector("[data-scene-status-text=true]"), retryButton = pane.querySelector("[data-scene-marker-retry=true]");
     let image = svg.querySelector?.("[data-scene-layout-image=true]"), imageToggle = pane.querySelector("[data-scene-image-toggle=true]"), zoneToggle = pane.querySelector("[data-scene-zone-toggle=true]");
     const showAnnotations = shown => { annotationsShown = shown; if (annotations) annotations.style.display = shown ? "" : "none"; if (toggle) { toggle.setAttribute("aria-pressed", String(shown)); toggle.setAttribute("aria-label", shown ? "Hide annotations" : "Show annotations"); toggle.setAttribute("title", shown ? "Hide annotations" : "Show annotations"); } };
@@ -203,28 +227,37 @@ window.initializeV2SceneViewport = (svg, viewKey, ownerGeneration, placementCall
         body: item.querySelector?.("[data-scene-frame-target='move']"), n: item.querySelector?.(".edge-n"), s: item.querySelector?.(".edge-s"), e: item.querySelector?.(".edge-e"), w: item.querySelector?.(".edge-w"),
         nw: item.querySelector?.(".corner-nw"), ne: item.querySelector?.(".corner-ne"), sw: item.querySelector?.(".corner-sw"), se: item.querySelector?.(".corner-se"), label: item.querySelector?.("text")
     });
-    const rememberFrameVisual = item => {
-        if (frameVisual?.item === item) return frameVisual;
-        restoreFrameVisual();
+    const captureFrameValues = item => {
         const values = [];
         const remember = (node, names) => { if (node) for (const name of names) values.push([node, name, node.getAttribute(name)]); };
         const parts = frameParts(item);
         remember(parts.body, ["x", "y", "width", "height"]);
         [parts.n, parts.s, parts.e, parts.w, parts.nw, parts.ne, parts.sw, parts.se].forEach(node => remember(node, ["x", "y", "width", "height"]));
+        remember(parts.label, ["x", "y"]);
+        return values;
+    };
+    const rememberFrameVisual = item => {
+        if (frameVisual?.item === item) return frameVisual;
+        restoreFrameVisual();
         // Labels are upright presentation, never frame geometry.  Restore their
         // durable coordinates, but never retain a prior SVG transform that could
         // vertically flip a label after an interrupted client-first resize.
-        remember(parts.label, ["x", "y"]);
-        return frameVisual = { item, values, settled: false, reconciled: false };
+        return frameVisual = { item, values: captureFrameValues(item), geometry: null, mode: null, reconciled: false };
     };
     const restoreFrameVisual = () => {
         if (!frameVisual) return;
+        const frameId = frameVisual.item.dataset.sceneId;
         frameVisual.item.style.transform = "";
-        for (const [node, name, value] of frameVisual.values) {
-            if (value === null) node.removeAttribute?.(name); else node.setAttribute(name, value);
+        if (frameVisual.reconciled) {
+            applyFrameGeometry(frameVisual.item, { x: Number(frameVisual.item.dataset.sceneFrameX), y: Number(frameVisual.item.dataset.sceneFrameY), w: Number(frameVisual.item.dataset.sceneFrameWidth), h: Number(frameVisual.item.dataset.sceneFrameHeight) });
+        } else {
+            for (const [node, name, value] of frameVisual.values) {
+                if (value === null) node.removeAttribute?.(name); else node.setAttribute(name, value);
+            }
         }
         frameParts(frameVisual.item).label?.removeAttribute("transform");
         frameVisual = null;
+        updateFrameRelationships(frameId);
     };
     const applyFrameGeometry = (item, value) => {
         const p = frameParts(item), x = value.x, y = value.y, w = value.w, h = value.h, top = -y - h, bottom = -y, middle = -y - h / 2;
@@ -239,19 +272,24 @@ window.initializeV2SceneViewport = (svg, viewKey, ownerGeneration, placementCall
     };
     const showFrameVisual = (item, value, mode) => {
         rememberFrameVisual(item);
+        frameVisual.geometry = value;
+        frameVisual.mode = mode;
         if (mode === "move") {
             item.style.transform = `translate(${value.x - Number(item.dataset.sceneFrameX)}px, ${-(value.y - Number(item.dataset.sceneFrameY))}px)`;
         } else {
             item.style.transform = "";
             applyFrameGeometry(item, value);
         }
+        updateFrameRelationships(item.dataset.sceneId, value);
     };
     const settleFrameVisual = (item, committed) => {
-        if (!frameVisual || frameVisual.item !== item) return;
+        if (!frameVisual || frameVisual.item.dataset.sceneId !== item.dataset.sceneId) return;
         if (!committed) { restoreFrameVisual(); return; }
-        item.style.transform = "";
-        applyFrameGeometry(item, { x: Number(item.dataset.sceneFrameX), y: Number(item.dataset.sceneFrameY), w: Number(item.dataset.sceneFrameWidth), h: Number(item.dataset.sceneFrameHeight) });
+        const currentItem = frameVisual.item;
+        currentItem.style.transform = "";
+        applyFrameGeometry(currentItem, { x: Number(currentItem.dataset.sceneFrameX), y: Number(currentItem.dataset.sceneFrameY), w: Number(currentItem.dataset.sceneFrameWidth), h: Number(currentItem.dataset.sceneFrameHeight) });
         frameVisual = null;
+        updateFrameRelationships(currentItem.dataset.sceneId);
     };
     const armedInstruction = value => value?.kind === "subroom"
         ? "draw subroom rectangle; drag to the opposite corner, or press Escape to cancel"
@@ -281,7 +319,7 @@ window.initializeV2SceneViewport = (svg, viewKey, ownerGeneration, placementCall
     const snap = (rectangle,event) => { clearSnap(false); if(!down||down.snapDisabled||event.ctrlKey){if(down)down.locks={};return rectangle;}const edge=(name,value,axis)=>{const threshold=scale(axis), list=down.candidates[axis], lock=down.locks[name];let choice=lock&&Math.abs(lock.value-value)<=threshold*2?lock:null;if(!choice)choice=list.map(c=>({c,d:Math.abs(c.value-value)})).filter(x=>x.d<=threshold).sort((a,b)=>a.d-b.d||a.c.value-b.c.value)[0]?.c;if(choice){down.locks[name]=choice;renderSnap(choice,axis);return choice.value;}delete down.locks[name];return value;};const l=edge("l",rectangle.x,"x"),r=edge("r",rectangle.x+rectangle.w,"x"),b=edge("b",rectangle.y,"y"),t=edge("t",rectangle.y+rectangle.h,"y");return{x:Math.min(l,r),y:Math.min(b,t),w:Math.max(.0001,Math.abs(r-l)),h:Math.max(.0001,Math.abs(t-b))}; };
     const geometry = event => { const at=point(event.clientX,event.clientY); if(down.drawStart){const start=down.drawStart, sy=-start.y, ay=-at.y;return{x:Math.min(start.x,at.x),y:Math.min(sy,ay),w:Math.abs(at.x-start.x),h:Math.abs(ay-sy)};}const item=down.frame,dx=at.x-down.origin.x,dy=-(at.y-down.origin.y),x=Number(item.dataset.sceneFrameX),y=Number(item.dataset.sceneFrameY),w=Number(item.dataset.sceneFrameWidth),h=Number(item.dataset.sceneFrameHeight),m=down.mode;if(m==="move")return{x:x+dx,y:y+dy,w,h};return{x:m.includes("l")?x+dx:x,y:m.includes("b")?y+dy:y,w:m.includes("l")?w-dx:m.includes("r")?w+dx:w,h:m.includes("b")?h-dy:m.includes("t")?h+dy:h}; };
     const start = event => { if (event.button !== 0) return; clearFailure(); const at=point(event.clientX,event.clientY), snapStart=(extra={})=>Object.assign({id:event.pointerId,x:event.clientX,y:event.clientY,locks:{},snapDisabled:!!event.ctrlKey},extra); if (armed?.kind === "subroom") { event.preventDefault(); down=snapStart({drawStart:at}); down.candidates=candidates(); return; } if (armed) { event.preventDefault(); return; } const target=event.target?.closest?.("[data-scene-frame-target]"), item=event.target?.closest?.("[data-scene-selection-kind]"); if(item && item===selected && item.dataset.sceneSelectionKind==="subroom" && target) {down=snapStart({frame:item,mode:target.dataset.sceneFrameTarget,origin:at});down.candidates=candidates(item);} else if(item && item===selected && (item.dataset.sceneSelectionKind==="exit"||item.dataset.sceneSelectionKind==="check"||item.dataset.sceneSelectionKind==="connection")) down={id:event.pointerId,x:event.clientX,y:event.clientY,lastX:event.clientX,lastY:event.clientY,drag:item}; else if(event.target===svg||event.target?.classList?.contains("scene-layout-room-bounds")) down={id:event.pointerId,x:event.clientX,y:event.clientY,lastX:event.clientX,lastY:event.clientY,panning:false}; };
-    const move = event => { if (!down || event.pointerId !== down.id || Math.hypot(event.clientX-down.x,event.clientY-down.y)<5) return; if(down.drawStart||down.frame){down.moved=true;const value=snap(geometry(event),event); if(down.drawStart && document.createElementNS){clearDraft();draft=document.createElementNS("http://www.w3.org/2000/svg","rect");draft.classList.add("scene-layout-draft");draft.setAttribute("x",value.x);draft.setAttribute("y",-value.y-value.h);draft.setAttribute("width",value.w);draft.setAttribute("height",value.h);svg.appendChild(draft);} if(down.frame)showFrameVisual(down.frame,value,down.mode); return;} if(down.drag){down.moved=true;const current=point(event.clientX,event.clientY), origin=point(down.x,down.y);down.drag.style.transform=`translate(${current.x-origin.x}px, ${current.y-origin.y}px)`;return;} if (!down.panning) { down.panning = true; svg.setPointerCapture(down.id); } const previous = point(down.lastX, down.lastY), current = point(event.clientX, event.clientY), view = parse(svg.getAttribute("viewBox")); down.lastX = event.clientX; down.lastY = event.clientY; apply(clamp([view[0] - (current.x - previous.x), view[1] - (current.y - previous.y), view[2], view[3]])); };
+    const move = event => { if (!down || event.pointerId !== down.id || Math.hypot(event.clientX-down.x,event.clientY-down.y)<5) return; if(down.drawStart||down.frame){down.moved=true;const value=snap(geometry(event),event); if(down.drawStart && document.createElementNS){clearDraft();draft=document.createElementNS("http://www.w3.org/2000/svg","rect");draft.classList.add("scene-layout-draft");draft.setAttribute("x",value.x);draft.setAttribute("y",-value.y-value.h);draft.setAttribute("width",value.w);draft.setAttribute("height",value.h);svg.appendChild(draft);} if(down.frame)showFrameVisual(down.frame,value,down.mode); return;} if(down.drag){down.moved=true;const current=point(event.clientX,event.clientY), origin=point(down.x,down.y), dx=current.x-origin.x, svgDy=current.y-origin.y;down.drag.style.transform=`translate(${dx}px, ${svgDy}px)`;updateMarkerRelationships(down.drag.dataset.sceneId,{x:Number(down.drag.dataset.sceneMarkerX)+dx,y:Number(down.drag.dataset.sceneMarkerY)-svgDy});return;} if (!down.panning) { down.panning = true; svg.setPointerCapture(down.id); } const previous = point(down.lastX, down.lastY), current = point(event.clientX, event.clientY), view = parse(svg.getAttribute("viewBox")); down.lastX = event.clientX; down.lastY = event.clientY; apply(clamp([view[0] - (current.x - previous.x), view[1] - (current.y - previous.y), view[2], view[3]])); };
     const select = event => {
         if (event.button !== 0) return;
         clearFailure();
@@ -293,7 +331,7 @@ window.initializeV2SceneViewport = (svg, viewKey, ownerGeneration, placementCall
             callback("CommitPlacementAsync", request.kind, request.entityId, at.x, -at.y).catch(() => {});
             return;
         }
-        if(down && down.frame && down.moved){const item=down.frame,value=snap(geometry(event),event),valid=currentOperation();if(value.w>0&&value.h>0) callback("CommitSubroomGeometryAsync",item.dataset.sceneId,value.x,value.y,value.w,value.h).then(ok=>{if(!valid())return;settleFrameVisual(item,ok);}).catch(()=>{if(!valid())return;settleFrameVisual(item,false);}); return;} if(down && down.drag && down.moved){const item=down.drag, at=point(event.clientX,event.clientY),valid=currentOperation();markerVisuals.add(item); callback("CommitMarkerDragAsync",item.dataset.sceneSelectionKind,item.dataset.sceneId,at.x,-at.y).then(ok=>{if(!valid())return;settleMarkerVisual(item);if(ok){clearFailure();}else failure({kind:item.dataset.sceneSelectionKind,id:item.dataset.sceneId,x:at.x,y:-at.y});}).catch(()=>{if(!valid())return;settleMarkerVisual(item);failure({kind:item.dataset.sceneSelectionKind,id:item.dataset.sceneId,x:at.x,y:-at.y});}); return;} const item = event.target?.closest?.("[data-scene-selection-kind]");
+        if(down && down.frame && down.moved){const item=down.frame,value=snap(geometry(event),event),valid=currentOperation();if(value.w>0&&value.h>0) callback("CommitSubroomGeometryAsync",item.dataset.sceneId,value.x,value.y,value.w,value.h).then(ok=>{if(!valid())return;settleFrameVisual(item,ok);}).catch(()=>{if(!valid())return;settleFrameVisual(item,false);}); return;} if(down && down.drag && down.moved){const item=down.drag, at=point(event.clientX,event.clientY),origin=point(down.x,down.y),dx=at.x-origin.x,svgDy=at.y-origin.y,valid=currentOperation(),visual={item,id:item.dataset.sceneId.toLowerCase(),x:Number(item.dataset.sceneMarkerX)+dx,y:Number(item.dataset.sceneMarkerY)-svgDy};item.style.transform=`translate(${dx}px, ${svgDy}px)`;markerVisuals.add(visual);updateMarkerRelationships(visual.id); callback("CommitMarkerDragAsync",item.dataset.sceneSelectionKind,item.dataset.sceneId,at.x,-at.y).then(ok=>{if(!valid())return;settleMarkerVisual(item);if(ok){clearFailure();}else failure({kind:item.dataset.sceneSelectionKind,id:item.dataset.sceneId,x:at.x,y:-at.y});}).catch(()=>{if(!valid())return;settleMarkerVisual(item);failure({kind:item.dataset.sceneSelectionKind,id:item.dataset.sceneId,x:at.x,y:-at.y});}); return;} const item = event.target?.closest?.("[data-scene-selection-kind]");
         if (!item && down?.panning) return;
         if (selected === item) return;
         selected?.classList.remove("selected"); selected = item || null;
@@ -301,7 +339,7 @@ window.initializeV2SceneViewport = (svg, viewKey, ownerGeneration, placementCall
         notifySelection(selected);
         clearFailure();
     };
-    const end = (event, cancelled=false) => { if (cancelled) clearFailure(); if (down?.id === event.pointerId) { if (cancelled && down.drag) down.drag.style.transform=""; if (cancelled && down.frame) restoreFrameVisual(); if (svg.hasPointerCapture(event.pointerId)) svg.releasePointerCapture(event.pointerId); clearDraft(); clearSnap(); down = null; } };
+    const end = (event, cancelled=false) => { if (cancelled) clearFailure(); if (down?.id === event.pointerId) { if (cancelled && down.drag) { down.drag.style.transform=""; updateMarkerRelationships(down.drag.dataset.sceneId); } if (cancelled && down.frame) restoreFrameVisual(); if (svg.hasPointerCapture(event.pointerId)) svg.releasePointerCapture(event.pointerId); clearDraft(); clearSnap(); down = null; } };
     const toggleAnnotations = () => { clearFailure(); showAnnotations(!annotationsShown); }, toggleImage = () => showImage(!imageShown), toggleZone = () => { clearFailure(); const shown = !zoneShown; setZoneVisible(shown); window.saveRoomZoneMapVisibility?.(shown); };
     const reconcile = ownerGeneration => {
         currentOwnerGeneration = ownerGeneration;
@@ -322,17 +360,25 @@ window.initializeV2SceneViewport = (svg, viewKey, ownerGeneration, placementCall
         clearDraft();
         clearSnap();
         if (down?.drawStart) down = null;
+        markerVisuals.forEach(visual => {
+            const currentItem = svg.querySelector?.(`[data-scene-id='${visual.id}'][data-scene-layout-marker]`);
+            if (currentItem) visual.item = currentItem;
+            visual.item.style.transform = `translate(${visual.x - Number(visual.item.dataset.sceneMarkerX)}px, ${-(visual.y - Number(visual.item.dataset.sceneMarkerY))}px)`;
+        });
         if (frameVisual) {
-            if (frameVisual.settled) {
+            const currentFrame = svg.querySelector?.(`[data-scene-id='${frameVisual.item.dataset.sceneId}'][data-scene-layout-frame=true]`);
+            if (currentFrame) {
+                frameVisual.item = currentFrame;
                 frameVisual.item.style.transform = "";
-                applyFrameGeometry(frameVisual.item, { x: Number(frameVisual.item.dataset.sceneFrameX), y: Number(frameVisual.item.dataset.sceneFrameY), w: Number(frameVisual.item.dataset.sceneFrameWidth), h: Number(frameVisual.item.dataset.sceneFrameHeight) });
-                frameVisual = null;
-            } else frameVisual.reconciled = true;
+                frameVisual.reconciled = true;
+            } else frameVisual = null;
         }
+        rebuildRelationships();
+        if (frameVisual) showFrameVisual(frameVisual.item, frameVisual.geometry, frameVisual.mode);
         showImage(imageShown);
         setZoneVisible(zoneShown);
     };
-    const cancelGesture = () => { clearFailure(); clearDraft(); clearSnap(); if (down?.drag) down.drag.style.transform=""; if (frameVisual) restoreFrameVisual(); if (down && svg.hasPointerCapture(down.id)) svg.releasePointerCapture(down.id); down=null; };
+    const cancelGesture = () => { clearFailure(); clearDraft(); clearSnap(); if (down?.drag) { down.drag.style.transform=""; updateMarkerRelationships(down.drag.dataset.sceneId); } if (frameVisual) restoreFrameVisual(); if (down && svg.hasPointerCapture(down.id)) svg.releasePointerCapture(down.id); down=null; };
     const cancelPlacement = event => { if (event.type === "keydown" && event.key !== "Escape") return; cancelGesture(); if (!armed) return; event.preventDefault(); callback("CancelPlacementAsync").catch(() => {}); };
     const cancelDrag = event => end(event, true);
     // Key repeats arrive before the server refreshes DOM attributes.  Chain from
@@ -341,7 +387,7 @@ window.initializeV2SceneViewport = (svg, viewKey, ownerGeneration, placementCall
     svg.addEventListener("wheel", wheel, { passive:false }); svg.addEventListener("pointerdown", start); svg.addEventListener("pointermove", move); svg.addEventListener("pointerup", select); svg.addEventListener("pointerup", end); svg.addEventListener("pointercancel", cancelDrag); svg.addEventListener("keydown", cancelPlacement); svg.addEventListener("keydown", nudge); svg.addEventListener("contextmenu", cancelPlacement); toggle?.addEventListener("click", toggleAnnotations); imageToggle?.addEventListener("click", toggleImage); zoneToggle?.addEventListener("click", toggleZone); reset?.addEventListener("click", resetView);
     retryButton?.addEventListener("click", retryMarker);
     svg.__v2SceneViewport = { key:viewKey, reconcile, arm:(kind, entityId) => { clearFailure(); clearSnap(); armed={kind,entityId}; if(status) status.textContent=armedInstruction(armed); svg.classList.add("scene-layout-placement-armed"); svg.style.cursor="crosshair"; svg.focus(); }, clearPlacement:() => { clearSnap(); armed=null; svg.classList.remove("scene-layout-placement-armed"); svg.style.cursor=""; }, clearSelection:() => { cancelGesture(); clearFailure(); nudgeGeometry=null; selected?.classList.remove("selected"); selected=null; }, select:id => { cancelGesture(); clearFailure(); nudgeGeometry=null; const item=svg.querySelector(`[data-scene-id='${id}']`); if (!item) return; selected?.classList.remove("selected"); selected=item; selected.classList.add("selected"); }, dispose:() => { active=false; clearFailure(); nudgeGeometry=null; cancelGesture(); clearMarkerVisuals(); selected?.classList.remove("selected"); svg.removeEventListener("wheel", wheel); svg.removeEventListener("pointerdown", start); svg.removeEventListener("pointermove", move); svg.removeEventListener("pointerup", select); svg.removeEventListener("pointerup", end); svg.removeEventListener("pointercancel", cancelDrag); svg.removeEventListener("keydown", cancelPlacement); svg.removeEventListener("keydown", nudge); svg.removeEventListener("contextmenu", cancelPlacement); toggle?.removeEventListener("click", toggleAnnotations); imageToggle?.removeEventListener("click", toggleImage); zoneToggle?.removeEventListener("click", toggleZone); reset?.removeEventListener("click", resetView); retryButton?.removeEventListener("click", retryMarker); } };
-    showAnnotations(true); showImage(true);
+    rebuildRelationships(); showAnnotations(true); showImage(true);
     // Resolve before making the host visible so reload/navigation never paint
     // the opposite split state. A missing/invalid stored value defaults shown.
     try { zoneShown = window.loadRoomZoneMapVisibility?.() !== false; } catch { zoneShown = true; }
