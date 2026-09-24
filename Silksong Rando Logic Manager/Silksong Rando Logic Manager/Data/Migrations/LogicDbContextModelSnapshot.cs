@@ -422,6 +422,11 @@ namespace Silksong_Rando_Logic_Manager.Data.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("IsVirtual")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(false);
+
                     b.Property<Guid?>("ResolvedMapZoneId")
                         .HasColumnType("TEXT");
 

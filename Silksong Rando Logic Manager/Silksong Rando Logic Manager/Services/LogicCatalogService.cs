@@ -37,7 +37,10 @@ public sealed class LogicCatalogService(IDbContextFactory<LogicDbContext> dbCont
     public async Task<GroupEditorData?> GetGroupEditorDataAsync(Guid groupId, CancellationToken cancellationToken = default)
     {
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
-        var group = await db.RoomGroups.AsNoTracking().SingleOrDefaultAsync(x => x.Id == groupId, cancellationToken);
+        var group = await db.RoomGroups.AsNoTracking()
+            .Where(x => x.Id == groupId)
+            .Select(x => new { x.Id, x.FriendlyName, x.ZoneReferenceText, x.IsVirtual, x.ResolvedMapZoneId, x.UpdatedUtc })
+            .SingleOrDefaultAsync(cancellationToken);
         if (group is null)
         {
             return null;
@@ -50,7 +53,10 @@ public sealed class LogicCatalogService(IDbContextFactory<LogicDbContext> dbCont
         ReferenceResolutionStatus? status = string.IsNullOrWhiteSpace(group.ZoneReferenceText)
             ? null
             : LogicReferenceResolver.GetMapZoneReferenceStatus(group.ZoneReferenceText, group.ResolvedMapZoneId, zones);
-        return new GroupEditorData(group, zones.Select(x => x.InGameId).ToList(), status);
+        var view = new GroupEditorView(group.Id, group.FriendlyName, group.ZoneReferenceText, group.IsVirtual, group.UpdatedUtc);
+        var baseline = new RoomGroupEditorBaseline(group.Id, group.FriendlyName, group.ZoneReferenceText, group.IsVirtual, group.UpdatedUtc);
+        var draft = new RoomGroupEditorDraft(group.Id, group.FriendlyName, group.ZoneReferenceText, group.IsVirtual);
+        return new GroupEditorData(view, baseline, draft, zones.Select(x => x.InGameId).ToList(), status);
     }
 
     public async Task<RoomDocument?> GetRoomAsync(Guid roomId, CancellationToken cancellationToken = default)
@@ -83,11 +89,60 @@ public sealed class LogicCatalogService(IDbContextFactory<LogicDbContext> dbCont
         var group = new RoomGroup
         {
             FriendlyName = friendlyName.Trim(),
+            IsVirtual = false,
             SortOrder = await NextSortOrderAsync(db.RoomGroups, cancellationToken)
         };
         db.RoomGroups.Add(group);
         await db.SaveChangesAsync(cancellationToken);
         return new(group, false, true, false, TimeSpan.Zero);
+    }
+
+    public async Task<CatalogSaveOutcome> SaveRoomGroupAsync(RoomGroupEditorSaveCommand command, CancellationToken cancellationToken = default)
+    {
+        if (command.Baseline.Id != command.Draft.Id)
+        {
+            throw new InvalidOperationException("The room-group draft does not match its durable baseline.");
+        }
+
+        await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
+        var group = await db.RoomGroups.SingleOrDefaultAsync(x => x.Id == command.Baseline.Id, cancellationToken)
+            ?? throw new InvalidOperationException($"RoomGroup {command.Baseline.Id} no longer exists.");
+        if (group.UpdatedUtc != command.Baseline.UpdatedUtc)
+        {
+            throw new InvalidOperationException($"RoomGroup {group.Id} changed before this save completed. Reload the document and retry the edit.");
+        }
+
+        var changedProperties = new HashSet<string>(StringComparer.Ordinal);
+        if (group.FriendlyName != command.Draft.FriendlyName) changedProperties.Add(nameof(RoomGroup.FriendlyName));
+        if (group.ZoneReferenceText != command.Draft.ZoneReferenceText) changedProperties.Add(nameof(RoomGroup.ZoneReferenceText));
+        if (group.IsVirtual != command.Draft.IsVirtual) changedProperties.Add(nameof(RoomGroup.IsVirtual));
+        if (changedProperties.Count == 0) return CatalogSaveOutcome.Unchanged;
+
+        var originalZoneReference = group.ZoneReferenceText;
+        group.FriendlyName = command.Draft.FriendlyName;
+        group.ZoneReferenceText = command.Draft.ZoneReferenceText;
+        group.IsVirtual = command.Draft.IsVirtual;
+
+        var requiresResolution = changedProperties.Contains(nameof(RoomGroup.ZoneReferenceText));
+        await using var transaction = requiresResolution ? await db.Database.BeginTransactionAsync(cancellationToken) : null;
+        await db.SaveChangesAsync(cancellationToken);
+        var resolverElapsed = TimeSpan.Zero;
+        if (requiresResolution)
+        {
+            var resolverStopwatch = Stopwatch.StartNew();
+            await new LogicReferenceResolver(db, scopedResolverTrace).ResolveScopedAsync(
+                group,
+                changedProperties,
+                new Dictionary<string, string?>(StringComparer.Ordinal)
+                {
+                    [nameof(RoomGroup.ZoneReferenceText)] = originalZoneReference
+                },
+                cancellationToken);
+            resolverElapsed = resolverStopwatch.Elapsed;
+            await transaction!.CommitAsync(cancellationToken);
+        }
+
+        return new CatalogSaveOutcome(true, requiresResolution, requiresResolution, true, false, resolverElapsed);
     }
 
     public async Task DeleteRoomGroupAsync(Guid groupId, CancellationToken cancellationToken = default)
@@ -1321,7 +1376,22 @@ public sealed record SidebarWorkspaceSnapshot(
 
 public sealed record SidebarRoomGroup(Guid Id, string FriendlyName, int SortOrder);
 public sealed record SidebarRoom(Guid Id, Guid? RoomGroupId, string FriendlyName, int SortOrder, bool IsArchived, AppliedRoomStatus Status);
-public sealed record GroupEditorData(RoomGroup Group, IReadOnlyList<string> ZoneIds, ReferenceResolutionStatus? ZoneReferenceStatus);
+public sealed record GroupEditorView(Guid Id, string FriendlyName, string? ZoneReferenceText, bool IsVirtual, DateTime UpdatedUtc);
+public sealed record RoomGroupEditorBaseline(Guid Id, string FriendlyName, string? ZoneReferenceText, bool IsVirtual, DateTime UpdatedUtc);
+public sealed class RoomGroupEditorDraft(Guid id, string friendlyName, string? zoneReferenceText, bool isVirtual)
+{
+    public Guid Id { get; } = id;
+    public string FriendlyName { get; set; } = friendlyName;
+    public string? ZoneReferenceText { get; set; } = zoneReferenceText;
+    public bool IsVirtual { get; set; } = isVirtual;
+}
+public sealed record RoomGroupEditorSaveCommand(RoomGroupEditorBaseline Baseline, RoomGroupEditorDraft Draft);
+public sealed record GroupEditorData(
+    GroupEditorView View,
+    RoomGroupEditorBaseline Baseline,
+    RoomGroupEditorDraft Draft,
+    IReadOnlyList<string> ZoneIds,
+    ReferenceResolutionStatus? ZoneReferenceStatus);
 internal sealed record MapZoneReferenceTarget(Guid Id, string InGameId);
 
 public sealed record RoomDocument(

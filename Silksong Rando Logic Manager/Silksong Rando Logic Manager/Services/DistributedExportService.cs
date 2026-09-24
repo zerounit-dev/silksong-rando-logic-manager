@@ -14,9 +14,9 @@ public sealed class DistributedExportService(IDbContextFactory<LogicDbContext> d
     {
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         var rooms = await LoadRoomsAsync(db, null, cancellationToken);
-        var groups = await db.RoomGroups.AsNoTracking().OrderBy(x => x.SortOrder).ThenBy(x => x.Id).Select(x => new DistributedRoomGroup(x.Id, x.FriendlyName, x.ZoneReferenceText, x.SortOrder, x.CreatedUtc, x.UpdatedUtc)).ToListAsync(cancellationToken);
+        var groups = await db.RoomGroups.AsNoTracking().OrderBy(x => x.SortOrder).ThenBy(x => x.Id).Select(x => new DistributedRoomGroup(x.Id, x.FriendlyName, x.ZoneReferenceText, x.IsVirtual, x.SortOrder, x.CreatedUtc, x.UpdatedUtc)).ToListAsync(cancellationToken);
         if (InvalidLocationType(rooms) is { } invalid) return new CompleteExportInvalidLocationType(invalid);
-        var envelope = new Version3RoomExportEnvelope(3, false, rooms, new DistributedRoomGroupingSnapshot(groups), includeAreaMap ? await LoadAreaMapAsync(db, cancellationToken) : null);
+        var envelope = new Version4RoomExportEnvelope(4, false, rooms, new DistributedRoomGroupingSnapshot(groups), includeAreaMap ? await LoadAreaMapAsync(db, cancellationToken) : null);
         return new CompleteExported(Serialize(envelope, $"silksong-logic-{Timestamp()}.json"));
     }
 
@@ -27,8 +27,8 @@ public sealed class DistributedExportService(IDbContextFactory<LogicDbContext> d
         var room = rooms.SingleOrDefault();
         if (room is null) return new CurrentRoomMissing(roomId);
         if (InvalidLocationType(rooms) is { } invalid) return new CurrentRoomExportInvalidLocationType(invalid);
-        var groups = room.RoomGroupId is Guid groupId ? await db.RoomGroups.AsNoTracking().Where(x => x.Id == groupId).Select(x => new DistributedRoomGroup(x.Id, x.FriendlyName, x.ZoneReferenceText, x.SortOrder, x.CreatedUtc, x.UpdatedUtc)).ToListAsync(cancellationToken) : [];
-        var envelope = new Version3RoomExportEnvelope(3, true, rooms, new DistributedRoomGroupingSnapshot(groups), null);
+        var groups = room.RoomGroupId is Guid groupId ? await db.RoomGroups.AsNoTracking().Where(x => x.Id == groupId).Select(x => new DistributedRoomGroup(x.Id, x.FriendlyName, x.ZoneReferenceText, x.IsVirtual, x.SortOrder, x.CreatedUtc, x.UpdatedUtc)).ToListAsync(cancellationToken) : [];
+        var envelope = new Version4RoomExportEnvelope(4, true, rooms, new DistributedRoomGroupingSnapshot(groups), null);
         var prefix = string.IsNullOrWhiteSpace(room.ReferenceId) ? "empty-room" : room.ReferenceId;
         return new CurrentRoomExported(Serialize(envelope, $"{prefix}-{Timestamp()}.json"));
     }
@@ -40,13 +40,13 @@ public sealed class DistributedExportService(IDbContextFactory<LogicDbContext> d
         if (groupId is not Guid id) return new ZoneExportUnavailable(roomId);
 
         var group = await db.RoomGroups.AsNoTracking().Where(x => x.Id == id)
-            .Select(x => new DistributedRoomGroup(x.Id, x.FriendlyName, x.ZoneReferenceText, x.SortOrder, x.CreatedUtc, x.UpdatedUtc))
+            .Select(x => new DistributedRoomGroup(x.Id, x.FriendlyName, x.ZoneReferenceText, x.IsVirtual, x.SortOrder, x.CreatedUtc, x.UpdatedUtc))
             .SingleOrDefaultAsync(cancellationToken);
         if (group is null) return new ZoneExportUnavailable(roomId);
 
         var rooms = await LoadRoomsAsync(db, null, id, cancellationToken);
         if (InvalidLocationType(rooms) is { } invalid) return new ZoneExportInvalidLocationType(invalid);
-        var envelope = new Version3RoomExportEnvelope(3, true, rooms, new DistributedRoomGroupingSnapshot([group]), null);
+        var envelope = new Version4RoomExportEnvelope(4, true, rooms, new DistributedRoomGroupingSnapshot([group]), null);
         return new ZoneExported(Serialize(envelope, $"zone-{id:D}-{Timestamp()}.json"));
     }
 
@@ -89,7 +89,7 @@ public sealed class DistributedExportService(IDbContextFactory<LogicDbContext> d
         return null;
     }
 
-    private DistributedExportResult Serialize(Version3RoomExportEnvelope envelope, string fileName) => new(fileName, envelope, JsonSerializer.SerializeToUtf8Bytes(envelope, JsonOptions));
+    private DistributedExportResult Serialize(Version4RoomExportEnvelope envelope, string fileName) => new(fileName, envelope, JsonSerializer.SerializeToUtf8Bytes(envelope, JsonOptions));
     private string Timestamp() => timeProvider.GetUtcNow().ToString("yyyyMMdd-HHmmss-fff", CultureInfo.InvariantCulture);
 
     private static JsonSerializerOptions CreateJsonOptions()

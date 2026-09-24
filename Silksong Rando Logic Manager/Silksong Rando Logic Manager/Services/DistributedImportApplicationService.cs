@@ -27,7 +27,7 @@ public sealed class DistributedImportApplicationService(IDbContextFactory<LogicD
         var groups = priorState?.RoomGroupingStageCompleted == true ? priorState.RoomGroupingOutcome
             : request.Package.RoomGroupings is null ? new("room-groupings", false, true, "No room-grouping snapshot was supplied.")
             : request.Package.IsPartialRoomDump == true ? new("room-groupings", false, true, "Partial-package group context is nonmutating.")
-            : request.ApplyRoomGroupings ? await ApplyGroupsAsync(request.Package.RoomGroupings, ct) : new("room-groupings", false, true, "Room-grouping snapshot was not selected.");
+            : request.ApplyRoomGroupings ? await ApplyGroupsAsync(request.Package.RoomGroupings, request.Package.ExportVersion, ct) : new("room-groupings", false, true, "Room-grouping snapshot was not selected.");
         if (Failed(groups, out var groupError)) return new DistributedImportFailed("room-groupings", groupError, stateAfterMap);
 
         return new DistributedImportStarted(await CreateReadyStateAsync(request.Package, map, groups, ct), map, groups);
@@ -117,7 +117,7 @@ public sealed class DistributedImportApplicationService(IDbContextFactory<LogicD
         return new DistributedImportRoomApplied(incoming.Id, null!);
     }
 
-    private async Task<DistributedImportStageOutcome> ApplyGroupsAsync(DistributedRoomGroupingSnapshot snapshot, CancellationToken ct)
+    private async Task<DistributedImportStageOutcome> ApplyGroupsAsync(DistributedRoomGroupingSnapshot snapshot, int exportVersion, CancellationToken ct)
     {
         try
         {
@@ -125,7 +125,11 @@ public sealed class DistributedImportApplicationService(IDbContextFactory<LogicD
             var current = await db.RoomGroups.ToDictionaryAsync(x => x.Id, ct); var incomingIds = snapshot.Groups.Select(x => x.Id).ToHashSet();
             foreach (var source in snapshot.Groups)
             {
-                if (!current.TryGetValue(source.Id, out var row)) { row = new RoomGroup { Id = source.Id }; db.RoomGroups.Add(row); }
+                var row = current.GetValueOrDefault(source.Id);
+                var isIncomingOnly = row is null;
+                if (row is null) { row = new RoomGroup { Id = source.Id }; db.RoomGroups.Add(row); }
+                if (exportVersion == 4) row.IsVirtual = source.IsVirtual;
+                else if (isIncomingOnly) row.IsVirtual = RoomGraphExportService.CanonicalValue(source.FriendlyName) == "fast-travel";
                 row.FriendlyName = source.FriendlyName; row.ZoneReferenceText = source.ZoneReferenceText; row.SortOrder = source.SortOrder; row.CreatedUtc = source.CreatedUtc; row.UpdatedUtc = source.UpdatedUtc;
             }
             var removed = current.Keys.Where(x => !incomingIds.Contains(x)).ToHashSet();
@@ -290,7 +294,7 @@ public sealed class DistributedImportApplicationService(IDbContextFactory<LogicD
     private async Task<List<string>> ValidateAgainstDatabaseAsync(DistributedImportPackage package, CancellationToken ct)
     {
         await using var db=await contexts.CreateDbContextAsync(ct); var errors=new List<string>(); var types=new Dictionary<Guid,string>(); void Add(Guid id,string type){ if(types.TryGetValue(id,out var prior)&&prior!=type) errors.Add($"GUID {id} is reused for {prior} and {type} entities."); else types[id]=type; }
-        foreach(var room in package.Rooms){Add(room.Id,"room");foreach(var x in room.Subrooms)Add(x.Id,"subroom");foreach(var x in room.Transitions)Add(x.Id,"transition");foreach(var x in room.Connections)Add(x.Id,"connection");foreach(var x in room.Checks){Add(x.Id,"check");if(package.ExportVersion==3&&x.LocationType is not null&&!CheckLocationTypeCatalogue.IsRecognized(x.LocationType))errors.Add($"Check {x.Id} in room {room.Id} has an unrecognized location type.");}} foreach(var x in package.RoomGroupings?.Groups??[])Add(x.Id,"group"); foreach(var x in package.AreaMap?.Maps??[]){Add(x.Id,"map");foreach(var y in x.Overlays)Add(y.Id,"overlay");foreach(var y in x.Zones){Add(y.Id,"zone");foreach(var z in y.Scenes){Add(z.Id,"scene");foreach(var q in z.Chunks)Add(q.Id,"chunk");}}}
+        foreach(var room in package.Rooms){Add(room.Id,"room");foreach(var x in room.Subrooms)Add(x.Id,"subroom");foreach(var x in room.Transitions)Add(x.Id,"transition");foreach(var x in room.Connections)Add(x.Id,"connection");foreach(var x in room.Checks){Add(x.Id,"check");if(package.ExportVersion>=3&&x.LocationType is not null&&!CheckLocationTypeCatalogue.IsRecognized(x.LocationType))errors.Add($"Check {x.Id} in room {room.Id} has an unrecognized location type.");}} foreach(var x in package.RoomGroupings?.Groups??[])Add(x.Id,"group"); foreach(var x in package.AreaMap?.Maps??[]){Add(x.Id,"map");foreach(var y in x.Overlays)Add(y.Id,"overlay");foreach(var y in x.Zones){Add(y.Id,"zone");foreach(var z in y.Scenes){Add(z.Id,"scene");foreach(var q in z.Chunks)Add(q.Id,"chunk");}}}
         var all=types.Keys.ToHashSet(); var tables=new[]{("room",await db.Rooms.Select(x=>x.Id).ToArrayAsync(ct)),("subroom",await db.Subrooms.Select(x=>x.Id).ToArrayAsync(ct)),("transition",await db.RoomTransitions.Select(x=>x.Id).ToArrayAsync(ct)),("connection",await db.SubroomConnections.Select(x=>x.Id).ToArrayAsync(ct)),("check",await db.CheckLocations.Select(x=>x.Id).ToArrayAsync(ct)),("group",await db.RoomGroups.Select(x=>x.Id).ToArrayAsync(ct)),("map",await db.Maps.Select(x=>x.Id).ToArrayAsync(ct)),("zone",await db.MapZones.Select(x=>x.Id).ToArrayAsync(ct)),("scene",await db.MapScenes.Select(x=>x.Id).ToArrayAsync(ct)),("chunk",await db.MapChunks.Select(x=>x.Id).ToArrayAsync(ct)),("overlay",await db.MapOverlays.Select(x=>x.Id).ToArrayAsync(ct))}; foreach(var(type,ids) in tables)foreach(var id in ids.Where(all.Contains))if(types[id]!=type)errors.Add($"GUID {id} is reused for local {type} and incoming {types[id]} entities.");
         async Task CheckOwners<T>(IEnumerable<(Guid Id,Guid Owner)> incoming, IQueryable<T> query, Func<T,Guid> id, Func<T,Guid> owner,string name){var local=(await query.ToListAsync(ct)).Where(x=>all.Contains(id(x))).ToDictionary(id,owner);foreach(var x in incoming)if(local.TryGetValue(x.Id,out var found)&&found!=x.Owner)errors.Add($"{name} GUID {x.Id} belongs to a different local room.");} await CheckOwners(package.Rooms.SelectMany(r=>r.Subrooms.Select(x=>(x.Id,r.Id))),db.Subrooms,x=>x.Id,x=>x.RoomId,"Subroom");await CheckOwners(package.Rooms.SelectMany(r=>r.Transitions.Select(x=>(x.Id,r.Id))),db.RoomTransitions,x=>x.Id,x=>x.RoomId,"Transition");await CheckOwners(package.Rooms.SelectMany(r=>r.Connections.Select(x=>(x.Id,r.Id))),db.SubroomConnections,x=>x.Id,x=>x.RoomId,"Connection");await CheckOwners(package.Rooms.SelectMany(r=>r.Checks.Select(x=>(x.Id,r.Id))),db.CheckLocations,x=>x.Id,x=>x.RoomId,"Check"); return errors;
     }

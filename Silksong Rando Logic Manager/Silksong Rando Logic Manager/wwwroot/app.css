@@ -374,6 +374,8 @@ button, input, textarea { font: inherit; }
 .group-edit-field { display: block; margin-bottom: .55rem; font-size: .72rem; }
 .group-edit-field input { display: block; box-sizing: border-box; width: 100%; margin-top: .12rem; padding: .2rem; border: 1px solid #99978f; background: transparent; color: inherit; font: inherit; }
 .group-edit-field input.danger { border-color: #842029; background: #f8d7da; }
+.group-edit-field.group-edit-virtual { display: flex; align-items: center; gap: .35rem; }
+.group-edit-field.group-edit-virtual input { display: inline-block; width: auto; margin: 0; padding: 0; }
 .group-zone-status { margin: 0 0 .6rem !important; font-size: .68rem; }
 .map-link-merge-result { margin: .35rem 0; color: #67655e; font-size: .68rem; }
 .in-game-data-modal { width: min(100%, 28rem); }

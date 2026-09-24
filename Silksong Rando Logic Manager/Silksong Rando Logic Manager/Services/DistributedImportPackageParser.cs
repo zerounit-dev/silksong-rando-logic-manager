@@ -13,20 +13,20 @@ public sealed class DistributedImportPackageParser
             RejectDuplicateProperties(document.RootElement, "$", new HashSet<string>(StringComparer.Ordinal));
             var root = new ObjectReader(document.RootElement, "$", RequireObject);
             var version = root.Int("exportVersion");
-            if (version is not 1 and not 2 and not 3) throw new PackageFormatException("$.exportVersion is unsupported.");
+            if (version is not 1 and not 2 and not 3 and not 4) throw new PackageFormatException("$.exportVersion is unsupported.");
 
             var hasRooms = root.Has("rooms");
             bool? partial = null;
             if (hasRooms)
             {
-                if (version is not 2 and not 3) throw new PackageFormatException("$.rooms is not supported by Version 1.");
+                if (version is not 2 and not 3 and not 4) throw new PackageFormatException("$.rooms is not supported by Version 1.");
                 partial = root.Bool("isPartialRoomDump");
             }
             else if (root.Has("isPartialRoomDump")) throw new PackageFormatException("$.isPartialRoomDump requires $.rooms.");
 
             var identities = new IdentityRegistry();
             var areaMap = root.Optional("areaMap") is JsonElement map ? ReadAreaMap(map, "$.areaMap", identities) : null;
-            var groupings = root.Optional("roomGroupings") is JsonElement groups ? ReadGroups(groups, "$.roomGroupings", identities) : null;
+            var groupings = root.Optional("roomGroupings") is JsonElement groups ? ReadGroups(groups, "$.roomGroupings", identities, version) : null;
             var rooms = hasRooms ? root.Array("rooms").Select((x, i) => ReadRoom(x, $"$.rooms[{i}]", identities, version)).ToArray() : [];
             ValidateStructuralMapIdentities(areaMap);
             ValidatePartialRoomScope(partial, groupings, rooms);
@@ -114,10 +114,10 @@ public sealed class DistributedImportPackageParser
         var r = new ObjectReader(value, path, RequireObject); var id = r.Guid("id"); ids.Add(id, "map chunk", path);
         return new DistributedMapChunk(id, r.Int("cacheIndex"), r.NullableString("initialState"), r.NullableNumber("mapUnitMinX"), r.NullableNumber("mapUnitMinY"), r.NullableNumber("mapUnitMaxX"), r.NullableNumber("mapUnitMaxY"), r.NullableNumber("mapUnitZ"));
     }
-    private static DistributedRoomGroupingSnapshot ReadGroups(JsonElement value, string path, IdentityRegistry ids)
+    private static DistributedRoomGroupingSnapshot ReadGroups(JsonElement value, string path, IdentityRegistry ids, int version)
     {
         var r = new ObjectReader(value, path, RequireObject);
-        return new DistributedRoomGroupingSnapshot(r.Array("groups").Select((x,i) => { var row = new ObjectReader(x, $"{path}.groups[{i}]", RequireObject); var id = row.Guid("id"); ids.Add(id, "room group", row.Path); return new DistributedRoomGroup(id, row.String("friendlyName"), row.NullableString("zoneReferenceText"), row.Int("sortOrder"), row.Utc("createdUtc"), row.Utc("updatedUtc")); }).ToArray());
+        return new DistributedRoomGroupingSnapshot(r.Array("groups").Select((x,i) => { var row = new ObjectReader(x, $"{path}.groups[{i}]", RequireObject); var id = row.Guid("id"); ids.Add(id, "room group", row.Path); return new DistributedRoomGroup(id, row.String("friendlyName"), row.NullableString("zoneReferenceText"), version == 4 && row.Bool("isVirtual"), row.Int("sortOrder"), row.Utc("createdUtc"), row.Utc("updatedUtc")); }).ToArray());
     }
     private static DistributedRoomDocument ReadRoom(JsonElement value, string path, IdentityRegistry ids, int version)
     {

@@ -97,6 +97,7 @@ else
                     <h2 id="group-edit-title">edit room group</h2>
                     <label class="group-edit-field">friendly name<input id="group-friendly-name" @ref="groupFriendlyNameInput" @bind="groupEditDraft.FriendlyName" autocomplete="off" /></label>
                     <label class="group-edit-field">zone reference<input class="@GroupZoneReferenceClass(groupEditDraft.Id)" @bind="groupEditDraft.ZoneReferenceText" list="map-zone-ids" autocomplete="off" /></label>
+                    <label class="group-edit-field group-edit-virtual"><input type="checkbox" @bind="groupEditDraft.IsVirtual" /> virtual</label>
                     <datalist id="map-zone-ids">@foreach (var zoneId in groupEditorData!.ZoneIds) { <option value="@zoneId"></option> }</datalist>
                     @if (groupEditorData!.ZoneReferenceStatus is { } status)
                     {
@@ -170,7 +171,7 @@ else
     private bool sidebarStateRestored;
     private Guid? groupDeleteId;
     private string groupDeleteName = string.Empty;
-    private RoomGroupDraft? groupEditDraft;
+    private RoomGroupEditorDraft? groupEditDraft;
     private GroupEditorData? groupEditorData;
     private bool showExportModal;
     private bool includeAreaMap;
@@ -217,10 +218,7 @@ else
             return;
         }
 
-        var group = groupEditorData!.Group;
-        group.FriendlyName = groupEditDraft.FriendlyName;
-        group.ZoneReferenceText = groupEditDraft.ZoneReferenceText;
-        await Catalog.SaveAsync(group);
+        await Catalog.SaveRoomGroupAsync(new(groupEditorData!.Baseline, groupEditDraft));
         groupEditDraft = null;
         groupEditorData = null;
         focusGroupNameEditor = false;
@@ -280,7 +278,7 @@ else
 
     private Task OpenImportPickerAsync() => JS.InvokeVoidAsync("openSceneUploadPicker", "distributed-import-input").AsTask();
 
-    private void PrepareGroupDelete(RoomGroup group)
+    private void PrepareGroupDelete(GroupEditorView group)
     {
         groupDeleteId = group.Id;
         groupDeleteName = group.FriendlyName;
@@ -473,8 +471,7 @@ else
     {
         groupEditorData = await Catalog.GetGroupEditorDataAsync(groupId)
             ?? throw new InvalidOperationException($"Room group {groupId} no longer exists.");
-        var group = groupEditorData.Group;
-        groupEditDraft = new RoomGroupDraft(group.Id, group.FriendlyName, group.ZoneReferenceText);
+        groupEditDraft = groupEditorData.Draft;
         focusGroupNameEditor = true;
     }
 
@@ -492,7 +489,7 @@ else
             return;
         }
 
-        PrepareGroupDelete(groupEditorData!.Group);
+        PrepareGroupDelete(groupEditorData!.View);
         groupEditDraft = null;
         groupEditorData = null;
         focusGroupNameEditor = false;
@@ -582,11 +579,5 @@ else
     }
 
     private sealed record SidebarSessionState(bool ShowArchivedRooms, IReadOnlyList<Guid> CollapsedGroupIds);
-    private sealed class RoomGroupDraft(Guid id, string friendlyName, string? zoneReferenceText)
-    {
-        public Guid Id { get; } = id;
-        public string FriendlyName { get; set; } = friendlyName;
-        public string? ZoneReferenceText { get; set; } = zoneReferenceText;
-    }
 }
 

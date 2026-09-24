@@ -20,7 +20,7 @@ public sealed class RoomGraphExportService(IDbContextFactory<LogicDbContext> con
         await using var db = await contexts.CreateDbContextAsync(token);
         await using var transaction = await db.Database.BeginTransactionAsync(token);
 
-        var groups = await db.RoomGroups.AsNoTracking().Select(x => new GroupRow(x.Id, x.FriendlyName, x.SortOrder)).ToListAsync(token);
+        var groups = await db.RoomGroups.AsNoTracking().Select(x => new GroupRow(x.Id, x.FriendlyName, x.IsVirtual, x.SortOrder)).ToListAsync(token);
         var rooms = await db.Rooms.AsNoTracking().Where(x => !x.IsArchived)
             .Select(x => new RoomRow(x.Id, x.RoomGroupId, x.ReferenceId, x.FriendlyName, x.InGameId, x.Contributors, x.Comments, x.SortOrder)).ToListAsync(token);
         var roomIds = rooms.Select(x => x.Id).ToArray();
@@ -224,7 +224,8 @@ public sealed class RoomGraphExportService(IDbContextFactory<LogicDbContext> con
 
         var areaIds = groupStates.Select(x => x.Id!).ToArray();
         var document = new RoomGraphDocument(3, new("silksong-logic-manager-export", projectedRooms.Count), areaIds,
-            areaIds.Where(x => x != "fast-travel").ToArray(), areaIds.Where(x => x == "fast-travel").ToArray(),
+            groupStates.Where(x => !x.Row.IsVirtual).Select(x => x.Id!).ToArray(),
+            groupStates.Where(x => x.Row.IsVirtual).Select(x => x.Id!).ToArray(),
             snapshot.Predicates.Select(x => new RoomGraphTranslationPredicate(x.Name, x.Category, x.InputSyntax, x.OutputSyntax, RequirementCatalogueLanguage.ParseAliases(x.Aliases), x.Notes)).ToArray(),
             snapshot.Items.Select(x => new RoomGraphTranslationItem(x.Name, x.Category, RequirementCatalogueLanguage.ParseAliases(x.Aliases), x.OutputValue, x.Notes)).ToArray(),
             typeLegend, projectedRooms);
@@ -390,7 +391,7 @@ public sealed class RoomGraphExportService(IDbContextFactory<LogicDbContext> con
 
     private sealed record Catalogue(IReadOnlyList<RoomGraphPredicateDefinition> Predicates, IReadOnlyList<RoomGraphItemDefinition> Items);
     private sealed record Snapshot(IReadOnlyList<GroupRow> Groups, IReadOnlyList<RoomRow> Rooms, IReadOnlyList<SubroomRow> Subrooms, IReadOnlyList<TransitionRow> Transitions, IReadOnlyList<ConnectionRow> Connections, IReadOnlyList<CheckRow> Checks, IReadOnlyList<PredicateRow> Predicates, IReadOnlyList<ItemRow> Items);
-    private sealed record GroupRow(Guid Id, string Name, int SortOrder);
+    private sealed record GroupRow(Guid Id, string Name, bool IsVirtual, int SortOrder);
     private sealed record RoomRow(Guid Id, Guid? GroupId, string ReferenceId, string Name, string? InGameId, string? Contributors, string? Comments, int SortOrder);
     private sealed record SubroomRow(Guid Id, Guid RoomId, string ReferenceId, string Name, string? Notes, int SortOrder);
     private sealed record TransitionRow(Guid Id, Guid RoomId, string Alias, string Name, string? InGameId, string? SourceText, string? DestinationRoomText, string? DestinationAliasText, string Requirements, string Notes, Guid? ResolvedSourceId, Guid? ResolvedDestinationRoomId, Guid? ResolvedDestinationTransitionId, int SortOrder, bool IsTodo, bool? IsVerified);

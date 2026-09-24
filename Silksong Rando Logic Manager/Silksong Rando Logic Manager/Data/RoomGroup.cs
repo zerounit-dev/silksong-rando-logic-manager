@@ -8,6 +8,8 @@ public sealed class RoomGroup : AuditedEntity
 
     public Guid? ResolvedMapZoneId { get; set; }
 
+    public bool IsVirtual { get; set; }
+
     public int SortOrder { get; set; }
 
     public MapZone? ResolvedMapZone { get; set; }

@@ -89,6 +89,7 @@ public sealed class LogicDbContext(DbContextOptions<LogicDbContext> options) : D
         ConfigureAudited(entity);
         entity.Property(x => x.FriendlyName).IsRequired();
         entity.Property(x => x.ZoneReferenceText).UseCollation("NOCASE");
+        entity.Property(x => x.IsVirtual).HasDefaultValue(false);
         entity.HasOne(x => x.ResolvedMapZone).WithMany().HasForeignKey(x => x.ResolvedMapZoneId).OnDelete(DeleteBehavior.Restrict);
         entity.HasMany(x => x.Rooms).WithOne(x => x.RoomGroup).HasForeignKey(x => x.RoomGroupId).OnDelete(DeleteBehavior.Restrict);
     }
