@@ -2,7 +2,9 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Data.Sqlite;
 using Silksong_Rando_Logic_Manager.Data;
 using System.Buffers;
+using System.Collections.Immutable;
 using System.Globalization;
+using System.Runtime.ExceptionServices;
 using System.Text;
 
 namespace Silksong_Rando_Logic_Manager.Services;
@@ -207,11 +209,41 @@ internal sealed record RequirementValidationPredicate(Guid Id, string InputSynta
 internal sealed record RequirementValidationItem(Guid Id, string Aliases);
 internal sealed record RequirementValidationRoom(Guid Id, string ReferenceId);
 internal sealed record RequirementValidationCheck(Guid Id, Guid RoomId, string FriendlyName);
-internal sealed record RequirementValidationContext(
-    IReadOnlyList<RequirementValidationPredicate> Predicates,
-    IReadOnlyList<RequirementValidationItem> Items,
-    IReadOnlyList<RequirementValidationRoom> Rooms,
-    IReadOnlyList<RequirementValidationCheck> Checks);
+internal sealed class RequirementValidationContext
+{
+    internal RequirementValidationContext(
+        IEnumerable<RequirementValidationPredicate> predicates,
+        IEnumerable<RequirementValidationItem> items,
+        IEnumerable<RequirementValidationRoom> rooms,
+        IEnumerable<RequirementValidationCheck> checks)
+    {
+        Predicates = predicates.ToImmutableArray();
+        Items = items.ToImmutableArray();
+        Rooms = rooms.ToImmutableArray();
+        Checks = checks.ToImmutableArray();
+        try
+        {
+            Prepared = ManagedRequirementValidator.Prepare(Predicates, Items, Rooms, Checks);
+        }
+        catch (Exception exception)
+        {
+            PreparationFailure = ExceptionDispatchInfo.Capture(exception);
+        }
+    }
+
+    internal ImmutableArray<RequirementValidationPredicate> Predicates { get; }
+    internal ImmutableArray<RequirementValidationItem> Items { get; }
+    internal ImmutableArray<RequirementValidationRoom> Rooms { get; }
+    internal ImmutableArray<RequirementValidationCheck> Checks { get; }
+    private ManagedRequirementValidator.PreparedContext? Prepared { get; }
+    private ExceptionDispatchInfo? PreparationFailure { get; }
+
+    internal ManagedRequirementValidator.PreparedContext GetPrepared()
+    {
+        PreparationFailure?.Throw();
+        return Prepared!;
+    }
+}
 
 internal static class ManagedRequirementValidator
 {
@@ -219,11 +251,15 @@ internal static class ManagedRequirementValidator
     private static readonly HashSet<string> Directions = new(StringComparer.Ordinal) { "left", "right", "up", "down" };
 
     internal static bool Validate(string source, Guid owningRoomId, RequirementValidationContext context) =>
-        new Parser(source, owningRoomId, Prepare(context)).Parse();
+        new Parser(source, owningRoomId, context.GetPrepared()).Parse();
 
-    private static PreparedContext Prepare(RequirementValidationContext context)
+    internal static PreparedContext Prepare(
+        ImmutableArray<RequirementValidationPredicate> predicateRows,
+        ImmutableArray<RequirementValidationItem> itemRows,
+        ImmutableArray<RequirementValidationRoom> rooms,
+        ImmutableArray<RequirementValidationCheck> checks)
     {
-        var predicates = context.Predicates.SelectMany(predicate =>
+        var predicates = predicateRows.SelectMany(predicate =>
         {
             if (!RequirementCatalogueLanguage.TryParsePersistedValue(predicate.InputSyntax, out var syntax))
                 throw new InvalidOperationException($"Requirement predicate {predicate.Id} has unsupported input syntax.");
@@ -231,17 +267,17 @@ internal static class ManagedRequirementValidator
                 !string.Equals(canonical, predicate.Aliases, StringComparison.Ordinal))
                 throw new InvalidOperationException($"Requirement predicate {predicate.Id} has invalid or noncanonical aliases.");
             return aliases.Select(alias => new PreparedPredicate(syntax, alias, RequirementCatalogueLanguage.NormalizeIdentification(alias)));
-        }).ToArray();
-        var items = context.Items.SelectMany(item =>
+        }).ToImmutableArray();
+        var items = itemRows.SelectMany(item =>
         {
             if (!RequirementCatalogueLanguage.TryCanonicalizeAliases(item.Aliases, out var canonical, out var aliases, out _) ||
                 !string.Equals(canonical, item.Aliases, StringComparison.Ordinal))
                 throw new InvalidOperationException($"Requirement item {item.Id} has invalid or noncanonical aliases.");
             return aliases.Select(RequirementCatalogueLanguage.NormalizeIdentification);
-        }).ToArray();
+        }).ToImmutableArray();
         EnsureUnique(predicates.Select(value => value.NormalizedAlias), "predicate");
         EnsureUnique(items, "item");
-        return new(predicates, items, context.Rooms, context.Checks);
+        return new(predicates, items, rooms, checks);
     }
 
     private static void EnsureUnique(IEnumerable<string> aliases, string kind)
@@ -251,9 +287,12 @@ internal static class ManagedRequirementValidator
             throw new InvalidOperationException($"The requirement {kind} catalogue contains a normalized alias collision.");
     }
 
-    private sealed record PreparedPredicate(RequirementInputSyntax Syntax, string Alias, string NormalizedAlias);
-    private sealed record PreparedContext(IReadOnlyList<PreparedPredicate> Predicates, IReadOnlyList<string> Items,
-        IReadOnlyList<RequirementValidationRoom> Rooms, IReadOnlyList<RequirementValidationCheck> Checks);
+    internal sealed record PreparedPredicate(RequirementInputSyntax Syntax, string Alias, string NormalizedAlias);
+    internal sealed record PreparedContext(
+        ImmutableArray<PreparedPredicate> Predicates,
+        ImmutableArray<string> Items,
+        ImmutableArray<RequirementValidationRoom> Rooms,
+        ImmutableArray<RequirementValidationCheck> Checks);
 
     private sealed class Parser(string source, Guid owningRoomId, PreparedContext context)
     {
