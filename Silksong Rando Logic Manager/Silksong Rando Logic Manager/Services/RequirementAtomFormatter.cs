@@ -39,7 +39,9 @@ public static class RequirementAtomFormatter
         RequirementOutputPlaceholder.Difficulty => inputSyntax == RequirementInputSyntax.OptionalDifficultyThenPredicate
             ? string.IsNullOrWhiteSpace(arguments.Difficulty) ? "none" : arguments.Difficulty
             : Required(arguments.Difficulty, "difficulty"),
-        RequirementOutputPlaceholder.Direction => Required(arguments.Direction, "direction"),
+        RequirementOutputPlaceholder.Direction => inputSyntax == RequirementInputSyntax.PredicateThenOptionalDirection
+            ? string.IsNullOrWhiteSpace(arguments.Direction) ? "none" : arguments.Direction
+            : Required(arguments.Direction, "direction"),
         RequirementOutputPlaceholder.Item => Required(arguments.ItemOutputValue, "item output value"),
         RequirementOutputPlaceholder.Quantity => PositiveQuantity(arguments.Quantity),
         RequirementOutputPlaceholder.Check => Required(arguments.CheckGraphId, "check graph ID"),

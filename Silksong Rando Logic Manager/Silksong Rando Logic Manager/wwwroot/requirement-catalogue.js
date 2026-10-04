@@ -37,7 +37,7 @@ window.requirementCatalogueDrag = (() => {
         if (!output.trim()) return "Output syntax is required.";
         const required = {
             "{predicate}": [], "{difficulty?} {predicate}": ["difficulty"], "{difficulty} {predicate}": ["difficulty"],
-            "{predicate} {direction}": ["direction"], "{predicate} {item}": ["item"], "{predicate} {check}": ["check"], "{predicate} {quantity}": ["quantity"],
+            "{predicate} {direction}": ["direction"], "{predicate} {direction?}": ["direction"], "{predicate} {item}": ["item"], "{predicate} {check}": ["check"], "{predicate} {quantity}": ["quantity"],
             "{difficulty} {predicate} {enemy}": ["difficulty", "enemy"], "{predicate} {quantity} {countable}": ["quantity", "countable"],
             "{predicate} {countable} {quantity}": ["countable", "quantity"]
         }[syntax];

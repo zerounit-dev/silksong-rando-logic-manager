@@ -11,7 +11,8 @@ public enum RequirementInputSyntax
     PredicateThenQuantity,
     RequiredDifficultyThenPredicateThenEnemy,
     PredicateThenQuantityThenCountable,
-    PredicateThenCountableThenQuantity
+    PredicateThenCountableThenQuantity,
+    PredicateThenOptionalDirection
 }
 
 public sealed record RequirementInputSyntaxOption(RequirementInputSyntax Value, string PersistedValue, string DisplayLabel);

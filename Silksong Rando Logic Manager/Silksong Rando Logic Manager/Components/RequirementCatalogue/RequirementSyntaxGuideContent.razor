@@ -33,6 +33,7 @@
                 <section>
                     <h3>Add a direction</h3>
                     <p>The only <span class="guide-token-direction">direction</span> values are <code class="guide-token-direction">left</code>, <code class="guide-token-direction">right</code>, <code class="guide-token-direction">up</code>, and <code class="guide-token-direction">down</code>. A <span class="guide-token-direction">direction</span> follows the requirement type: <code><span class="guide-token-requirement">break vines</span> <span class="guide-token-direction">{direction}</span></code>. Examples are <code><span class="guide-token-requirement">break vines</span> <span class="guide-token-direction">left</span></code> and <code><span class="guide-token-requirement">open airlock</span> <span class="guide-token-direction">right</span></code>.</p>
+                    <p>A requirement type showing <code class="guide-token-direction">{direction?}</code> lets you omit the <span class="guide-token-direction">direction</span>; <code class="guide-token-direction">{direction}</code> still requires one. Check Requirement types to see which form is accepted.</p>
                 </section>
                 <section>
                     <h3>Require an amount</h3>
@@ -270,7 +271,7 @@
             builder.AddAttribute(sequence++, "class", placeholder switch
             {
                 "{difficulty}" or "{difficulty?}" => "guide-token-difficulty",
-                "{direction}" => "guide-token-direction",
+                "{direction}" or "{direction?}" => "guide-token-direction",
                 "{item}" => "guide-token-item",
                 "{countable}" => "guide-token-countable",
                 "{enemy}" => "guide-token-enemy",

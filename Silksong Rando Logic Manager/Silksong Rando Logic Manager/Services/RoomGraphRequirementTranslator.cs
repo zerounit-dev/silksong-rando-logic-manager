@@ -238,6 +238,21 @@ internal static class RoomGraphRequirementTranslator
                         else failure = $"invalid direction: {direction}";
                     }
                     break;
+                case RequirementInputSyntax.PredicateThenOptionalDirection:
+                    var directionPrefix = PrefixLength(raw, alias);
+                    if (directionPrefix >= 0)
+                    {
+                        matched = true;
+                        // Only an empty source tail omits direction; identification must not erase an invalid tail.
+                        var directionTail = raw[directionPrefix..].Trim();
+                        if (directionTail.Length != 0)
+                        {
+                            var optionalDirection = RequirementCatalogueLanguage.NormalizeIdentification(directionTail);
+                            if (Directions.Contains(optionalDirection)) arguments = arguments with { Direction = optionalDirection };
+                            else failure = $"invalid direction: {directionTail}";
+                        }
+                    }
+                    break;
                 case RequirementInputSyntax.PredicateThenItem:
                     if (normalized == normalizedAlias) { matched = true; failure = $"required item is missing for: {raw}"; }
                     else if (TryRemainder(normalized, normalizedAlias, out var itemText))

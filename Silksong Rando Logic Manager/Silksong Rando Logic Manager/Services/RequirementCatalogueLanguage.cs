@@ -11,6 +11,7 @@ public static class RequirementCatalogueLanguage
         new RequirementInputSyntaxOption(RequirementInputSyntax.OptionalDifficultyThenPredicate, "{difficulty?} {predicate}", "Optional difficulty + predicate"),
         new RequirementInputSyntaxOption(RequirementInputSyntax.RequiredDifficultyThenPredicate, "{difficulty} {predicate}", "Required difficulty + predicate"),
         new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenDirection, "{predicate} {direction}", "Predicate + direction"),
+        new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenOptionalDirection, "{predicate} {direction?}", "Predicate + optional direction"),
         new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenItem, "{predicate} {item}", "Predicate + item"),
         new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenCheck, "{predicate} {check}", "Predicate + check"),
         new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenQuantity, "{predicate} {quantity}", "Predicate + quantity"),
@@ -135,7 +136,7 @@ public static class RequirementCatalogueLanguage
     {
         RequirementInputSyntax.PredicateOnly => new HashSet<RequirementOutputPlaceholder>(),
         RequirementInputSyntax.OptionalDifficultyThenPredicate or RequirementInputSyntax.RequiredDifficultyThenPredicate => new HashSet<RequirementOutputPlaceholder> { RequirementOutputPlaceholder.Difficulty },
-        RequirementInputSyntax.PredicateThenDirection => new HashSet<RequirementOutputPlaceholder> { RequirementOutputPlaceholder.Direction },
+        RequirementInputSyntax.PredicateThenDirection or RequirementInputSyntax.PredicateThenOptionalDirection => new HashSet<RequirementOutputPlaceholder> { RequirementOutputPlaceholder.Direction },
         RequirementInputSyntax.PredicateThenItem => new HashSet<RequirementOutputPlaceholder> { RequirementOutputPlaceholder.Item },
         RequirementInputSyntax.PredicateThenCheck => new HashSet<RequirementOutputPlaceholder> { RequirementOutputPlaceholder.Check },
         RequirementInputSyntax.PredicateThenQuantity => new HashSet<RequirementOutputPlaceholder> { RequirementOutputPlaceholder.Quantity },

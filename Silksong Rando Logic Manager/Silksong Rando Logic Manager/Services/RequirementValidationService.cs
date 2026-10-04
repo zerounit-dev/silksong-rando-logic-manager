@@ -417,6 +417,15 @@ internal static class ManagedRequirementValidator
                     case RequirementInputSyntax.PredicateThenDirection:
                         if (TryRemainder(normalized, predicate.NormalizedAlias, out var direction) && Directions.Contains(direction)) candidates.Add(true);
                         break;
+                    case RequirementInputSyntax.PredicateThenOptionalDirection:
+                        var directionPrefix = PrefixLength(text, predicate.Alias);
+                        if (directionPrefix >= 0)
+                        {
+                            // Inspect the source tail before identification: punctuation-only text is not omission.
+                            var directionTail = text[directionPrefix..].Trim();
+                            if (directionTail.Length == 0 || Directions.Contains(RequirementCatalogueLanguage.NormalizeIdentification(directionTail))) candidates.Add(true);
+                        }
+                        break;
                     case RequirementInputSyntax.PredicateThenItem:
                         if (TryRemainder(normalized, predicate.NormalizedAlias, out var item))
                             candidates.AddRange(context.Items.Where(alias => alias == item).Select(_ => true));
