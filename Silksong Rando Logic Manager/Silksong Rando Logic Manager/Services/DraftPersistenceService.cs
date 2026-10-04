@@ -10,6 +10,7 @@ public static class DraftPersistenceService
         !string.IsNullOrEmpty(draft.Notes);
 
     public static bool HasPersistableValues(RoomTransition draft) =>
+        draft.IsUnsafeArrival ||
         draft.Alias != string.Empty ||
         draft.FriendlyName != string.Empty ||
         !string.IsNullOrEmpty(draft.SourceSubroomReferenceText) ||

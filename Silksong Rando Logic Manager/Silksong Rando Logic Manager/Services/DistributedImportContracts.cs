@@ -35,7 +35,7 @@ public sealed record DistributedChildComparison<T>(Guid EntityId, DistributedCom
 public static class DistributedChildComparisonColumns
 {
     public static readonly IReadOnlyList<string> Subrooms = ["id", "referenceId", "friendlyName", "notes", "sceneUnitX", "sceneUnitY", "sceneUnitWidth", "sceneUnitHeight", "enableAnnotation", "sortOrder", "isArchived", "archivedUtc", "createdUtc", "updatedUtc"];
-    public static readonly IReadOnlyList<string> Transitions = ["id", "alias", "friendlyName", "inGameId", "inGamePositionX", "inGamePositionY", "inGamePositionZ", "localPositionX", "localPositionY", "localPositionZ", "annotationSceneUnitX", "annotationSceneUnitY", "enableAnnotation", "sourceSubroomReferenceText", "destinationRoomReferenceText", "destinationTransitionAliasText", "requirements", "notes", "sortOrder", "isTodo", "isVerified", "isArchived", "archivedUtc", "createdUtc", "updatedUtc"];
+    public static readonly IReadOnlyList<string> Transitions = ["id", "alias", "friendlyName", "inGameId", "inGamePositionX", "inGamePositionY", "inGamePositionZ", "localPositionX", "localPositionY", "localPositionZ", "annotationSceneUnitX", "annotationSceneUnitY", "enableAnnotation", "sourceSubroomReferenceText", "destinationRoomReferenceText", "destinationTransitionAliasText", "requirements", "notes", "sortOrder", "isTodo", "isVerified", "isArchived", "archivedUtc", "createdUtc", "updatedUtc", "isUnsafeArrival"];
     public static readonly IReadOnlyList<string> Connections = ["id", "alias", "friendlyName", "sourceSubroomReferenceText", "destinationSubroomReferenceText", "requirements", "notes", "enableAnnotation", "sceneUnitX", "sceneUnitY", "sortOrder", "isTodo", "isVerified", "isArchived", "archivedUtc", "createdUtc", "updatedUtc"];
     public static readonly IReadOnlyList<string> Checks = ["id", "friendlyName", "inGameId", "inGamePositionX", "inGamePositionY", "inGamePositionZ", "localPositionX", "localPositionY", "localPositionZ", "annotationSceneUnitX", "annotationSceneUnitY", "subroomReferenceText", "requirements", "notes", "locationType", "enableAnnotation", "sortOrder", "isTodo", "isVerified", "isArchived", "archivedUtc", "createdUtc", "updatedUtc"];
 }
@@ -52,11 +52,24 @@ public sealed record DistributedRoomComparison(
 
 public sealed record DistributedImportWarning(string Code, string Message);
 public sealed record DistributedImportRoomIdentity(Guid Id, string FriendlyName, string? InGameId);
+public enum DistributedChildCategory { Subroom, Transition, Connection, Check }
+public enum DistributedChildChoice { Current, Incoming }
+public readonly record struct DistributedChildDecisionKey(DistributedChildCategory Category, Guid EntityId);
+public sealed record DistributedChildDecision(
+    DistributedChildCategory Category,
+    Guid EntityId,
+    DistributedComparisonEvidence Evidence,
+    DistributedChildChoice Choice)
+{
+    public DistributedChildDecisionKey Key => new(Category, EntityId);
+}
+public sealed record DistributedRoomChildPlan(Guid RoomId, IReadOnlyList<DistributedChildDecision> Decisions);
+public sealed record DistributedChildChoiceChanged(DistributedChildDecisionKey Key, DistributedChildChoice Choice);
 public abstract record DistributedRoomDecisionIntent(Guid RoomId);
 public sealed record SkipIncomingRoom(Guid RoomId) : DistributedRoomDecisionIntent(RoomId);
 public sealed record ImportIncomingRoom(Guid RoomId) : DistributedRoomDecisionIntent(RoomId);
 public sealed record KeepMasterRoom(Guid RoomId) : DistributedRoomDecisionIntent(RoomId);
-public sealed record UseIncomingRoom(Guid RoomId) : DistributedRoomDecisionIntent(RoomId);
+public sealed record ImportChangedRoom(Guid RoomId, DistributedRoomChildPlan ChildPlan) : DistributedRoomDecisionIntent(RoomId);
 public sealed record DistributedImportProgress(string Stage, int Completed, int Total, string? Detail);
 public abstract record DistributedImportOutcome;
 public sealed record DistributedImportPrepared(DistributedImportPackageSummary Summary) : DistributedImportOutcome;
@@ -86,6 +99,7 @@ public sealed record DistributedImportStarted(DistributedImportOrchestrationStat
 public sealed record DistributedImportRoomSkipped(Guid RoomId, DistributedImportOrchestrationState State) : DistributedImportOutcome;
 public sealed record DistributedImportRoomKept(Guid RoomId, DistributedImportOrchestrationState State) : DistributedImportOutcome;
 public sealed record DistributedImportRoomApplied(Guid RoomId, DistributedImportOrchestrationState State) : DistributedImportOutcome;
+public sealed record DistributedImportRoomBecameIdentical(Guid RoomId, DistributedRoomComparison Comparison, DistributedImportOrchestrationState State) : DistributedImportOutcome;
 public sealed record DistributedImportComparisonRefreshed(DistributedRoomComparison Comparison) : DistributedImportOutcome;
 // The review is caller-owned transient state.  Its IDs are the sole authority
 // for a later archive decision; package membership is not a substitute for the
@@ -110,7 +124,7 @@ public sealed record DistributedImportRoomProjection(
     IReadOnlyList<DistributedImportConnectionProjection> Connections,
     IReadOnlyList<DistributedImportCheckProjection> Checks);
 public sealed record DistributedImportSubroomProjection(Guid Id, string ReferenceId, string FriendlyName, string? Notes, double? SceneUnitX, double? SceneUnitY, double? SceneUnitWidth, double? SceneUnitHeight, bool EnableAnnotation, int SortOrder, bool IsArchived, DateTime? ArchivedUtc, DateTime CreatedUtc, DateTime UpdatedUtc);
-public sealed record DistributedImportTransitionProjection(Guid Id, string Alias, string FriendlyName, string? InGameId, double? InGamePositionX, double? InGamePositionY, double? InGamePositionZ, double? LocalPositionX, double? LocalPositionY, double? LocalPositionZ, double? AnnotationSceneUnitX, double? AnnotationSceneUnitY, bool EnableAnnotation, string? SourceSubroomReferenceText, string? DestinationRoomReferenceText, string? DestinationTransitionAliasText, string Requirements, string Notes, int SortOrder, bool IsTodo, bool? IsVerified, bool IsArchived, DateTime? ArchivedUtc, DateTime CreatedUtc, DateTime UpdatedUtc);
+public sealed record DistributedImportTransitionProjection(Guid Id, string Alias, string FriendlyName, string? InGameId, double? InGamePositionX, double? InGamePositionY, double? InGamePositionZ, double? LocalPositionX, double? LocalPositionY, double? LocalPositionZ, double? AnnotationSceneUnitX, double? AnnotationSceneUnitY, bool EnableAnnotation, string? SourceSubroomReferenceText, string? DestinationRoomReferenceText, string? DestinationTransitionAliasText, string Requirements, string Notes, int SortOrder, bool IsTodo, bool? IsVerified, bool IsArchived, DateTime? ArchivedUtc, DateTime CreatedUtc, DateTime UpdatedUtc, bool IsUnsafeArrival);
 public sealed record DistributedImportConnectionProjection(Guid Id, string Alias, string FriendlyName, string SourceSubroomReferenceText, string DestinationSubroomReferenceText, string Requirements, string Notes, bool EnableAnnotation, double? SceneUnitX, double? SceneUnitY, int SortOrder, bool IsTodo, bool? IsVerified, bool IsArchived, DateTime? ArchivedUtc, DateTime CreatedUtc, DateTime UpdatedUtc);
 public sealed record DistributedImportCheckProjection(Guid Id, string FriendlyName, string? InGameId, double? InGamePositionX, double? InGamePositionY, double? InGamePositionZ, double? LocalPositionX, double? LocalPositionY, double? LocalPositionZ, double? AnnotationSceneUnitX, double? AnnotationSceneUnitY, string? SubroomReferenceText, string Requirements, string Notes, string? LocationType, bool EnableAnnotation, int SortOrder, bool IsTodo, bool? IsVerified, bool IsArchived, DateTime? ArchivedUtc, DateTime CreatedUtc, DateTime UpdatedUtc);
 
@@ -121,7 +135,7 @@ public static class DistributedImportProjectionMapper
         source.SceneUnitWidth, source.SceneUnitHeight, source.SceneImageScaleXPercent, source.SceneImageScaleYPercent, source.SceneImagePanXPercent, source.SceneImagePanYPercent,
         source.IsSceneImageStale, source.SortOrder, source.IsArchived, source.ArchivedUtc, source.CreatedUtc, source.UpdatedUtc,
         source.Subrooms.Select(x => new DistributedSubroom(x.Id, x.ReferenceId, x.FriendlyName, x.Notes, x.SceneUnitX, x.SceneUnitY, x.SceneUnitWidth, x.SceneUnitHeight, x.EnableAnnotation, x.SortOrder, x.IsArchived, x.ArchivedUtc, x.CreatedUtc, x.UpdatedUtc)).ToArray(),
-        source.Transitions.Select(x => new DistributedTransition(x.Id, x.Alias, x.FriendlyName, x.InGameId, x.InGamePositionX, x.InGamePositionY, x.InGamePositionZ, x.LocalPositionX, x.LocalPositionY, x.LocalPositionZ, x.AnnotationSceneUnitX, x.AnnotationSceneUnitY, x.EnableAnnotation, x.SourceSubroomReferenceText, x.DestinationRoomReferenceText, x.DestinationTransitionAliasText, x.Requirements, x.Notes, x.SortOrder, x.IsTodo, x.IsVerified, x.IsArchived, x.ArchivedUtc, x.CreatedUtc, x.UpdatedUtc)).ToArray(),
+        source.Transitions.Select(x => new DistributedTransition(x.Id, x.Alias, x.FriendlyName, x.InGameId, x.InGamePositionX, x.InGamePositionY, x.InGamePositionZ, x.LocalPositionX, x.LocalPositionY, x.LocalPositionZ, x.AnnotationSceneUnitX, x.AnnotationSceneUnitY, x.EnableAnnotation, x.SourceSubroomReferenceText, x.DestinationRoomReferenceText, x.DestinationTransitionAliasText, x.Requirements, x.Notes, x.SortOrder, x.IsTodo, x.IsVerified, x.IsArchived, x.ArchivedUtc, x.CreatedUtc, x.UpdatedUtc, x.IsUnsafeArrival)).ToArray(),
         source.Connections.Select(x => new DistributedConnection(x.Id, x.Alias, x.FriendlyName, x.SourceSubroomReferenceText, x.DestinationSubroomReferenceText, x.Requirements, x.Notes, x.EnableAnnotation, x.SceneUnitX, x.SceneUnitY, x.SortOrder, x.IsTodo, x.IsVerified, x.IsArchived, x.ArchivedUtc, x.CreatedUtc, x.UpdatedUtc)).ToArray(),
         source.Checks.Select(x => new DistributedCheck(x.Id, x.FriendlyName, x.InGameId, x.InGamePositionX, x.InGamePositionY, x.InGamePositionZ, x.LocalPositionX, x.LocalPositionY, x.LocalPositionZ, x.AnnotationSceneUnitX, x.AnnotationSceneUnitY, x.SubroomReferenceText, x.Requirements, x.Notes, x.LocationType, x.EnableAnnotation, x.SortOrder, x.IsTodo, x.IsVerified, x.IsArchived, x.ArchivedUtc, x.CreatedUtc, x.UpdatedUtc)).ToArray());
 }

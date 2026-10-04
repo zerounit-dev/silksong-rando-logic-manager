@@ -14,7 +14,7 @@ public static class TransitionFieldDiffMapper
         nameof(RoomTransition.AnnotationSceneUnitX), nameof(RoomTransition.AnnotationSceneUnitY), nameof(RoomTransition.EnableAnnotation),
         nameof(RoomTransition.SourceSubroomReferenceText), nameof(RoomTransition.DestinationRoomReferenceText),
         nameof(RoomTransition.DestinationTransitionAliasText), nameof(RoomTransition.Requirements), nameof(RoomTransition.Notes),
-        nameof(RoomTransition.IsTodo), nameof(RoomTransition.IsVerified)
+        nameof(RoomTransition.IsTodo), nameof(RoomTransition.IsVerified), nameof(RoomTransition.IsUnsafeArrival)
     ];
 
     public static IReadOnlyList<string> Differences(RoomTransition baseline, RoomTransition draft) =>
@@ -53,6 +53,7 @@ public static class TransitionFieldDiffMapper
         SourceSubroomReferenceText = value.SourceSubroomReferenceText, DestinationRoomReferenceText = value.DestinationRoomReferenceText,
         DestinationTransitionAliasText = value.DestinationTransitionAliasText, Requirements = value.Requirements,
         RequirementsParseSucceeded = value.RequirementsParseSucceeded, Notes = value.Notes,
+        IsUnsafeArrival = value.IsUnsafeArrival,
         ResolvedSourceSubroomId = value.ResolvedSourceSubroomId, ResolvedDestinationRoomId = value.ResolvedDestinationRoomId,
         ResolvedDestinationTransitionId = value.ResolvedDestinationTransitionId, SortOrder = value.SortOrder, IsTodo = value.IsTodo,
         IsVerified = value.IsVerified, IsArchived = value.IsArchived, ArchivedUtc = value.ArchivedUtc,
@@ -71,6 +72,7 @@ public static class TransitionFieldDiffMapper
         nameof(RoomTransition.DestinationTransitionAliasText) => row.DestinationTransitionAliasText,
         nameof(RoomTransition.Requirements) => row.Requirements, nameof(RoomTransition.Notes) => row.Notes,
         nameof(RoomTransition.IsTodo) => row.IsTodo, nameof(RoomTransition.IsVerified) => row.IsVerified,
+        nameof(RoomTransition.IsUnsafeArrival) => row.IsUnsafeArrival,
         _ => throw new ArgumentOutOfRangeException(nameof(field))
     };
 
@@ -88,6 +90,7 @@ public static class TransitionFieldDiffMapper
             case nameof(RoomTransition.DestinationTransitionAliasText): row.DestinationTransitionAliasText = (string?)value; break;
             case nameof(RoomTransition.Requirements): row.Requirements = (string)value!; break; case nameof(RoomTransition.Notes): row.Notes = (string)value!; break;
             case nameof(RoomTransition.IsTodo): row.IsTodo = (bool)value!; break; case nameof(RoomTransition.IsVerified): row.IsVerified = (bool?)value; break;
+            case nameof(RoomTransition.IsUnsafeArrival): row.IsUnsafeArrival = (bool)value!; break;
             default: throw new ArgumentOutOfRangeException(nameof(field));
         }
     }

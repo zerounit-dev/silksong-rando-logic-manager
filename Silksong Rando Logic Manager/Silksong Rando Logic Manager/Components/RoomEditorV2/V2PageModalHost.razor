@@ -15,6 +15,11 @@
         <section id="v2-page-modal-dialog" class="confirmation-modal v2-page-modal @(Content is V2SceneImageCaptureDialogView ? "scene-image-capture-modal" : "")" data-v2-modal-stage="@Stage" role="dialog" aria-modal="true" aria-labelledby="v2-page-modal-title" tabindex="-1" @onclick:stopPropagation="true" @onkeydown="KeyDown">
             @switch (Content)
             {
+                case V2CheckRoomReloadView:
+                    <h2 id="v2-page-modal-title">reload room required</h2>
+                    <p>The change was saved, but the complete room refresh failed. Durable editing is blocked until the room reload succeeds.</p>
+                    <div class="v2-modal-footer"><div></div><div><button type="button" class="compact-control" @onclick="Apply">reload room</button></div></div>
+                    break;
                 case V2ReferenceUpdateProposalView reference: <V2ReferenceUpdateProposalContent View="reference" Revert="Cancel" DoNotUpdate="DoNotUpdate" Update="Apply" Disabled="@(Stage == V2ModalRuntimeStage.Committing)" /> break;
                 case V2InverseSetupProposalView inverse: <V2InverseSetupProposalContent View="inverse" Revert="Cancel" DoNotUpdate="DoNotUpdate" Update="Apply" Disabled="@(Stage == V2ModalRuntimeStage.Committing)" /> break;
                 case V2PermanentDeleteDialogView delete: <V2PermanentDeleteDialogContent View="delete" Cancel="Cancel" Confirm="Apply" Disabled="@(Stage == V2ModalRuntimeStage.Committing)" /> break;

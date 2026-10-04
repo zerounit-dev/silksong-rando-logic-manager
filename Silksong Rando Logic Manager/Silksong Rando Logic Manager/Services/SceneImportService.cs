@@ -11,18 +11,35 @@ public sealed class SceneImportService(IDbContextFactory<LogicDbContext> dbConte
     public async Task<SceneImportPreview> PreviewAsync(SceneDumpReview review, CancellationToken cancellationToken = default)
     {
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
-        var rooms = await db.Rooms.Where(x => !x.IsArchived).ToListAsync(cancellationToken);
-        var transitions = await db.RoomTransitions.Where(x => !x.IsArchived).ToListAsync(cancellationToken);
-        var checks = await db.CheckLocations.Where(x => !x.IsArchived).ToListAsync(cancellationToken);
+        var rooms = await db.Rooms.AsNoTracking().Where(x => !x.IsArchived)
+            .Select(x => new SceneImportRoom(x.Id, x.FriendlyName, x.ReferenceId, x.InGameId, x.SceneUnitWidth, x.SceneUnitHeight)).ToListAsync(cancellationToken);
+        var transitions = await db.RoomTransitions.AsNoTracking().Where(x => !x.IsArchived && !x.Room.IsArchived)
+            .Select(x => new SceneImportSelectableRecord(x.Id, x.RoomId, SceneDumpClassification.Exit, x.FriendlyName, x.InGameId)).ToListAsync(cancellationToken);
+        var checks = await db.CheckLocations.AsNoTracking().Where(x => !x.IsArchived && !x.Room.IsArchived)
+            .Select(x => new SceneImportSelectableRecord(x.Id, x.RoomId, SceneDumpClassification.Check, x.FriendlyName, x.InGameId)).ToListAsync(cancellationToken);
+        var enemyNames = await db.RequirementEnemyTypes.AsNoTracking()
+            .Select(x => new SceneImportEnemyName(x.Id, x.OutputValue, x.Name)).ToListAsync(cancellationToken);
         var sceneRooms = rooms.Where(x => Matches(x.InGameId, review.SceneName)).ToArray();
         var matches = Flatten(review.RootObjects)
-            .Select(node => new SceneImportObjectMatch(node.Id, node.Classification, GameId(node), FindMatches(node, transitions, checks)))
+            .Select(node => MatchObject(node, transitions, checks))
             .ToArray();
-        return new SceneImportPreview(sceneRooms, matches, transitions.Select(x => new SceneImportSelectableRecord(x.Id, x.RoomId, SceneDumpClassification.Exit, x.FriendlyName, x.InGameId)).ToArray(), checks.Select(x => new SceneImportSelectableRecord(x.Id, x.RoomId, SceneDumpClassification.Check, x.FriendlyName, x.InGameId)).ToArray());
+        return new SceneImportPreview(sceneRooms, matches, transitions, checks, enemyNames.AsReadOnly());
     }
 
     public async Task<SceneImportResult> ImportAsync(SceneDumpReview review, Guid? targetRoomId, IReadOnlySet<Guid> selectedObjectIds, SceneUnitSize? replacementDimensions = null, CancellationToken cancellationToken = default)
-        => await ImportAsync(review, targetRoomId, selectedObjectIds.Select(id => new SceneImportInstruction(id, SceneImportMode.Create, null, FindNode(review.RootObjects, id)?.Name ?? string.Empty)).ToArray(), replacementDimensions, cancellationToken);
+    {
+        var preview = await PreviewAsync(review, cancellationToken);
+        var roomId = targetRoomId ?? (preview.MatchingRooms.Count == 1 ? preview.MatchingRooms[0].Id : (Guid?)null);
+        var nodes = Flatten(review.RootObjects).Where(node => selectedObjectIds.Contains(node.Id)).ToArray();
+        if (nodes.Length != selectedObjectIds.Count || nodes.Any(node => !SceneDumpIdentity.IsImportable(node.Classification)))
+            throw new InvalidOperationException("Import instructions must select an exit, check or enemy scene object.");
+        var projection = new SceneReviewProjectionService();
+        var identityCounts = projection.CountCheckIdentities(Flatten(review.RootObjects));
+        var drafts = nodes.ToDictionary(node => node.Id, node => projection.CreateDraft(node, preview, roomId, identityCounts));
+        projection.AllocateNames(nodes, preview, roomId, drafts);
+        return await ImportAsync(review, targetRoomId, nodes.Select(node => drafts[node.Id])
+            .Select(draft => new SceneImportInstruction(draft.ObjectId, draft.Mode, draft.ExistingRecordId, draft.FriendlyName)).ToArray(), replacementDimensions, cancellationToken);
+    }
 
     public async Task<SceneImportResult> ImportAsync(SceneDumpReview review, Guid? targetRoomId, IReadOnlyList<SceneImportInstruction> instructions, SceneUnitSize? replacementDimensions = null, CancellationToken cancellationToken = default)
     {
@@ -68,20 +85,20 @@ public sealed class SceneImportService(IDbContextFactory<LogicDbContext> dbConte
         if (instructions.Select(instruction => instruction.ObjectId).Distinct().Count() != instructions.Count) throw new InvalidOperationException("Each scene object may be imported once.");
         foreach (var instruction in instructions)
         {
-            if (!nodes.TryGetValue(instruction.ObjectId, out var node) || node.Classification == SceneDumpClassification.Other) throw new InvalidOperationException("Import instructions must select an exit or check scene object.");
+            if (!nodes.TryGetValue(instruction.ObjectId, out var node) || !SceneDumpIdentity.IsImportable(node.Classification)) throw new InvalidOperationException("Import instructions must select an exit, check or enemy scene object.");
             if (instruction.Mode == SceneImportMode.Update)
             {
                 if (node.Classification == SceneDumpClassification.Exit)
                 {
                     var transition = transitions.SingleOrDefault(item => item.Id == instruction.ExistingRecordId && item.RoomId == targetRoom.Id)
                         ?? throw new InvalidOperationException("The selected transition update target is not an active record in the target room.");
-                    ApplyMetadata(transition, node, node.Name);
+                    ApplyMetadata(transition, node, SceneDumpIdentity.GameId(node));
                 }
                 else
                 {
                     var check = checks.SingleOrDefault(item => item.Id == instruction.ExistingRecordId && item.RoomId == targetRoom.Id)
                         ?? throw new InvalidOperationException("The selected check update target is not an active record in the target room.");
-                    ApplyMetadata(check, node, CheckGameId(node));
+                    ApplyMetadata(check, node, SceneDumpIdentity.GameId(node));
                 }
             }
             else if (instruction.Mode != SceneImportMode.Create)
@@ -109,6 +126,7 @@ public sealed class SceneImportService(IDbContextFactory<LogicDbContext> dbConte
                     AnnotationSceneUnitX = CompleteFinitePair(node.WorldPosition?.X, node.WorldPosition?.Y) ? node.WorldPosition!.X : null,
                     AnnotationSceneUnitY = CompleteFinitePair(node.WorldPosition?.X, node.WorldPosition?.Y) ? node.WorldPosition!.Y : null,
                     EnableAnnotation = true,
+                    Requirements = node.IsAct3Only ? "Act 3" : string.Empty,
                     DestinationRoomReferenceText = destinationRoom?.Length == 1 && destinationTransitions.Length == 1 ? destinationRoom[0].ReferenceId : null,
                     DestinationTransitionAliasText = destinationTransitions.Length == 1 ? destinationTransitions[0].Alias : null,
                     SortOrder = await NextSortOrderAsync(db.RoomTransitions.Where(x => x.RoomId == targetRoom.Id && !x.IsArchived), cancellationToken) + importedTransitions.Count
@@ -116,9 +134,9 @@ public sealed class SceneImportService(IDbContextFactory<LogicDbContext> dbConte
                 importedTransitions.Add(transition);
                 transitions.Add(transition);
             }
-            else if (node.Classification == SceneDumpClassification.Check)
+            else if (node.Classification is SceneDumpClassification.Check or SceneDumpClassification.Enemy)
             {
-                var gameId = CheckGameId(node);
+                var gameId = SceneDumpIdentity.GameId(node);
                     var check = new CheckLocation
                     {
                         RoomId = targetRoom.Id,
@@ -133,7 +151,10 @@ public sealed class SceneImportService(IDbContextFactory<LogicDbContext> dbConte
                         AnnotationSceneUnitX = CompleteFinitePair(node.WorldPosition?.X, node.WorldPosition?.Y) ? node.WorldPosition!.X : null,
                         AnnotationSceneUnitY = CompleteFinitePair(node.WorldPosition?.X, node.WorldPosition?.Y) ? node.WorldPosition!.Y : null,
                         EnableAnnotation = true,
-                        LocationType = null,
+                        LocationType = node.Classification == SceneDumpClassification.Enemy ? "enemy" : null,
+                        Requirements = node.Classification == SceneDumpClassification.Enemy
+                            ? ScenePlacementWorldResolver.EnemyRequirements(node)
+                            : node.IsAct3Only ? "Act 3" : string.Empty,
                         SortOrder = await NextSortOrderAsync(db.CheckLocations.Where(x => x.RoomId == targetRoom.Id && !x.IsArchived), cancellationToken) + importedChecks.Count
                     };
                     importedChecks.Add(check);
@@ -161,12 +182,13 @@ public sealed class SceneImportService(IDbContextFactory<LogicDbContext> dbConte
         return new SceneImportResult(targetRoom.Id, importedTransitions.Select(x => x.Id).ToArray(), importedChecks.Select(x => x.Id).ToArray());
     }
 
-    private static IReadOnlyList<SceneImportRecordMatch> FindMatches(SceneDumpObject node, IEnumerable<RoomTransition> transitions, IEnumerable<CheckLocation> checks) =>
-        GameId(node) is not { } gameId ? [] : transitions.Where(x => Matches(x.InGameId, gameId)).Select(x => new SceneImportRecordMatch(x.Id, x.RoomId, SceneDumpClassification.Exit)).Concat(checks.Where(x => Matches(x.InGameId, gameId)).Select(x => new SceneImportRecordMatch(x.Id, x.RoomId, SceneDumpClassification.Check))).ToArray();
-
-    private static string? GameId(SceneDumpObject node) => node.Components.Any(x => x.Type == "TransitionPoint") ? node.Name : CheckGameId(node);
-
-    private static string? CheckGameId(SceneDumpObject node) => node.Components.Select(x => x.ItemDataId).FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
+    public static SceneImportObjectMatch MatchObject(SceneDumpObject node, IEnumerable<SceneImportSelectableRecord> transitions, IEnumerable<SceneImportSelectableRecord> checks)
+    {
+        var gameId = SceneDumpIdentity.GameId(node);
+        var matches = transitions.Concat(checks).Where(record => Matches(record.InGameId, gameId))
+            .Select(record => new SceneImportRecordMatch(record.Id, record.RoomId, record.Classification)).ToArray();
+        return new(node.Id, node.Classification, gameId, matches);
+    }
     private static bool CompleteFinitePair(double? x, double? y) => x is double a && y is double b && double.IsFinite(a) && double.IsFinite(b);
 
     private static void ApplyMetadata(RoomTransition transition, SceneDumpObject node, string? gameId)
@@ -261,7 +283,9 @@ public sealed class SceneImportService(IDbContextFactory<LogicDbContext> dbConte
     }
 }
 
-public sealed record SceneImportPreview(IReadOnlyList<Room> MatchingRooms, IReadOnlyList<SceneImportObjectMatch> ObjectMatches, IReadOnlyList<SceneImportSelectableRecord> Transitions, IReadOnlyList<SceneImportSelectableRecord> Checks);
+public sealed record SceneImportRoom(Guid Id, string FriendlyName, string ReferenceId, string? InGameId, double? SceneUnitWidth, double? SceneUnitHeight);
+public sealed record SceneImportPreview(IReadOnlyList<SceneImportRoom> MatchingRooms, IReadOnlyList<SceneImportObjectMatch> ObjectMatches, IReadOnlyList<SceneImportSelectableRecord> Transitions, IReadOnlyList<SceneImportSelectableRecord> Checks, IReadOnlyList<SceneImportEnemyName> EnemyNames);
+public sealed record SceneImportEnemyName(Guid Id, string OutputValue, string Name);
 public sealed record SceneImportObjectMatch(Guid ObjectId, SceneDumpClassification Classification, string? GameId, IReadOnlyList<SceneImportRecordMatch> Matches);
 public sealed record SceneImportRecordMatch(Guid RecordId, Guid RoomId, SceneDumpClassification Classification);
 public sealed record SceneImportSelectableRecord(Guid Id, Guid RoomId, SceneDumpClassification Classification, string FriendlyName, string? InGameId);

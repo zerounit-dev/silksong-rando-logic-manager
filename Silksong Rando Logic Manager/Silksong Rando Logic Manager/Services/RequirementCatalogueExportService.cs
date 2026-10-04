@@ -12,6 +12,7 @@ public sealed class RequirementCatalogueExportService(IDbContextFactory<LogicDbC
     public async Task<RequirementCatalogueExportResult> ExportAsync(CancellationToken cancellationToken = default)
     {
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         var predicates = await db.RequirementPredicates.AsNoTracking().OrderBy(x => x.SortOrder).ThenBy(x => x.Id)
             .Select(x => new RequirementCatalogueExchangePredicate(x.Id, x.Name, x.Category, x.InputSyntax, x.OutputSyntax, x.Notes, x.SortOrder, x.Aliases))
             .ToListAsync(cancellationToken);
@@ -19,7 +20,14 @@ public sealed class RequirementCatalogueExportService(IDbContextFactory<LogicDbC
             .Select(x => new RequirementCatalogueExchangeItem(x.Id, x.Name, x.Category, x.OutputValue, x.Notes, x.SortOrder, x.Aliases))
             .ToListAsync(cancellationToken);
 
-        var document = new RequirementCatalogueExchangeDocument(1, predicates, items);
+        var countables = await db.RequirementCountables.AsNoTracking().OrderBy(x => x.SortOrder).ThenBy(x => x.Id)
+            .Select(x => new RequirementCatalogueExchangeItem(x.Id, x.Name, x.Category, x.OutputValue, x.Notes, x.SortOrder, x.Aliases))
+            .ToListAsync(cancellationToken);
+        var enemyTypes = await db.RequirementEnemyTypes.AsNoTracking().OrderBy(x => x.SortOrder).ThenBy(x => x.Id)
+            .Select(x => new RequirementCatalogueExchangeItem(x.Id, x.Name, x.Category, x.OutputValue, x.Notes, x.SortOrder, x.Aliases))
+            .ToListAsync(cancellationToken);
+
+        var document = new RequirementCatalogueExchangeDocument(2, predicates, items, countables, enemyTypes);
         var timestamp = timeProvider.GetUtcNow().ToString("yyyyMMdd-HHmmss-fff", CultureInfo.InvariantCulture);
         return new($"silksong-requirement-catalogue-{timestamp}.json", JsonSerializer.SerializeToUtf8Bytes(document, jsonOptions));
     }

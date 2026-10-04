@@ -142,6 +142,32 @@ namespace Silksong_Rando_Logic_Manager.Data.Migrations
                     b.ToTable("RequirementPredicates");
                 });
 
+            modelBuilder.Entity("Silksong_Rando_Logic_Manager.Data.RequirementCountable", b =>
+                {
+                    b.Property<Guid>("Id").ValueGeneratedOnAdd().HasColumnType("TEXT");
+                    b.Property<string>("Name").IsRequired().HasColumnType("TEXT");
+                    b.Property<string>("Category").HasColumnType("TEXT");
+                    b.Property<string>("OutputValue").IsRequired().HasColumnType("TEXT");
+                    b.Property<string>("Aliases").IsRequired().HasColumnType("TEXT");
+                    b.Property<string>("Notes").IsRequired().HasColumnType("TEXT");
+                    b.Property<int>("SortOrder").HasColumnType("INTEGER");
+                    b.HasKey("Id");
+                    b.ToTable("RequirementCountables");
+                });
+
+            modelBuilder.Entity("Silksong_Rando_Logic_Manager.Data.RequirementEnemyType", b =>
+                {
+                    b.Property<Guid>("Id").ValueGeneratedOnAdd().HasColumnType("TEXT");
+                    b.Property<string>("Name").IsRequired().HasColumnType("TEXT");
+                    b.Property<string>("Category").HasColumnType("TEXT");
+                    b.Property<string>("OutputValue").IsRequired().HasColumnType("TEXT");
+                    b.Property<string>("Aliases").IsRequired().HasColumnType("TEXT");
+                    b.Property<string>("Notes").IsRequired().HasColumnType("TEXT");
+                    b.Property<int>("SortOrder").HasColumnType("INTEGER");
+                    b.HasKey("Id");
+                    b.ToTable("RequirementEnemyTypes");
+                });
+
             modelBuilder.Entity("Silksong_Rando_Logic_Manager.Data.Map", b =>
                 {
                     b.Property<Guid>("Id")
@@ -533,6 +559,11 @@ namespace Silksong_Rando_Logic_Manager.Data.Migrations
 
                     b.Property<Guid?>("ResolvedDestinationTransitionId")
                         .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsUnsafeArrival")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(false);
 
                     b.Property<Guid?>("ResolvedSourceSubroomId")
                         .HasColumnType("TEXT");

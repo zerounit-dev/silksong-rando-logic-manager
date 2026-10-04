@@ -10,6 +10,8 @@ public sealed class RoomTransition : ArchivableEntity
 
     public string? InGameId { get; set; }
 
+    public bool IsUnsafeArrival { get; set; } = false;
+
     public double? InGamePositionX { get; set; }
 
     public double? InGamePositionY { get; set; }

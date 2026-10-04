@@ -59,6 +59,7 @@ public sealed record RoomReminderFooterView(string Prose);
 public sealed record RoomContextPresentationView(bool IsMapVisible);
 /// <summary>Typed, non-durable page-modal content contracts. The page host is closed unless content is supplied by a later workflow.</summary>
 public abstract record V2PageModalContentView;
+public sealed record V2CheckRoomReloadView : V2PageModalContentView;
 public sealed record V2ReferenceUpdateProposalView(string SourceKind, string SourceFriendlyName, string NewReferenceId) : V2PageModalContentView;
 public sealed record V2InverseSetupProposalView(string SourceFriendlyName, string TargetFriendlyName,
     string? SourceRoomReferenceId = null, string? SourceAlias = null,
@@ -133,7 +134,8 @@ public enum V2SubroomCommandStatus { Committed, Unchanged, Conflict, Missing, Pr
 public sealed record V2SubroomCommandOutcome(V2SubroomCommandStatus Status, string? Message = null,
     SubroomDurableBaseline? FreshBaseline = null, SubroomDraft? RetainedDraft = null, Guid? CreatedEntityId = null,
     TimeSpan ResolverElapsed = default, SubroomReferenceRenameProposal? Proposal = null,
-    V2AnnotationRefreshImpact AnnotationRefreshImpact = V2AnnotationRefreshImpact.None);
+    V2AnnotationRefreshImpact AnnotationRefreshImpact = V2AnnotationRefreshImpact.None,
+    bool RequiresRoomReload = false, bool PresentationRefreshed = false);
 public sealed record TransitionRowView(Guid EntityId, int SortOrder, bool IsArchived, DateTime UpdatedUtc,
     bool? RequirementsParseSucceeded,
     string Alias, string FriendlyName, string? SourceSubroomReferenceText, string? DestinationRoomReferenceText,
@@ -144,7 +146,7 @@ public sealed record TransitionRowView(Guid EntityId, int SortOrder, bool IsArch
     V2Severity SourceReferenceSeverity, V2Severity DestinationRoomSeverity, V2Severity DestinationAliasSeverity,
     V2Severity RequirementsSeverity, V2Severity InGameIdSeverity, V2ReferenceState SourceReferenceState,
     V2ReferenceState DestinationRoomState, V2ReferenceState DestinationAliasState, V2InverseState InverseState,
-    bool EnableAnnotation = false, bool CanExplicitInverseSetup = false,
+    bool IsUnsafeArrival, bool EnableAnnotation = false, bool CanExplicitInverseSetup = false,
     Guid? ResolvedInverseRoomId = null);
 public sealed record TransitionTableView(IReadOnlyList<TransitionRowView> ActiveRows, IReadOnlyList<TransitionRowView> ArchivedRows,
     IReadOnlyList<string> RoomReferenceSuggestions,
@@ -160,12 +162,12 @@ public sealed record TransitionDurableBaseline(Guid EntityId, DateTime UpdatedUt
     double? InGamePositionZ, double? LocalPositionX, double? LocalPositionY, double? LocalPositionZ,
     double? AnnotationSceneUnitX, double? AnnotationSceneUnitY, string? SourceSubroomReferenceText,
     string? DestinationRoomReferenceText, string? DestinationTransitionAliasText, string Requirements,
-    string Notes, bool IsTodo, bool? IsVerified, bool EnableAnnotation = false);
+    string Notes, bool IsTodo, bool? IsVerified, bool IsUnsafeArrival, bool EnableAnnotation = false);
 public sealed record TransitionDraft(Guid ClientDraftId, string Alias, string FriendlyName, string? InGameId,
     double? InGamePositionX, double? InGamePositionY, double? InGamePositionZ, double? LocalPositionX,
     double? LocalPositionY, double? LocalPositionZ, double? AnnotationSceneUnitX, double? AnnotationSceneUnitY,
     string? SourceSubroomReferenceText, string? DestinationRoomReferenceText, string? DestinationTransitionAliasText,
-    string Requirements, string Notes, bool IsTodo, bool? IsVerified);
+    string Requirements, string Notes, bool IsTodo, bool? IsVerified, bool IsUnsafeArrival);
 public enum V2TransitionCommandStatus { Committed, Unchanged, Conflict, Missing, Proposal, ExpectedFailure, Unexpected }
 /// <summary>Required V2 post-command scene work; annotation mutations affect canvas and viewport only.</summary>
 public enum V2AnnotationRefreshImpact { None, CanvasAndViewport }
@@ -189,7 +191,8 @@ public sealed record V2TransitionCommandOutcome(V2TransitionCommandStatus Status
     Guid? CreatedEntityId = null, TransitionInverseProposal? Proposal = null,
     TransitionInverseCreateProposal? CreateProposal = null, TimeSpan ResolverElapsed = default,
     V2AnnotationRefreshImpact AnnotationRefreshImpact = V2AnnotationRefreshImpact.None,
-    V2AnnotationPostRefreshSelection? PostRefreshSelection = null);
+    V2AnnotationPostRefreshSelection? PostRefreshSelection = null,
+    bool RequiresRoomReload = false, bool PresentationRefreshed = false);
 public enum V2ModalFocusOutcome { Initiator, PendingTarget, Correction }
 public sealed record V2ModalFocusRoute(string InitiatorId, string? PendingTargetId, V2ModalFocusOutcome Outcome)
 {
@@ -247,7 +250,11 @@ public sealed record ConnectionRowView(Guid EntityId, int SortOrder, bool IsArch
     V2Severity NoSubroomSeverity, V2ReferenceState SourceReferenceState, V2ReferenceState DestinationReferenceState,
     string PathwayState, bool CanScaffoldInverse, bool CanPlaceAnnotation = false, bool CanRemoveAnnotation = false,
     bool HasCompleteAnnotationCoordinates = false, double? DurableSceneUnitX = null,
-    double? DurableSceneUnitY = null);
+    double? DurableSceneUnitY = null, bool EffectiveEnableAnnotation = false)
+{
+    /// <summary>Presentation identity only; never part of an editable baseline or draft.</summary>
+    public Guid? AnnotationMarkerEntityId { get; init; }
+}
 public sealed record ConnectionTableView(IReadOnlyList<ConnectionRowView> activeRows, IReadOnlyList<ConnectionRowView> archivedRows,
     IReadOnlyList<string> SubroomReferenceSuggestions)
 {
@@ -288,7 +295,8 @@ public sealed record V2ConnectionCommandOutcome(V2ConnectionCommandStatus Status
     ConnectionDurableBaseline? FreshBaseline = null, ConnectionDraft? RetainedDraft = null,
     Guid? CreatedEntityId = null, TimeSpan ResolverElapsed = default,
     V2AnnotationRefreshImpact AnnotationRefreshImpact = V2AnnotationRefreshImpact.None,
-    V2AnnotationPostRefreshSelection? PostRefreshSelection = null);
+    V2AnnotationPostRefreshSelection? PostRefreshSelection = null,
+    bool RequiresRoomReload = false, bool PresentationRefreshed = false);
 public sealed record CheckRowView(Guid EntityId, int SortOrder, bool IsArchived, DateTime UpdatedUtc,
     bool? RequirementsParseSucceeded,
     string FriendlyName, string? SubroomReferenceText, string Requirements, string Notes, string? LocationType,
@@ -297,8 +305,13 @@ public sealed record CheckRowView(Guid EntityId, int SortOrder, bool IsArchived,
     double? InGamePositionZ, double? LocalPositionX, double? LocalPositionY, double? LocalPositionZ,
     double? AnnotationSceneUnitX, double? AnnotationSceneUnitY, bool EnableAnnotation, V2Severity FriendlyNameSeverity,
     V2Severity SubroomReferenceSeverity, V2Severity RequirementsSeverity, V2Severity InGameIdSeverity,
-    V2Severity PositionSeverity, V2Severity LocationTypeSeverity, V2ReferenceState SubroomReferenceState);
-public sealed record CheckTableView(IReadOnlyList<CheckRowView> ActiveRows, IReadOnlyList<CheckRowView> ArchivedRows,
+    V2Severity PositionSeverity, V2Severity LocationTypeSeverity, V2ReferenceState SubroomReferenceState)
+{
+    public bool IsEnemy { get; init; }
+}
+public sealed record CheckLocationsTableView(IReadOnlyList<CheckRowView> ActiveRows, IReadOnlyList<CheckRowView> ArchivedRows,
+    IReadOnlyList<string> SubroomReferenceSuggestions, IReadOnlyList<CheckLocationTypeDefinition> LocationTypes);
+public sealed record EnemiesTableView(IReadOnlyList<CheckRowView> ActiveRows, IReadOnlyList<CheckRowView> ArchivedRows,
     IReadOnlyList<string> SubroomReferenceSuggestions, IReadOnlyList<CheckLocationTypeDefinition> LocationTypes);
 /// <summary>Read-only scene projection. Coordinates remain lower-left/y-up scene units.</summary>
 public sealed record SceneImageDisplayView(bool HasTransform, bool IsStale, bool ImageExists, long ImageVersion = 0)
@@ -311,7 +324,10 @@ public sealed record SceneLayoutView(bool HasValidBounds, double? SceneUnitWidth
     public IReadOnlyList<SceneRelationshipThreadView> RelationshipThreads => Threads ?? [];
 }
 public sealed record SceneSubroomFrameView(Guid EntityId, string Label, string? Title, double X, double Y, double Width, double Height);
-public sealed record SceneMarkerView(Guid EntityId, string Kind, string Label, string? Title, double X, double Y);
+public sealed record SceneMarkerView(Guid EntityId, string Kind, string Label, string? Title, double X, double Y)
+{
+    public bool IsEnemy { get; init; }
+}
 /// <summary>Resolved-ID-only live-canvas relationship with complete renderable endpoint geometry.</summary>
 public sealed record SceneRelationshipThreadView(Guid MarkerEntityId, Guid FrameEntityId, double MarkerX, double MarkerY,
     double FrameX, double FrameY, double FrameWidth, double FrameHeight);
@@ -341,14 +357,17 @@ public sealed record V2CheckCommandOutcome(V2CheckCommandStatus Status, string? 
     CheckDurableBaseline? FreshBaseline = null, CheckDraft? RetainedDraft = null, Guid? CreatedEntityId = null,
     TimeSpan ResolverElapsed = default,
     V2AnnotationRefreshImpact AnnotationRefreshImpact = V2AnnotationRefreshImpact.None,
-    V2AnnotationPostRefreshSelection? PostRefreshSelection = null);
+    V2AnnotationPostRefreshSelection? PostRefreshSelection = null,
+    bool? CommittedIsEnemy = null,
+    bool RequiresRoomReload = false,
+    bool PresentationRefreshed = false);
 public sealed record RoomEditorV2View(RoomHeaderView Header, SubroomTableView Subrooms, TransitionTableView Transitions,
-    ConnectionTableView Connections, CheckTableView Checks)
+    ConnectionTableView Connections, CheckLocationsTableView CheckLocations, EnemiesTableView Enemies)
 {
     /// <summary>Loaded independently by the Phase-4 scene loader; never contains persistence entities.</summary>
     public SceneLayoutView? Scene { get; init; }
     /// <summary>Read-only browser parser context; multiplicity is intentionally retained.</summary>
-    public RequirementsParserContextView RequirementsParserContext { get; init; } = new([], [], [], []);
+    public RequirementsParserContextView RequirementsParserContext { get; init; } = new([], [], [], [], [], []);
 }
 public sealed record RequirementsParserRoomView(Guid RoomId, string ReferenceId);
 public sealed record RequirementsParserCheckView(Guid RoomId, string FriendlyName);
@@ -359,4 +378,9 @@ public sealed record RequirementsParserItemView(IReadOnlyList<string> Aliases);
 public sealed record RequirementsParserContextView(IReadOnlyList<RequirementsParserRoomView> Rooms,
     IReadOnlyList<RequirementsParserCheckView> Checks,
     IReadOnlyList<RequirementsParserPredicateView> Predicates,
-    IReadOnlyList<RequirementsParserItemView> Items);
+    IReadOnlyList<RequirementsParserItemView> Items,
+    IReadOnlyList<RequirementsParserCountableView> Countables,
+    IReadOnlyList<RequirementsParserEnemyView> Enemies);
+
+public sealed record RequirementsParserCountableView(IReadOnlyList<string> Aliases);
+public sealed record RequirementsParserEnemyView(IReadOnlyList<string> Aliases);

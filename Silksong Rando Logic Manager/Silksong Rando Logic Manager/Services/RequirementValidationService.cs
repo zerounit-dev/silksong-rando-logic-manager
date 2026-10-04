@@ -50,6 +50,8 @@ public sealed class RequirementValidationService(
         {
             var predicates = await LoadPredicatesAsync(db, cancellationToken);
             var items = await LoadItemsAsync(db, cancellationToken);
+            var countables = await LoadCountablesAsync(db, cancellationToken);
+            var enemies = await LoadEnemiesAsync(db, cancellationToken);
             var rooms = await db.Rooms.AsNoTracking().Where(row => !row.IsArchived)
                 .Select(row => new RequirementValidationRoom(row.Id, row.ReferenceId)).ToListAsync(cancellationToken);
             var activeRoomIds = rooms.Select(row => row.Id).ToArray();
@@ -57,7 +59,7 @@ public sealed class RequirementValidationService(
             var transitions = await db.RoomTransitions.Where(row => !row.IsArchived && activeRoomIds.Contains(row.RoomId)).ToListAsync(cancellationToken);
             var connections = await db.SubroomConnections.Where(row => !row.IsArchived && activeRoomIds.Contains(row.RoomId)).ToListAsync(cancellationToken);
             var context = new RequirementValidationContext(predicates, items, rooms,
-                checks.Select(row => new RequirementValidationCheck(row.Id, row.RoomId, row.FriendlyName)).ToArray());
+                checks.Select(row => new RequirementValidationCheck(row.Id, row.RoomId, row.FriendlyName)).ToArray(), countables, enemies);
 
             var results = new List<RequirementValidationRowResult>(transitions.Count + connections.Count + checks.Count);
             foreach (var row in transitions)
@@ -156,11 +158,13 @@ public sealed class RequirementValidationService(
     {
         var predicates = await LoadPredicatesAsync(db, cancellationToken);
         var items = await LoadItemsAsync(db, cancellationToken);
+        var countables = await LoadCountablesAsync(db, cancellationToken);
+        var enemies = await LoadEnemiesAsync(db, cancellationToken);
         var rooms = await db.Rooms.AsNoTracking().Where(row => !row.IsArchived)
             .Select(row => new RequirementValidationRoom(row.Id, row.ReferenceId)).ToListAsync(cancellationToken);
         var checks = await db.CheckLocations.AsNoTracking().Where(row => !row.IsArchived && !row.Room.IsArchived)
             .Select(row => new RequirementValidationCheck(row.Id, row.RoomId, row.FriendlyName)).ToListAsync(cancellationToken);
-        return new(predicates, items, rooms, checks);
+        return new(predicates, items, rooms, checks, countables, enemies);
     }
 
     internal bool? ValidateSafely(RequirementValidationContext context, Guid roomId, Guid rowId,
@@ -191,6 +195,14 @@ public sealed class RequirementValidationService(
     private static RequirementValidationPreflightResult CreateResult(IReadOnlyList<RequirementValidationRowResult> rows) =>
         new(rows, rows.Count(row => row.Succeeded == true), rows.Count(row => row.Succeeded == false), rows.Count(row => row.Succeeded is null));
 
+    private static Task<List<RequirementValidationItem>> LoadCountablesAsync(LogicDbContext db, CancellationToken token) =>
+        db.RequirementCountables.AsNoTracking().OrderBy(row => row.SortOrder).ThenBy(row => row.Id)
+            .Select(row => new RequirementValidationItem(row.Id, row.Aliases)).ToListAsync(token);
+
+    private static Task<List<RequirementValidationItem>> LoadEnemiesAsync(LogicDbContext db, CancellationToken token) =>
+        db.RequirementEnemyTypes.AsNoTracking().OrderBy(row => row.SortOrder).ThenBy(row => row.Id)
+            .Select(row => new RequirementValidationItem(row.Id, row.Aliases)).ToListAsync(token);
+
     private static string? ClassifySqlite(Exception exception)
     {
         var sqlite = exception as SqliteException ?? exception.InnerException as SqliteException;
@@ -215,15 +227,19 @@ internal sealed class RequirementValidationContext
         IEnumerable<RequirementValidationPredicate> predicates,
         IEnumerable<RequirementValidationItem> items,
         IEnumerable<RequirementValidationRoom> rooms,
-        IEnumerable<RequirementValidationCheck> checks)
+        IEnumerable<RequirementValidationCheck> checks,
+        IEnumerable<RequirementValidationItem> countables,
+        IEnumerable<RequirementValidationItem> enemies)
     {
         Predicates = predicates.ToImmutableArray();
         Items = items.ToImmutableArray();
         Rooms = rooms.ToImmutableArray();
         Checks = checks.ToImmutableArray();
+        Countables = countables.ToImmutableArray();
+        Enemies = enemies.ToImmutableArray();
         try
         {
-            Prepared = ManagedRequirementValidator.Prepare(Predicates, Items, Rooms, Checks);
+            Prepared = ManagedRequirementValidator.Prepare(Predicates, Items, Rooms, Checks, Countables, Enemies);
         }
         catch (Exception exception)
         {
@@ -235,6 +251,8 @@ internal sealed class RequirementValidationContext
     internal ImmutableArray<RequirementValidationItem> Items { get; }
     internal ImmutableArray<RequirementValidationRoom> Rooms { get; }
     internal ImmutableArray<RequirementValidationCheck> Checks { get; }
+    internal ImmutableArray<RequirementValidationItem> Countables { get; }
+    internal ImmutableArray<RequirementValidationItem> Enemies { get; }
     private ManagedRequirementValidator.PreparedContext? Prepared { get; }
     private ExceptionDispatchInfo? PreparationFailure { get; }
 
@@ -257,7 +275,9 @@ internal static class ManagedRequirementValidator
         ImmutableArray<RequirementValidationPredicate> predicateRows,
         ImmutableArray<RequirementValidationItem> itemRows,
         ImmutableArray<RequirementValidationRoom> rooms,
-        ImmutableArray<RequirementValidationCheck> checks)
+        ImmutableArray<RequirementValidationCheck> checks,
+        ImmutableArray<RequirementValidationItem> countableRows,
+        ImmutableArray<RequirementValidationItem> enemyRows)
     {
         var predicates = predicateRows.SelectMany(predicate =>
         {
@@ -277,7 +297,21 @@ internal static class ManagedRequirementValidator
         }).ToImmutableArray();
         EnsureUnique(predicates.Select(value => value.NormalizedAlias), "predicate");
         EnsureUnique(items, "item");
-        return new(predicates, items, rooms, checks);
+        var countables = PrepareTypedAliases(countableRows, "countable");
+        var enemies = PrepareTypedAliases(enemyRows, "enemy type");
+        return new(predicates, items, rooms, checks, countables, enemies);
+    }
+
+    private static ImmutableArray<string> PrepareTypedAliases(ImmutableArray<RequirementValidationItem> rows, string kind)
+    {
+        var prepared = rows.SelectMany(row =>
+        {
+            if (!RequirementCatalogueLanguage.TryCanonicalizeAliases(row.Aliases, out var canonical, out var aliases, out _) || canonical != row.Aliases)
+                throw new InvalidOperationException($"Requirement {kind} {row.Id} has invalid or noncanonical aliases.");
+            return aliases.Select(RequirementCatalogueLanguage.NormalizeIdentification);
+        }).ToImmutableArray();
+        EnsureUnique(prepared, kind);
+        return prepared;
     }
 
     private static void EnsureUnique(IEnumerable<string> aliases, string kind)
@@ -292,7 +326,9 @@ internal static class ManagedRequirementValidator
         ImmutableArray<PreparedPredicate> Predicates,
         ImmutableArray<string> Items,
         ImmutableArray<RequirementValidationRoom> Rooms,
-        ImmutableArray<RequirementValidationCheck> Checks);
+        ImmutableArray<RequirementValidationCheck> Checks,
+        ImmutableArray<string> Countables,
+        ImmutableArray<string> Enemies);
 
     private sealed class Parser(string source, Guid owningRoomId, PreparedContext context)
     {
@@ -393,6 +429,22 @@ internal static class ManagedRequirementValidator
                     case RequirementInputSyntax.PredicateThenCheck:
                         var prefix = PrefixLength(text, predicate.Alias);
                         if (prefix >= 0 && TryDependency(text[prefix..], owningRoomId, out var resolved)) candidates.Add(resolved);
+                        break;
+                    case RequirementInputSyntax.RequiredDifficultyThenPredicateThenEnemy:
+                        var split = normalized.IndexOf(' ');
+                        if (split > 0 && Difficulties.Contains(normalized[..split]) &&
+                            TryRemainder(normalized[(split + 1)..], predicate.NormalizedAlias, out var enemy))
+                            candidates.AddRange(context.Enemies.Where(alias => alias == enemy).Select(_ => true));
+                        break;
+                    case RequirementInputSyntax.PredicateThenQuantityThenCountable:
+                        var countPrefix = PrefixLength(text, predicate.Alias);
+                        if (countPrefix >= 0 && RequirementTypedQuantity.TryRead(text[countPrefix..], out _, out var countable))
+                            candidates.AddRange(context.Countables.Where(alias => alias == RequirementCatalogueLanguage.NormalizeIdentification(countable)).Select(_ => true));
+                        break;
+                    case RequirementInputSyntax.PredicateThenCountableThenQuantity:
+                        var countableFirstPrefix = PrefixLength(text, predicate.Alias);
+                        if (countableFirstPrefix >= 0 && RequirementTypedQuantity.TryReadLast(text[countableFirstPrefix..], out _, out var countableFirst))
+                            candidates.AddRange(context.Countables.Where(alias => alias == RequirementCatalogueLanguage.NormalizeIdentification(countableFirst)).Select(_ => true));
                         break;
                     default:
                         throw new ArgumentOutOfRangeException();

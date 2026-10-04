@@ -8,6 +8,8 @@
         <button id="requirement-syntax-guide-tab-location-types" type="button" role="tab" aria-selected="@(tab == GuideTab.LocationTypes)" aria-controls="requirement-syntax-guide-content" class="@(tab == GuideTab.LocationTypes ? "selected" : null)" @onclick="() => tab = GuideTab.LocationTypes">Location types</button>
         <button id="requirement-syntax-guide-tab-requirement-types" type="button" role="tab" aria-selected="@(tab == GuideTab.RequirementTypes)" aria-controls="requirement-syntax-guide-content" class="@(tab == GuideTab.RequirementTypes ? "selected" : null)" @onclick="() => tab = GuideTab.RequirementTypes">Requirement types</button>
         <button id="requirement-syntax-guide-tab-items" type="button" role="tab" aria-selected="@(tab == GuideTab.Items)" aria-controls="requirement-syntax-guide-content" class="@(tab == GuideTab.Items ? "selected" : null)" @onclick="() => tab = GuideTab.Items">Items</button>
+        <button id="requirement-syntax-guide-tab-countables" type="button" role="tab" aria-selected="@(tab == GuideTab.Countables)" aria-controls="requirement-syntax-guide-content" class="@(tab == GuideTab.Countables ? "selected" : null)" @onclick="() => tab = GuideTab.Countables">Countables</button>
+        <button id="requirement-syntax-guide-tab-enemy-types" type="button" role="tab" aria-selected="@(tab == GuideTab.EnemyTypes)" aria-controls="requirement-syntax-guide-content" class="@(tab == GuideTab.EnemyTypes ? "selected" : null)" @onclick="() => tab = GuideTab.EnemyTypes">Enemy Types</button>
     </div>
     <div id="requirement-syntax-guide-content" class="requirement-syntax-guide-content" role="tabpanel" aria-labelledby="@ActiveTabId">
         @if (tab == GuideTab.HowToWrite)
@@ -16,7 +18,7 @@
                 <section>
                     <h3>Write a requirement</h3>
                     <p>A requirement is a recognized phrase such as <code><span class="guide-token-requirement">dash</span></code>, <code><span class="guide-token-requirement">break vines</span> <span class="guide-token-direction">left</span></code>, or <code><span class="guide-token-difficulty">hard</span> <span class="guide-token-requirement">spike pogo</span></code>.</p>
-                    <p>The Requirement types view shows each accepted pattern. Words in braces are replaced with the described value, and <code>?</code> marks an optional value. Requirement types and Items are the current accepted vocabulary.</p>
+                    <p>The Requirement types view shows each accepted pattern. Words in braces are replaced with the described value, and <code>?</code> marks an optional value. Requirement types, Items, Countables, and Enemy Types are the current accepted vocabulary.</p>
                     <p>Use <code><span class="guide-token-requirement">none</span></code> when nothing is required. Use <code><span class="guide-token-requirement">invalid</span></code> when the requirement can never be met.</p>
                 </section>
                 <section>
@@ -33,9 +35,21 @@
                     <p>The only <span class="guide-token-direction">direction</span> values are <code class="guide-token-direction">left</code>, <code class="guide-token-direction">right</code>, <code class="guide-token-direction">up</code>, and <code class="guide-token-direction">down</code>. A <span class="guide-token-direction">direction</span> follows the requirement type: <code><span class="guide-token-requirement">break vines</span> <span class="guide-token-direction">{direction}</span></code>. Examples are <code><span class="guide-token-requirement">break vines</span> <span class="guide-token-direction">left</span></code> and <code><span class="guide-token-requirement">open airlock</span> <span class="guide-token-direction">right</span></code>.</p>
                 </section>
                 <section>
-                    <h3>Require an item or amount</h3>
-                    <p>Use <code><span class="guide-token-requirement">have</span> <span class="guide-token-item">{item}</span></code> for <span class="guide-token-item">item</span> ownership, for example <code><span class="guide-token-requirement">have</span> <span class="guide-token-item">curveclaw</span></code>. <span class="guide-token-amount">Amount</span> requirements use their own requirement type followed by a positive whole number, such as <code><span class="guide-token-requirement">mossberries</span> <span class="guide-token-amount">5</span></code> and <code><span class="guide-token-requirement">tool slots unlocked</span> <span class="guide-token-amount">2</span></code>. Do not use <code><span class="guide-token-requirement">have</span></code> for an <span class="guide-token-amount">amount</span> unless that exact requirement type exists in the managed catalogue.</p>
+                    <h3>Require an amount</h3>
+                    <p>Some requirements take a number directly, such as <code><span class="guide-token-requirement">clawline x</span> <span class="guide-token-amount">2</span></code>, <code><span class="guide-token-requirement">sharpdart x</span> <span class="guide-token-amount">3</span></code>, or <code><span class="guide-token-requirement">silkhearts x</span> <span class="guide-token-amount">2</span></code>.</p>
+                </section>
+                <section>
+                    <h3>Require an item</h3>
+                    <p>Use <code><span class="guide-token-requirement">have</span> <span class="guide-token-item">{item}</span></code> for <span class="guide-token-item">item</span> ownership, for example <code><span class="guide-token-requirement">have</span> <span class="guide-token-item">curveclaw</span></code>.</p>
                     <p><code><span class="guide-token-requirement">scuttlebrace</span></code> means the player can perform the movement technique: owning <span class="guide-token-item">Scuttlebrace</span>, having <span class="guide-token-requirement">Dash</span>, and having an available <span class="guide-token-item">yellow tool slot</span> to equip it. <code><span class="guide-token-requirement">have</span> <span class="guide-token-item">scuttlebrace</span></code> means ownership only; it does not by itself require Dash, an available slot, or the ability to use the technique.</p>
+                </section>
+                <section>
+                    <h3>Require a countable</h3>
+                    <p>Use an amount with a <span class="guide-token-countable">countable name</span>, for example <code><span class="guide-token-requirement">get</span> <span class="guide-token-amount">5</span> <span class="guide-token-countable">mossberries</span></code>, <code><span class="guide-token-requirement">at least</span> <span class="guide-token-amount">2</span> <span class="guide-token-countable">tool slots unlocked</span></code>, or <code><span class="guide-token-requirement">spend</span> <span class="guide-token-amount">20</span> <span class="guide-token-countable">rosaries</span></code>.</p>
+                </section>
+                <section>
+                    <h3>Require an enemy type</h3>
+                    <p>Replace <code class="guide-token-enemy">{enemy}</code> with an <span class="guide-token-enemy">enemy name</span>, such as <code class="guide-token-enemy">Mossgrub</code>.</p>
                 </section>
                 <section>
                     <h3>Refer to another check</h3>
@@ -76,7 +90,7 @@
         else if (tab == GuideTab.RequirementTypes)
         {
             <label class="requirement-syntax-guide-search">search <input aria-label="Search requirement types" @bind="predicateSearch" @bind:event="oninput" /></label>
-            <table class="requirement-syntax-guide-table requirement-syntax-guide-reference"><thead><tr><th class="requirement-syntax-guide-requirement-type-pattern">How to write it</th><th>Other accepted names</th><th>Notes</th></tr></thead><tbody>
+            <table class="requirement-syntax-guide-table requirement-syntax-guide-reference requirement-syntax-guide-notes-reference"><colgroup><col /><col /><col class="requirement-syntax-guide-notes-column" /></colgroup><thead><tr><th class="requirement-syntax-guide-requirement-type-pattern">How to write it</th><th>Other accepted names</th><th>Notes</th></tr></thead><tbody>
             @foreach (var group in PredicateGroups)
             {
                 @if (group.Category is not null) { <tr class="requirement-syntax-guide-category"><th colspan="3">@group.Category</th></tr> }
@@ -88,10 +102,10 @@
             }
             </tbody></table>
         }
-        else
+        else if (tab == GuideTab.Items)
         {
             <label class="requirement-syntax-guide-search">search <input aria-label="Search items" @bind="itemSearch" @bind:event="oninput" /></label>
-            <table class="requirement-syntax-guide-table requirement-syntax-guide-reference"><thead><tr><th>Item name</th><th>Other accepted names</th><th>Notes</th></tr></thead><tbody>
+            <table class="requirement-syntax-guide-table requirement-syntax-guide-reference requirement-syntax-guide-notes-reference"><colgroup><col /><col /><col class="requirement-syntax-guide-notes-column" /></colgroup><thead><tr><th>Item name</th><th>Other accepted names</th><th>Notes</th></tr></thead><tbody>
             @foreach (var group in ItemGroups)
             {
                 @if (group.Category is not null) { <tr class="requirement-syntax-guide-category"><th colspan="3">@group.Category</th></tr> }
@@ -103,31 +117,67 @@
             }
             </tbody></table>
         }
+        else if (tab == GuideTab.Countables)
+        {
+            <label class="requirement-syntax-guide-search">search <input aria-label="Search countables" @bind="countableSearch" @bind:event="oninput" /></label>
+            <table class="requirement-syntax-guide-table requirement-syntax-guide-reference requirement-syntax-guide-notes-reference"><colgroup><col /><col /><col class="requirement-syntax-guide-notes-column" /></colgroup><thead><tr><th>Countable name</th><th>Other accepted names</th><th>Notes</th></tr></thead><tbody>
+            @foreach (var group in CountableGroups)
+            {
+                @if (group.Category is not null) { <tr class="requirement-syntax-guide-category"><th colspan="3">@group.Category</th></tr> }
+                @foreach (var countable in group.Rows)
+                {
+                    var aliases = countable.ParsedAliases;
+                    <tr class="requirement-syntax-guide-reference-row"><td class="guide-token-countable">@aliases[0]</td><td class="guide-token-countable">@string.Join(", ", aliases.Skip(1))</td><td class="guide-token-note">@countable.Notes</td></tr>
+                }
+            }
+            </tbody></table>
+        }
+        else if (tab == GuideTab.EnemyTypes)
+        {
+            <label class="requirement-syntax-guide-search">search <input aria-label="Search enemy types" @bind="enemyTypeSearch" @bind:event="oninput" /></label>
+            <table class="requirement-syntax-guide-table requirement-syntax-guide-reference requirement-syntax-guide-notes-reference"><colgroup><col /><col /><col class="requirement-syntax-guide-notes-column" /></colgroup><thead><tr><th>Enemy type name</th><th>Other accepted names</th><th>Notes</th></tr></thead><tbody>
+            @foreach (var group in EnemyTypeGroups)
+            {
+                @if (group.Category is not null) { <tr class="requirement-syntax-guide-category"><th colspan="3">@group.Category</th></tr> }
+                @foreach (var enemyType in group.Rows)
+                {
+                    var aliases = enemyType.ParsedAliases;
+                    <tr class="requirement-syntax-guide-reference-row"><td class="guide-token-enemy">@aliases[0]</td><td class="guide-token-enemy">@string.Join(", ", aliases.Skip(1))</td><td class="guide-token-note">@enemyType.Notes</td></tr>
+                }
+            }
+            </tbody></table>
+        }
     </div>
     <div class="requirement-catalogue-modal-footer requirement-syntax-guide-footer"><div class="requirement-catalogue-modal-alternatives"><button type="button" class="catalogue-modal-action catalogue-modal-alternative" @onclick="Manage">manage requirement catalogue</button></div><div class="requirement-catalogue-modal-commit-group"><button type="button" class="catalogue-modal-action catalogue-modal-close" @onclick="Close">close</button></div></div>
 </section>
 
 @code {
-    private enum GuideTab { HowToWrite, LocationTypes, RequirementTypes, Items }
+    private enum GuideTab { HowToWrite, LocationTypes, RequirementTypes, Items, Countables, EnemyTypes }
     private sealed record PredicateGroup(string? Category, IReadOnlyList<RequirementPredicateReferenceView> Rows);
     private sealed record ItemGroup(string? Category, IReadOnlyList<RequirementItemReferenceView> Rows);
+    private sealed record CountableGroup(string? Category, IReadOnlyList<RequirementCountableReferenceView> Rows);
+    private sealed record EnemyTypeGroup(string? Category, IReadOnlyList<RequirementEnemyTypeReferenceView> Rows);
 
     [Parameter, EditorRequired] public RequirementCatalogueReferenceView Reference { get; set; } = null!;
     [Parameter] public EventCallback Manage { get; set; }
     [Parameter] public EventCallback Close { get; set; }
 
     private GuideTab tab;
-    private string predicateSearch = "", itemSearch = "";
+    private string predicateSearch = "", itemSearch = "", countableSearch = "", enemyTypeSearch = "";
     private string ActiveTabId => tab switch
     {
         GuideTab.HowToWrite => "requirement-syntax-guide-tab-how-to-write",
         GuideTab.LocationTypes => "requirement-syntax-guide-tab-location-types",
         GuideTab.RequirementTypes => "requirement-syntax-guide-tab-requirement-types",
-        _ => "requirement-syntax-guide-tab-items"
+        GuideTab.Items => "requirement-syntax-guide-tab-items",
+        GuideTab.Countables => "requirement-syntax-guide-tab-countables",
+        _ => "requirement-syntax-guide-tab-enemy-types"
     };
 
     private IReadOnlyList<PredicateGroup> PredicateGroups => GroupPredicates(Reference.Predicates, predicateSearch);
     private IReadOnlyList<ItemGroup> ItemGroups => GroupItems(Reference.Items, itemSearch);
+    private IReadOnlyList<CountableGroup> CountableGroups => GroupCountables(Reference.Countables, countableSearch);
+    private IReadOnlyList<EnemyTypeGroup> EnemyTypeGroups => GroupEnemyTypes(Reference.EnemyTypes, enemyTypeSearch);
 
     private static IReadOnlyList<PredicateGroup> GroupPredicates(IReadOnlyList<RequirementPredicateReferenceView> rows, string search)
     {
@@ -155,6 +205,38 @@
     }
 
     private static void AddItemGroup(List<ItemGroup> groups, string? category, IEnumerable<RequirementItemReferenceView> candidates, string search)
+    {
+        var matches = candidates.Where(x => Matches(search, x.Name, x.Category, x.Aliases)).ToArray();
+        if (matches.Length > 0)
+            groups.Add(new(category, matches));
+    }
+
+    private static IReadOnlyList<CountableGroup> GroupCountables(IReadOnlyList<RequirementCountableReferenceView> rows, string search)
+    {
+        var groups = new List<CountableGroup>();
+        AddCountableGroup(groups, null, rows.Where(x => string.IsNullOrWhiteSpace(x.Category)), search);
+        foreach (var category in rows.Where(x => !string.IsNullOrWhiteSpace(x.Category)).Select(x => x.Category!).Distinct(StringComparer.Ordinal))
+            AddCountableGroup(groups, category, rows.Where(x => string.Equals(x.Category, category, StringComparison.Ordinal)), search);
+        return groups;
+    }
+
+    private static void AddCountableGroup(List<CountableGroup> groups, string? category, IEnumerable<RequirementCountableReferenceView> candidates, string search)
+    {
+        var matches = candidates.Where(x => Matches(search, x.Name, x.Category, x.Aliases)).ToArray();
+        if (matches.Length > 0)
+            groups.Add(new(category, matches));
+    }
+
+    private static IReadOnlyList<EnemyTypeGroup> GroupEnemyTypes(IReadOnlyList<RequirementEnemyTypeReferenceView> rows, string search)
+    {
+        var groups = new List<EnemyTypeGroup>();
+        AddEnemyTypeGroup(groups, null, rows.Where(x => string.IsNullOrWhiteSpace(x.Category)), search);
+        foreach (var category in rows.Where(x => !string.IsNullOrWhiteSpace(x.Category)).Select(x => x.Category!).Distinct(StringComparer.Ordinal))
+            AddEnemyTypeGroup(groups, category, rows.Where(x => string.Equals(x.Category, category, StringComparison.Ordinal)), search);
+        return groups;
+    }
+
+    private static void AddEnemyTypeGroup(List<EnemyTypeGroup> groups, string? category, IEnumerable<RequirementEnemyTypeReferenceView> candidates, string search)
     {
         var matches = candidates.Where(x => Matches(search, x.Name, x.Category, x.Aliases)).ToArray();
         if (matches.Length > 0)
@@ -190,6 +272,8 @@
                 "{difficulty}" or "{difficulty?}" => "guide-token-difficulty",
                 "{direction}" => "guide-token-direction",
                 "{item}" => "guide-token-item",
+                "{countable}" => "guide-token-countable",
+                "{enemy}" => "guide-token-enemy",
                 "{quantity}" => "guide-token-amount",
                 "{check}" => "guide-token-check-local",
                 _ => "guide-token-requirement"

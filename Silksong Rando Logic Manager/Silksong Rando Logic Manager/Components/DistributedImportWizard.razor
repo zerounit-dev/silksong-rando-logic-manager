@@ -38,12 +38,16 @@
                         <div class="distributed-import-stage"><strong>@state.Progress.Stage: @state.Progress.Completed / @state.Progress.Total</strong><span>@state.Progress.Detail</span></div>
                         <div class="distributed-import-stage"><span>area map: @(state.AreaMapOutcome.Applied ? "applied" : "skipped")</span><span>room groups: @(state.RoomGroupingOutcome.Applied ? "applied" : "skipped")</span></div>
                     }
+                    @if (CurrentRoomStatus is { } roomStatus)
+                    {
+                        <p class="danger">@roomStatus.Error</p>
+                        @if (roomStatus.Warning is not null) { <p class="warning">@roomStatus.Warning</p> }
+                    }
                 </div>
             }
             @if (HasVisibleNewOrChangedComparison && !view.CloseWarning)
             {
                 <div class="distributed-import-review-utility">
-                    <button type="button" disabled="@(!CanGenerateSceneImages)" @onclick="GenerateSceneImagesAsync">generate missing room scenes</button>
                     <button type="button" disabled="@busy" @onclick="RequestClose">close</button>
                 </div>
             }
@@ -60,13 +64,17 @@
                 </div>
                 <div>
                     @if (view.CloseWarning) { <span class="warning">Completed operations remain committed.</span><button type="button" @onclick="CloseConfirmed">close anyway</button> }
-                    else if (!HasVisibleNewOrChangedComparison) { <button type="button" disabled="@busy" @onclick="RequestClose">@(view.Started && !view.Completed ? "close" : "cancel")</button> }
+                    else if (view.Completed)
+                    {
+                        <button type="button" disabled="@(!CanGenerateSceneImages)" @onclick="GenerateSceneImagesAsync">generate missing room scenes</button>
+                        <button type="button" disabled="@busy" @onclick="RequestClose">close</button>
+                    }
+                    else if (!HasVisibleNewOrChangedComparison) { <button type="button" disabled="@busy" @onclick="RequestClose">@(view.Started ? "close" : "cancel")</button> }
                     @if (!view.Started && view.ParseErrors.Count == 0) { <button type="button" disabled="@busy" @onclick="StartAsync">start import</button> }
                     @if (view.Failure is not null) { <button type="button" disabled="@busy" @onclick="RetryAsync">retry</button> }
                     @if (view.Started && !view.Completed && !view.CloseWarning)
                     {
-                        <button type="button" disabled="@(!CanUseIncoming)" @onclick="(() => DecideAsync(new UseIncomingRoom(view.CurrentComparison!.RoomId)))">use incoming room</button>
-                        <button type="button" disabled="@(!CanImportRoom)" @onclick="(() => DecideAsync(new ImportIncomingRoom(view.CurrentComparison!.RoomId)))">import room</button>
+                        <button type="button" disabled="@(!CanImportRoom)" @onclick="ImportRoomAsync">import room</button>
                         <button type="button" disabled="@(!CanArchiveOmittedRooms)" @onclick="(() => DecideSweepAsync(true))">archive omitted rooms</button>
                     }
                 </div>
@@ -89,15 +97,11 @@
                             <h3>room fields</h3>@foreach (var item in comparison.TopLevelFields.Where(item => !RoomTableFieldNames.Contains(item.FieldName))) { <div><span>@item.FieldName: </span>@if (item.Evidence == DistributedComparisonEvidence.Changed) { <span class="distributed-import-current">@item.CurrentValue</span><span> </span><span class="distributed-import-incoming">@item.IncomingValue</span> } else if (item.Evidence == DistributedComparisonEvidence.Current) { <span class="distributed-import-current">@item.CurrentValue</span> } else if (item.Evidence == DistributedComparisonEvidence.Incoming) { <span class="distributed-import-incoming">@item.IncomingValue</span> } else { <span>@item.CurrentValue</span> }</div> }
                             <RoomFieldEvidenceTable Fields="comparison.TopLevelFields.Where(item => RoomTableFieldNames.Contains(item.FieldName)).ToArray()" />
                             <div class="distributed-import-view-mode"><span>view mode</span><button type="button" class="@(!ShowFullChildDetail ? "selected" : null)" aria-pressed="@(!ShowFullChildDetail)" @onclick="(() => SetFullChildDetail(false))">diff</button><button type="button" class="@(ShowFullChildDetail ? "selected" : null)" aria-pressed="@ShowFullChildDetail" @onclick="(() => SetFullChildDetail(true))">full detail</button></div>
-                            @if (VisibleChildRows(comparison.Subrooms) is { Count: > 0 } subrooms) { <h3>subrooms</h3><ChildEvidenceTable Rows="subrooms" Fields="DistributedChildComparisonColumns.Subrooms" /> }
-                            @if (VisibleChildRows(comparison.Transitions) is { Count: > 0 } transitions) { <h3>transitions</h3><ChildEvidenceTable Rows="transitions" Fields="DistributedChildComparisonColumns.Transitions" /> }
-                            @if (VisibleChildRows(comparison.Connections) is { Count: > 0 } connections) { <h3>connections</h3><ChildEvidenceTable Rows="connections" Fields="DistributedChildComparisonColumns.Connections" /> }
-                            @if (VisibleChildRows(comparison.Checks) is { Count: > 0 } checks) { <h3>checks</h3><ChildEvidenceTable Rows="checks" Fields="DistributedChildComparisonColumns.Checks" /> }
+                            @if (VisibleChildRows(comparison.Subrooms) is { Count: > 0 } subrooms) { <h3>subrooms</h3><ChildEvidenceTable Rows="subrooms" Fields="DistributedChildComparisonColumns.Subrooms" Category="DistributedChildCategory.Subroom" Choices="@CurrentChoices" ChoicesDisabled="@ChildChoicesDisabled" ChoiceChanged="ChildChoiceChanged" /> }
+                            @if (VisibleChildRows(comparison.Transitions) is { Count: > 0 } transitions) { <h3>transitions</h3><ChildEvidenceTable Rows="transitions" Fields="DistributedChildComparisonColumns.Transitions" Category="DistributedChildCategory.Transition" Choices="@CurrentChoices" ChoicesDisabled="@ChildChoicesDisabled" ChoiceChanged="ChildChoiceChanged" /> }
+                            @if (VisibleChildRows(comparison.Connections) is { Count: > 0 } connections) { <h3>connections</h3><ChildEvidenceTable Rows="connections" Fields="DistributedChildComparisonColumns.Connections" Category="DistributedChildCategory.Connection" Choices="@CurrentChoices" ChoicesDisabled="@ChildChoicesDisabled" ChoiceChanged="ChildChoiceChanged" /> }
+                            @if (VisibleChildRows(comparison.Checks) is { Count: > 0 } checks) { <h3>checks</h3><ChildEvidenceTable Rows="checks" Fields="DistributedChildComparisonColumns.Checks" Category="DistributedChildCategory.Check" Choices="@CurrentChoices" ChoicesDisabled="@ChildChoicesDisabled" ChoiceChanged="ChildChoiceChanged" /> }
                         </div>
-                    }
-                    @if (view.SceneImageResult is { } imageResult)
-                    {
-                        <div class="distributed-import-stage"><strong>scene images: @imageResult.Items.Count(item => item.Status == SceneImageRebuildItemStatus.Generated) generated · @imageResult.Items.Count(item => item.Status == SceneImageRebuildItemStatus.Skipped) skipped · @imageResult.Items.Count(item => item.Status == SceneImageRebuildItemStatus.Failed) failed</strong>@foreach (var item in imageResult.Items.Where(item => item.Status != SceneImageRebuildItemStatus.Generated)) { <span>@item.RoomId: @item.Detail</span> }</div>
                     }
                 }
                 @if (view.Sweep is { } sweep)
@@ -107,6 +111,10 @@
                 @if (view.Completed)
                 {
                     <div class="distributed-import-stage"><strong>import complete</strong><span>applied: @view.Applied · skipped/kept: @view.Skipped · failed: @view.Failed</span></div>
+                    @if (view.SceneImageResult is { } imageResult)
+                    {
+                        <div class="distributed-import-stage"><strong>scene images: @imageResult.Items.Count(item => item.Status == SceneImageRebuildItemStatus.Generated) generated · @imageResult.Items.Count(item => item.Status == SceneImageRebuildItemStatus.Skipped) skipped · @imageResult.Items.Count(item => item.Status == SceneImageRebuildItemStatus.Failed) failed</strong>@foreach (var item in imageResult.Items.Where(item => item.Status != SceneImageRebuildItemStatus.Generated)) { <span>@item.RoomId: @item.Detail</span> }</div>
+                    }
                 }
             </div>
         </section>
@@ -163,7 +171,7 @@
         {
             var outcome = await Importer.PrepareRoomAsync(view.State, view.RoomIds[view.RoomIndex]);
             if (outcome is DistributedImportRoomSkipped skipped) { view.State = skipped.State; view.Skipped++; view.RoomIndex++; continue; }
-            if (outcome is DistributedImportRoomPrepared prepared) { view.CurrentComparison = prepared.Comparison; view.Reviews[view.RoomIndex] = prepared.Comparison; return; }
+            if (outcome is DistributedImportRoomPrepared prepared) { SetCurrentComparison(prepared.Comparison); return; }
             if (outcome is DistributedImportFailed failed) { view.Failure = failed; view.Failed++; return; }
             if (outcome is DistributedImportRejected rejected) { view.ParseErrors = rejected.Errors.ToList(); return; }
         }
@@ -176,18 +184,65 @@
         if (view?.State is null || view.CurrentComparison is null) return; busy = true;
         try
         {
+            view.RoomStatuses.Remove(intent.RoomId);
             var outcome = await Importer.DecideRoomAsync(view.State, intent, view.CurrentComparison);
-            if (outcome is DistributedImportComparisonRefreshed fresh) { view.CurrentComparison = fresh.Comparison; fullDetailRoomId = null; return; }
+            if (outcome is DistributedImportComparisonRefreshed fresh)
+            {
+                view.Failure = null;
+                view.RetryIntent = null;
+                view.CurrentComparison = fresh.Comparison;
+                view.Reviews[view.RoomIndex] = fresh.Comparison;
+                ResetChildPlan(fresh.Comparison);
+                view.RoomStatuses[fresh.Comparison.RoomId] = new("Room import was not applied.", "The room changed after this comparison was loaded. The comparison was refreshed and this room's child choices were reset to incoming defaults.");
+                fullDetailRoomId = null;
+                return;
+            }
+            if (outcome is DistributedImportRoomBecameIdentical identical)
+            {
+                view.Failure = null;
+                view.RetryIntent = null;
+                view.RoomStatuses.Remove(identical.RoomId);
+                view.State = identical.State;
+                view.Reviews[view.RoomIndex] = identical.Comparison;
+                view.Skipped++;
+                view.DecidedRoomIndexes.Add(view.RoomIndex);
+                view.CurrentComparison = null;
+                view.RoomIndex++;
+                await LoadCurrentAsync();
+                return;
+            }
             if (outcome is DistributedImportRoomApplied applied) { view.State = applied.State; view.Applied++; WorkspaceChanges.NotifyChanged(); }
             if (outcome is DistributedImportRoomSkipped skipped) { view.State = skipped.State; view.Skipped++; }
             if (outcome is DistributedImportRoomKept kept) { view.State = kept.State; view.Skipped++; }
             if (outcome is DistributedImportFailed failed) { view.Failure = failed; view.RetryIntent = intent; view.Failed++; return; }
+            if (outcome is DistributedImportRejected rejected)
+            {
+                view.Failure = null;
+                view.RetryIntent = null;
+                view.RoomStatuses[intent.RoomId] = new($"Room decision was not accepted. {string.Join(" ", rejected.Errors)}", null);
+                return;
+            }
             view.Failure = null; view.RetryIntent = null;
+            view.RoomStatuses.Remove(intent.RoomId);
             view.DecidedRoomIndexes.Add(view.RoomIndex);
             view.CurrentComparison = null; view.RoomIndex++; await LoadCurrentAsync();
         }
         catch (Exception exception) { Diagnostics.Show(exception.ToString()); }
         finally { busy = false; }
+    }
+    private Task ImportRoomAsync()
+    {
+        if (view?.CurrentComparison is not { } comparison) return Task.CompletedTask;
+        if (comparison.Kind == DistributedRoomComparisonKind.New)
+            return DecideAsync(new ImportIncomingRoom(comparison.RoomId));
+        if (comparison.Kind == DistributedRoomComparisonKind.Changed && view.ChildPlans.TryGetValue(comparison.RoomId, out var choices))
+        {
+            var decisions = ChildDifferences(comparison)
+                .Select(item => new DistributedChildDecision(item.Key.Category, item.Key.EntityId, item.Evidence, choices[item.Key]))
+                .ToArray();
+            return DecideAsync(new ImportChangedRoom(comparison.RoomId, new(comparison.RoomId, decisions)));
+        }
+        return Task.CompletedTask;
     }
     private async Task DecideSweepAsync(bool archive)
     {
@@ -198,7 +253,7 @@
     }
     private async Task GenerateSceneImagesAsync()
     {
-        if (!HasVisibleNewOrChangedComparison || view?.State is null) return;
+        if (view is not { Completed: true, State: not null }) return;
         busy = true;
         try { view.SceneImageResult = await SceneImages.RebuildPackageRoomsAsync(new(view.State.Package.Rooms.Select(room => room.Id).ToArray())); }
         catch (Exception exception) { Diagnostics.Show(exception.ToString()); }
@@ -211,7 +266,7 @@
         view.RoomIndex++;
         if (view.Reviews.TryGetValue(view.RoomIndex, out var prior)) { view.CurrentComparison = prior; return; }
         var outcome = await Importer.PrepareRoomAsync(view.State!, view.RoomIds[view.RoomIndex]);
-        if (outcome is DistributedImportRoomPrepared prepared) { view.CurrentComparison = prepared.Comparison; view.Reviews[view.RoomIndex] = prepared.Comparison; }
+        if (outcome is DistributedImportRoomPrepared prepared) { SetCurrentComparison(prepared.Comparison); }
         else if (outcome is DistributedImportRoomSkipped skipped) { view.State = skipped.State; view.CurrentComparison = null; view.Skipped++; }
     }
     private void RequestClose() { if (view?.Started == true && !view.Completed) { view.CloseWarning = true; } else view = null; }
@@ -222,17 +277,53 @@
     private bool CanGoNext => view is not null && !busy && view.Failure is null && view.Started && !view.Completed && view.RoomIndex + 1 < view.RoomIds.Count;
     private bool CanKeepMaster => !busy && view?.Failure is null && HasCurrentUndecidedComparison && view!.CurrentComparison!.Kind == DistributedRoomComparisonKind.Changed;
     private bool CanSkipRoom => !busy && view?.Failure is null && HasCurrentUndecidedComparison && view!.CurrentComparison!.Kind == DistributedRoomComparisonKind.New;
-    private bool CanUseIncoming => CanKeepMaster;
-    private bool CanImportRoom => CanSkipRoom;
+    private bool CanImportRoom => !busy && view?.Failure is null && HasCurrentUndecidedComparison && view!.CurrentComparison!.Kind is DistributedRoomComparisonKind.New or DistributedRoomComparisonKind.Changed;
     private bool CanKeepOmittedRooms => !busy && view?.Failure is null && view?.Sweep is not null;
     private bool CanArchiveOmittedRooms => CanKeepOmittedRooms;
-    private bool CanGenerateSceneImages => !busy && HasVisibleNewOrChangedComparison;
+    private bool CanGenerateSceneImages => !busy && view is { Completed: true, State: not null };
     private static readonly HashSet<string> RoomTableFieldNames = ["sceneUnitWidth", "sceneUnitHeight", "sceneImageScaleXPercent", "sceneImageScaleYPercent", "sceneImagePanXPercent", "sceneImagePanYPercent", "isSceneImageStale", "sortOrder", "isArchived", "archivedUtc", "createdUtc", "updatedUtc"];
     private static string? UpdatedUtcClass(DistributedUpdatedUtcComparison comparison) => comparison switch { DistributedUpdatedUtcComparison.Newer => "distributed-import-newer", DistributedUpdatedUtcComparison.Older => "distributed-import-older", _ => null };
     private Guid? fullDetailRoomId;
     private bool ShowFullChildDetail => view?.CurrentComparison is { } comparison && fullDetailRoomId == comparison.RoomId;
     private void SetFullChildDetail(bool full) => fullDetailRoomId = full ? view?.CurrentComparison?.RoomId : null;
     private IReadOnlyList<DistributedChildComparison<T>> VisibleChildRows<T>(IReadOnlyList<DistributedChildComparison<T>> rows) => ShowFullChildDetail ? rows : rows.Where(x => x.Evidence != DistributedComparisonEvidence.Neutral).ToArray();
+    private IReadOnlyDictionary<DistributedChildDecisionKey, DistributedChildChoice>? CurrentChoices => view?.CurrentComparison is { Kind: DistributedRoomComparisonKind.Changed } comparison && view.ChildPlans.TryGetValue(comparison.RoomId, out var choices) ? choices : null;
+    private bool ChildChoicesDisabled => busy || view?.Failure is not null || view?.DecidedRoomIndexes.Contains(view.RoomIndex) == true;
+    private RoomStatus? CurrentRoomStatus => view?.CurrentComparison is { } comparison ? view.RoomStatuses.GetValueOrDefault(comparison.RoomId) : null;
+
+    private void ChildChoiceChanged(DistributedChildChoiceChanged changed)
+    {
+        if (ChildChoicesDisabled || view?.CurrentComparison is not { Kind: DistributedRoomComparisonKind.Changed } comparison) return;
+        if (view.ChildPlans.TryGetValue(comparison.RoomId, out var choices) && choices.ContainsKey(changed.Key)) choices[changed.Key] = changed.Choice;
+    }
+
+    private void SetCurrentComparison(DistributedRoomComparison comparison)
+    {
+        view!.CurrentComparison = comparison;
+        view.Reviews[view.RoomIndex] = comparison;
+        EnsureChildPlan(comparison);
+    }
+
+    private void EnsureChildPlan(DistributedRoomComparison comparison)
+    {
+        if (comparison.Kind != DistributedRoomComparisonKind.Changed || view!.ChildPlans.ContainsKey(comparison.RoomId)) return;
+        ResetChildPlan(comparison);
+    }
+
+    private void ResetChildPlan(DistributedRoomComparison comparison)
+    {
+        view!.ChildPlans[comparison.RoomId] = ChildDifferences(comparison).ToDictionary(x => x.Key, _ => DistributedChildChoice.Incoming);
+    }
+
+    private static IEnumerable<(DistributedChildDecisionKey Key, DistributedComparisonEvidence Evidence)> ChildDifferences(DistributedRoomComparison comparison)
+    {
+        foreach (var row in comparison.Subrooms.Where(x => x.Evidence != DistributedComparisonEvidence.Neutral)) yield return (new(DistributedChildCategory.Subroom, row.EntityId), row.Evidence);
+        foreach (var row in comparison.Transitions.Where(x => x.Evidence != DistributedComparisonEvidence.Neutral)) yield return (new(DistributedChildCategory.Transition, row.EntityId), row.Evidence);
+        foreach (var row in comparison.Connections.Where(x => x.Evidence != DistributedComparisonEvidence.Neutral)) yield return (new(DistributedChildCategory.Connection, row.EntityId), row.Evidence);
+        foreach (var row in comparison.Checks.Where(x => x.Evidence != DistributedComparisonEvidence.Neutral)) yield return (new(DistributedChildCategory.Check, row.EntityId), row.Evidence);
+    }
+
+    private sealed record RoomStatus(string Error, string? Warning);
     private sealed class WizardView(string fileName, DistributedImportPackage? package, DistributedImportPackageSummary? summary, IReadOnlyList<string> errors)
-    { public string FileName { get; } = fileName; public DistributedImportPackage? Package { get; } = package; public DistributedImportPackageSummary? Summary { get; } = summary; public List<string> ParseErrors { get; set; } = errors.ToList(); public bool ApplyAreaMap { get; set; } = true; public bool ApplyGroups { get; set; } = false; public bool Started { get; set; } public bool Completed { get; set; } public bool CloseWarning { get; set; } public int RoomIndex { get; set; } public int Applied { get; set; } public int Skipped { get; set; } public int Failed { get; set; } public DistributedImportOrchestrationState? State { get; set; } public DistributedImportFailed? Failure { get; set; } public DistributedRoomDecisionIntent? RetryIntent { get; set; } public DistributedRoomComparison? CurrentComparison { get; set; } public DistributedImportSweepPrepared? Sweep { get; set; } public SceneImageRebuildResult? SceneImageResult { get; set; } public List<Guid> RoomIds { get; set; } = []; public Dictionary<int, DistributedRoomComparison> Reviews { get; } = []; public HashSet<int> DecidedRoomIndexes { get; } = []; }
+    { public string FileName { get; } = fileName; public DistributedImportPackage? Package { get; } = package; public DistributedImportPackageSummary? Summary { get; } = summary; public List<string> ParseErrors { get; set; } = errors.ToList(); public bool ApplyAreaMap { get; set; } = true; public bool ApplyGroups { get; set; } = false; public bool Started { get; set; } public bool Completed { get; set; } public bool CloseWarning { get; set; } public int RoomIndex { get; set; } public int Applied { get; set; } public int Skipped { get; set; } public int Failed { get; set; } public DistributedImportOrchestrationState? State { get; set; } public DistributedImportFailed? Failure { get; set; } public DistributedRoomDecisionIntent? RetryIntent { get; set; } public DistributedRoomComparison? CurrentComparison { get; set; } public DistributedImportSweepPrepared? Sweep { get; set; } public SceneImageRebuildResult? SceneImageResult { get; set; } public List<Guid> RoomIds { get; set; } = []; public Dictionary<int, DistributedRoomComparison> Reviews { get; } = []; public HashSet<int> DecidedRoomIndexes { get; } = []; public Dictionary<Guid, Dictionary<DistributedChildDecisionKey, DistributedChildChoice>> ChildPlans { get; } = []; public Dictionary<Guid, RoomStatus> RoomStatuses { get; } = []; }
 }

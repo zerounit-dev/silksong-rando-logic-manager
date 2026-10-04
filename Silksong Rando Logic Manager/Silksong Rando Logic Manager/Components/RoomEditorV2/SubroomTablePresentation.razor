@@ -1,22 +1,26 @@
 @using Microsoft.JSInterop
-@using Microsoft.AspNetCore.Components.Rendering
+@implements IDisposable
 @using Silksong_Rando_Logic_Manager.Components.RoomEditorV2.Contracts
 <section class="document-section"><h2>subrooms</h2>
     <table class="logic-table subroom-table" data-v2-subroom-table="active" data-v2-child-count="@active.Count(x => x.EntityId is not null)">
         <colgroup><col class="reorder-column" /><col class="subroom-name-column" /><col class="subroom-reference-column" /><col class="subroom-notes-column" /><col class="actions-column" /></colgroup>
         <thead><tr><th class="reorder-heading"></th><th>name</th><th>reference</th><th>notes</th><th class="actions-heading"></th></tr></thead>
         <tbody>
-        @for (var rowIndex = 0; rowIndex < active.Count; rowIndex++) { var row = active[rowIndex]; <tr @key="row.ClientDraftId" class="@RowClass(row)" data-v2-subroom-row="@row.EntityId" data-v2-child-index="@(row.EntityId is null ? null : active.Take(rowIndex).Count(x => x.EntityId is not null))" data-v2-subroom-state="@row.State" data-v2-subroom-tail="@(row.EntityId is null ? "true" : null)">
+        @for (var rowIndex = 0; rowIndex < active.Count; rowIndex++) { var row = active[rowIndex]; <tr @key="row.ClientDraftId" data-v2-row-annotation-kind="subroom" data-v2-row-annotation-id="@row.EntityId" class="@RowClass(row)" data-v2-subroom-row="@row.EntityId" data-v2-child-index="@(row.EntityId is null ? null : active.Take(rowIndex).Count(x => x.EntityId is not null))" data-v2-subroom-state="@row.State" data-v2-subroom-tail="@(row.EntityId is null ? "true" : null)">
             <td class="reorder-cell">@Grip(row)</td>
             @Fields(row)
-            <td class="row-actions">@if (row.EntityId is Guid id) { @if (!row.IsArchived) { var geometry = UsableRectangle(row.Baseline); var renderable = geometry && row.Baseline!.EnableAnnotation; var annotationText = AnnotationActionText(renderable, geometry); <span class="action-slot"><button id="v2-subroom-geometry-@id" title="edit scene rectangle" aria-label="edit scene rectangle" @onclick="(()=>Geometry(row))" disabled="@(row.State != RowState.Persisted)"><i class="fa-solid fa-pen-ruler"></i></button></span><span class="action-slot"><button id="v2-subroom-@(renderable ? "select" : geometry ? "show" : "place")-@id" title="@annotationText" aria-label="@annotationText" @onclick="(()=>Annotation(row))" disabled="@(row.State != RowState.Persisted || !SceneActionsAvailable)"><span class="annotation-crosshairs @(renderable ? null : "annotation-crosshairs-warning")" aria-hidden="true"><i class="fa-solid fa-crosshairs"></i></span></button></span><span class="action-slot"><button title="archive" aria-label="archive" @onclick="(()=>Archive(row,true))" disabled="@(row.State != RowState.Persisted)"><i class="fa-solid fa-box-archive"></i></button></span> } else { <span class="action-slot"></span><span class="action-slot"><button title="restore" aria-label="restore" @onclick="(()=>Archive(row,false))" disabled="@(row.State != RowState.Persisted)"><i class="fa-solid fa-rotate-left"></i></button></span><span class="action-slot"><button id="delete-subroom-@id" title="delete permanently" aria-label="delete permanently" @onclick="(()=>Delete(row))" disabled="@(row.State != RowState.Persisted)"><i class="fa-solid fa-trash"></i></button></span> } }</td>
+            <td class="row-actions">@if (row.EntityId is Guid id) { @if (!row.IsArchived) { var geometry = UsableRectangle(row.Baseline); var renderable = geometry && row.Baseline!.EnableAnnotation; var annotationText = AnnotationActionText(renderable, geometry); <span class="action-slot"><button id="v2-subroom-geometry-@id" title="edit scene rectangle" aria-label="edit scene rectangle" @onclick="(()=>Geometry(row))" disabled="@(row.State != RowState.Persisted)"><i class="fa-solid fa-pen-ruler"></i></button></span><span class="action-slot"><button id="v2-subroom-@(renderable ? "select" : geometry ? "show" : "place")-@id" title="@annotationText" aria-label="@annotationText" @onclick="(()=>Annotation(row))" disabled="@(row.State != RowState.Persisted || !SceneActionsAvailable)"><span class="annotation-crosshairs @(renderable ? null : "annotation-crosshairs-warning")" aria-hidden="true"><i class="fa-solid fa-crosshairs"></i></span></button></span><span class="action-slot"><button data-v2-child-action="archive" title="archive" aria-label="archive" @onclick="(()=>Archive(row,true))" disabled="@(row.State != RowState.Persisted)"><i class="fa-solid fa-box-archive"></i></button></span> } else { <span class="action-slot"></span><span class="action-slot"><button data-v2-child-action="restore" title="restore" aria-label="restore" @onclick="(()=>Archive(row,false))" disabled="@(row.State != RowState.Persisted)"><i class="fa-solid fa-rotate-left"></i></button></span><span class="action-slot"><button data-v2-child-action="open-delete" id="delete-subroom-@id" title="delete permanently" aria-label="delete permanently" @onclick="(()=>Delete(row))" disabled="@(row.State != RowState.Persisted)"><i class="fa-solid fa-trash"></i></button></span> } }</td>
         </tr> }
         </tbody>
     </table>
-    @if (ShowArchivedChildren && View.ArchivedRows.Count > 0) { <div class="archived-table-label">[archived]</div><table class="logic-table subroom-table" data-v2-subroom-table="archived" data-v2-child-count="@archived.Count"><colgroup><col class="reorder-column" /><col class="subroom-name-column" /><col class="subroom-reference-column" /><col class="subroom-notes-column" /><col class="actions-column" /></colgroup><thead><tr><th class="reorder-heading"></th><th>name</th><th>reference</th><th>notes</th><th class="actions-heading"></th></tr></thead><tbody>@for(var rowIndex=0;rowIndex<archived.Count;rowIndex++){var row=archived[rowIndex];<tr @key="row.ClientDraftId" class="@RowClass(row)" data-v2-subroom-row="@row.EntityId" data-v2-child-index="@rowIndex" data-v2-subroom-state="@row.State"><td class="reorder-cell">@Grip(row)</td>@Fields(row)<td class="row-actions"><span class="action-slot"></span><span class="action-slot"><button title="restore" aria-label="restore" @onclick="(()=>Archive(row,false))" disabled="@(row.State != RowState.Persisted)"><i class="fa-solid fa-rotate-left"></i></button></span><span class="action-slot"><button id="delete-subroom-@row.EntityId" title="delete permanently" aria-label="delete permanently" @onclick="(()=>Delete(row))" disabled="@(row.State != RowState.Persisted)"><i class="fa-solid fa-trash"></i></button></span></td></tr>}</tbody></table> }
+    @if (ShowArchivedChildren && View.ArchivedRows.Count > 0) { <div class="archived-table-label">[archived]</div><table class="logic-table subroom-table" data-v2-subroom-table="archived" data-v2-child-count="@archived.Count"><colgroup><col class="reorder-column" /><col class="subroom-name-column" /><col class="subroom-reference-column" /><col class="subroom-notes-column" /><col class="actions-column" /></colgroup><thead><tr><th class="reorder-heading"></th><th>name</th><th>reference</th><th>notes</th><th class="actions-heading"></th></tr></thead><tbody>@for(var rowIndex=0;rowIndex<archived.Count;rowIndex++){var row=archived[rowIndex];<tr @key="row.ClientDraftId" class="@RowClass(row)" data-v2-subroom-row="@row.EntityId" data-v2-child-index="@rowIndex" data-v2-subroom-state="@row.State"><td class="reorder-cell">@Grip(row)</td>@Fields(row)<td class="row-actions"><span class="action-slot"></span><span class="action-slot"><button data-v2-child-action="restore" title="restore" aria-label="restore" @onclick="(()=>Archive(row,false))" disabled="@(row.State != RowState.Persisted)"><i class="fa-solid fa-rotate-left"></i></button></span><span class="action-slot"><button data-v2-child-action="open-delete" id="delete-subroom-@row.EntityId" title="delete permanently" aria-label="delete permanently" @onclick="(()=>Delete(row))" disabled="@(row.State != RowState.Persisted)"><i class="fa-solid fa-trash"></i></button></span></td></tr>}</tbody></table> }
     @if (!string.IsNullOrEmpty(message)) { <p class="warning" role="status">@message</p> }
 </section>
 @code {
+    [Parameter,EditorRequired] public long OwnerGeneration {get;set;}
+    [Parameter,EditorRequired] public Func<bool> OwnerIsCurrent {get;set;}=null!;
+    private long renderedOwnerGeneration=-1;
+    private bool PageOwned=>!disposed&&OwnerIsCurrent?.Invoke()==true;
     [Parameter, EditorRequired] public SubroomTableView View { get; set; } = null!;
     [Parameter] public bool ShowArchivedChildren { get; set; }
     [Parameter] public Guid RoomId { get; set; }
@@ -35,45 +39,206 @@
     [Parameter] public string SceneActionsUnavailableReason { get; set; } = "Scene annotation actions are unavailable.";
     [Parameter] public Func<SubroomDurableBaseline, string, Task>? AnnotationRequested { get; set; }
     [Parameter] public Func<SubroomDurableBaseline, string, Task>? GeometryRequested { get; set; }
-    private Task Annotation(Row row) => row.Baseline is { } b && row.EntityId is Guid id ? (AnnotationRequested?.Invoke(b, $"v2-subroom-{(UsableRectangle(b) && b.EnableAnnotation ? "select" : UsableRectangle(b) ? "show" : "place")}-{id}") ?? Task.CompletedTask) : Task.CompletedTask;
+    private Task Annotation(Row row) => Event(()=>!PageOwned||Boundary(row).HoldsPresentation?Task.CompletedTask:row.Baseline is { } b && row.EntityId is Guid id ? (AnnotationRequested?.Invoke(b, $"v2-subroom-{(UsableRectangle(b) && b.EnableAnnotation ? "select" : UsableRectangle(b) ? "show" : "place")}-{id}") ?? Task.CompletedTask) : Task.CompletedTask);
     private string AnnotationActionText(bool renderable, bool geometry) => !SceneActionsAvailable ? SceneActionsUnavailableReason : renderable ? "select annotation" : geometry ? "show and select annotation" : "re-arm placement";
-    private Task Geometry(Row row) => row.Baseline is { } b && row.EntityId is Guid id ? (GeometryRequested?.Invoke(b, $"v2-subroom-geometry-{id}") ?? Task.CompletedTask) : Task.CompletedTask;
+    private Task Geometry(Row row) => Event(()=>!PageOwned||Boundary(row).HoldsPresentation?Task.CompletedTask:row.Baseline is { } b && row.EntityId is Guid id ? (GeometryRequested?.Invoke(b, $"v2-subroom-geometry-{id}") ?? Task.CompletedTask) : Task.CompletedTask);
     private static bool UsableRectangle(SubroomDurableBaseline? value) => value is { SceneUnitX: double x, SceneUnitY: double y, SceneUnitWidth: double width, SceneUnitHeight: double height } && double.IsFinite(x) && double.IsFinite(y) && double.IsFinite(width) && double.IsFinite(height) && width > 0 && height > 0;
-    private async Task Archive(Row row, bool archived) { if (row.EntityId is not Guid id) return; var result = await (SetArchive?.Invoke(id, archived) ?? Unavailable("Archive")); message = result.Message; if (result.Status == V2SubroomCommandStatus.Committed) await (RefreshApplied?.Invoke() ?? Task.CompletedTask); }
-    private Task Delete(Row row) => row.EntityId is Guid id ? (DeleteConfirmationRequested?.Invoke(new(V2DeleteConfirmationKind.Subroom, id)) ?? Task.CompletedTask) : Task.CompletedTask;
+    private Task Archive(Row row,bool archived)=>Event(()=>ArchiveCore(row,archived));
+    private async Task ArchiveCore(Row row,bool archived)
+    {
+        if(!PageOwned||Boundary(row).HoldsPresentation||row.EntityId is not Guid id)return;
+        var source=RoomId;var generation=routeGeneration;
+        var result=await(SetArchive?.Invoke(id,archived)??Unavailable("Archive"));
+        if(!Owns(source,generation)||result.Status==V2SubroomCommandStatus.Committed&&(!result.PresentationRefreshed||result.RequiresRoomReload))return;
+        message=result.Message;if(result.Status==V2SubroomCommandStatus.Committed)await(RefreshApplied?.Invoke()??Task.CompletedTask);
+    }
+    private Task Delete(Row row)=>Event(()=>DeleteCore(row));
+    private Task DeleteCore(Row row)=>!PageOwned||Boundary(row).HoldsPresentation?Task.CompletedTask:row.EntityId is Guid id ? (DeleteConfirmationRequested?.Invoke(new(V2DeleteConfirmationKind.Subroom, id)) ?? Task.CompletedTask) : Task.CompletedTask;
     private static readonly string[] fields = ["name", "reference", "notes"];
     private readonly List<Row> active = []; private readonly List<Row> archived = []; private string? message;
     private readonly ChildTableInteractionController sharedInteraction = new(); private Guid latentSuccessorId { get=>sharedInteraction.LatentSuccessorId; set=>sharedInteraction.LatentSuccessorId=value; } private Guid? pendingTailPromotionId { get=>sharedInteraction.PendingTailPromotionId; set=>sharedInteraction.PendingTailPromotionId=value; } private ChildTableFocusTarget? pendingFocus { get=>sharedInteraction.PendingFocus; set=>sharedInteraction.PendingFocus=value; }
-    private Guid? renderedRoomId; private bool clearDragFeedback; private bool tabFocusAwaitingRefresh; private Guid? tabFocusCreatedEntityId;
+    private Guid? renderedRoomId; private bool clearDragFeedback;
+    private bool disposed;
+    private long routeGeneration;
+    private SubroomTableView? pendingView, appliedView;
+    private readonly Dictionary<Row, ChildTableBoundaryOwnership<SubroomDurableBaseline, SubroomDraft>> boundaries = [];
+    private ChildTableBoundaryOwnership<SubroomDurableBaseline, SubroomDraft> Boundary(Row row) => boundaries.TryGetValue(row, out var owner) ? owner : boundaries[row] = new(row.Interaction, ChildTableDraftAdapters.SubroomBoundaries);
+    private bool Owns(Guid room, long generation) => !disposed && PageOwned && RoomId == room && routeGeneration == generation;
+    private readonly ChildTableEventCompletionGuard eventCompletion=new();
+    private Task Event(Func<Task> action){var source=RoomId;var generation=routeGeneration;return eventCompletion.RunAsync(action,()=>Owns(source,generation));}
+    protected override bool ShouldRender()=>eventCompletion.ShouldRender(!disposed&&PageOwned);
+    private void Reset()
+    {
+        routeGeneration++; foreach (var owner in boundaries.Values) owner.Reset(); boundaries.Clear();
+        sharedInteraction.ResetForRoute(active.Concat(archived)); active.Clear(); archived.Clear();
+        pendingView = appliedView = null; pendingReferenceConflictDraft = null;
+    }
+    public void Dispose() { disposed = true; Reset(); }
     // A proposal conflict reaches this component before the page's fresh view is
     // rendered. Hold the local draft until reconciliation has installed the fresh
     // durable baseline, then restore it as the correction draft.
     private (Guid EntityId, SubroomDraft Draft)? pendingReferenceConflictDraft;
-    protected override void OnParametersSet() { if (renderedRoomId is Guid previous && previous != RoomId) { sharedInteraction.ResetForRoute(active.Concat(archived)); tabFocusAwaitingRefresh=false; tabFocusCreatedEntityId=null; clearDragFeedback=true; } renderedRoomId=RoomId; Reconcile(); }
-    protected override async Task OnAfterRenderAsync(bool firstRender) { if (clearDragFeedback) { clearDragFeedback=false; await (ClearDragFeedback?.Invoke() ?? Task.CompletedTask); } if (!tabFocusAwaitingRefresh && pendingFocus is { } target) { pendingFocus = null; await (FocusRequested?.Invoke(RoomId, target.ElementId) ?? Task.CompletedTask); } }
-    private RenderFragment Fields(Row row) => builder => { var i=0; Input(builder, ref i, row, "name", "Subroom name", row.Draft.FriendlyName, "text-editor", DisplaySeverity(row, row.FriendlyNameSeverity)); Input(builder, ref i, row, "reference", "Subroom reference ID", row.Draft.ReferenceId, "text-editor", DisplaySeverity(row, Max(row.ReferenceIdSeverity, row.UsageSeverity)), true); Input(builder, ref i, row, "notes", "Subroom notes", row.Draft.Notes, "detail-editor", V2Severity.Neutral); };
-    private void Input(RenderTreeBuilder b, ref int i, Row row, string field, string label, string value, string cssClass, V2Severity severity, bool singleLine = false) { b.OpenElement(i++, "td"); b.AddAttribute(i++, "class", SeverityClass(severity)); b.OpenElement(i++, singleLine ? "input" : "textarea"); b.AddAttribute(i++, "id", Id(row,field)); b.AddAttribute(i++, "aria-label",label); b.AddAttribute(i++, "class",cssClass); if (!singleLine) b.AddAttribute(i++, "rows",1); else b.AddAttribute(i++, "type", "text"); b.AddAttribute(i++, "autocomplete","off"); b.AddAttribute(i++, "value",value); if(row.IsArchived)b.AddAttribute(i++,"readonly",true); b.AddAttribute(i++, "data-v2-subroom-field",field); b.AddAttribute(i++, "data-v2-subroom-client-row",row.ClientDraftId); b.AddAttribute(i++, "data-v2-child-row-changed", Changed(row) ? "true" : "false"); foreach(var direction in new[]{"left","right","up","down"}) { var target=Target(row,field,direction); if(target is not null) { b.AddAttribute(i++, $"data-v2-subroom-{direction}", $"{target.Value.ClientRowId}|{target.Value.Field}"); if(target.Value.ClientRowId==latentSuccessorId) b.AddAttribute(i++, $"data-v2-subroom-{direction}-latent", "true"); } } b.CloseElement(); b.CloseElement(); }
-    private RenderFragment Grip(Row row) => builder => { var i=0; if (!row.IsArchived && row.EntityId is Guid && row.State == RowState.Persisted) { builder.OpenElement(i++, "button"); builder.AddAttribute(i++, "class", "reorder-handle"); builder.AddAttribute(i++, "type", "button"); builder.AddAttribute(i++, "draggable", "true"); builder.AddAttribute(i++, "data-v2-subroom-grip", "true"); builder.AddAttribute(i++, "title", "Reorder subroom"); builder.AddAttribute(i++, "aria-label", $"Reorder subroom: {row.Draft.FriendlyName}"); builder.OpenElement(i++, "i"); builder.AddAttribute(i++, "class", "fa-solid fa-grip-vertical"); builder.AddAttribute(i++, "aria-hidden", "true"); builder.CloseElement(); builder.CloseElement(); } else if (!row.IsArchived && row.State == RowState.Saving) { builder.OpenElement(i++, "i"); builder.AddAttribute(i++, "class", "fa-solid fa-spinner fa-spin"); builder.AddAttribute(i++, "role", "img"); builder.AddAttribute(i++, "aria-label", "Saving subroom"); builder.CloseElement(); } else if (!row.IsArchived && row.State == RowState.Failed) { builder.OpenElement(i++, "i"); builder.AddAttribute(i++, "class", "fa-solid fa-circle-xmark danger"); builder.AddAttribute(i++, "role", "img"); builder.AddAttribute(i++, "title", FailureMessage(row)); builder.AddAttribute(i++, "aria-label", FailureMessage(row)); builder.CloseElement(); } };
+    protected override void OnParametersSet() { if ((renderedRoomId is Guid previous && previous != RoomId)||(renderedOwnerGeneration>=0&&renderedOwnerGeneration!=OwnerGeneration)) { Reset(); clearDragFeedback=true; } renderedRoomId=RoomId;renderedOwnerGeneration=OwnerGeneration; ApplyFreshView(RoomId, View); }
+    protected override async Task OnAfterRenderAsync(bool firstRender) { if(disposed)return; if (clearDragFeedback) { clearDragFeedback=false; await (ClearDragFeedback?.Invoke() ?? Task.CompletedTask); } if (!boundaries.Values.Any(owner => owner.HoldsPresentation) && pendingFocus is { } target) { pendingFocus = null; await (FocusRequested?.Invoke(RoomId, target.ElementId) ?? Task.CompletedTask); } }
+    public void ApplyFreshView(Guid room, SubroomTableView fresh) { if(disposed || room!=RoomId)return; pendingView=fresh; Reconcile(); }
+    private RenderFragment Fields(Row row) => @<text>
+        <td class="@SeverityClass(DisplaySeverity(row, row.FriendlyNameSeverity))">
+            <textarea @attributes='FieldAttributes(row, ChildTableField.Name, "Subroom name")' class="text-editor" rows="1" autocomplete="off" value="@row.Draft.FriendlyName" readonly="@row.IsArchived"></textarea>
+        </td>
+        <td class="@SeverityClass(DisplaySeverity(row, Max(row.ReferenceIdSeverity, row.UsageSeverity)))">
+            <input @attributes='FieldAttributes(row, ChildTableField.Reference, "Subroom reference ID")' type="text" class="text-editor" autocomplete="off" value="@row.Draft.ReferenceId" readonly="@row.IsArchived" />
+        </td>
+        <td>
+            <textarea @attributes='FieldAttributes(row, ChildTableField.Notes, "Subroom notes")' class="detail-editor" rows="1" autocomplete="off" value="@row.Draft.Notes" readonly="@row.IsArchived"></textarea>
+        </td>
+    </text>;
+    private Dictionary<string, object> FieldAttributes(Row row, ChildTableField field, string label)
+    {
+        var facts = ChildTableBrowserFacts.FieldAttributes("subroom", row.ClientDraftId, field, label, Changed(row), latentSuccessorId,
+            direction => Target(row, field.Wire(), direction.Wire()));
+        if (field == ChildTableField.Name && row.EntityId is null && !row.IsArchived)
+            facts["data-v2-child-mirror-target"] = Id(row, "reference");
+        if (Boundary(row).ReconcileNative && ChildTableDraftAdapters.NativeValue(row.Draft, field) is { } native)
+        {
+            facts["data-v2-child-reconcile-value"] = native;
+            facts["data-v2-child-reconcile-exclusive"] = Boundary(row).ProposalExclusive ? "true" : "false";
+        }
+        return facts;
+    }
+    private RenderFragment Grip(Row row) => @<text>
+        @if (!row.IsArchived && row.EntityId is Guid && row.State == RowState.Persisted && !Boundary(row).HoldsPresentation)
+        {
+            <button class="reorder-handle" type="button" draggable="true" data-v2-subroom-grip="true" title="Reorder subroom" aria-label="@($"Reorder subroom: {row.Draft.FriendlyName}")"><i class="fa-solid fa-grip-vertical" aria-hidden="true"></i></button>
+        }
+        else if (!row.IsArchived && (row.State == RowState.Saving || Boundary(row).InFlight))
+        {
+            <i class="fa-solid fa-spinner fa-spin" role="img" aria-label="Saving subroom"></i>
+        }
+        else if (!row.IsArchived && row.State == RowState.Failed)
+        {
+            <i class="fa-solid fa-circle-xmark danger" role="img" title="@FailureMessage(row)" aria-label="@FailureMessage(row)"></i>
+        }
+    </text>;
     private static string? RowClass(Row row) => row.State == RowState.Saving ? "child-row-saving" : row.State == RowState.Failed ? "child-row-failed" : row.EntityId is null ? "uncommitted-row" : null;
-    private void Reconcile() { ChildTableRowReconciliation.Reconcile(active, archived, View.ActiveRows, View.ArchivedRows, row => row.EntityId, view => view.EntityId, Row.From, (row, view) => row.Load(view), Row.Empty, sharedInteraction); if (pendingReferenceConflictDraft is { } retained) { var row = active.Concat(archived).SingleOrDefault(x => x.EntityId == retained.EntityId); if (row is not null) { row.Draft = retained.Draft; row.Interaction.BeginRetryFromEdit(); } pendingReferenceConflictDraft = null; } if(tabFocusAwaitingRefresh && tabFocusCreatedEntityId is Guid created && View.ActiveRows.Concat(View.ArchivedRows).Any(x=>x.EntityId==created)) { tabFocusAwaitingRefresh=false; tabFocusCreatedEntityId=null; } _=NotifyDraftState(); }
+    private void Reconcile()
+    {
+        if(disposed || pendingView is not { } fresh || ReferenceEquals(appliedView, fresh) || boundaries.Values.Any(owner => owner.HoldsPresentation))return;
+        ChildTableRowReconciliation.Reconcile(active, archived, fresh.ActiveRows, fresh.ArchivedRows, row => row.EntityId, view => view.EntityId, Row.From, (row, view) => row.Load(view), Row.Empty, sharedInteraction);
+        appliedView=fresh; pendingView=null;
+        if(pendingReferenceConflictDraft is { } retained)
+        {
+            var row=active.Concat(archived).SingleOrDefault(x=>x.EntityId==retained.EntityId);
+            if(row is not null)row.Draft=retained.Draft;
+            pendingReferenceConflictDraft=null;
+        }
+        foreach(var removed in boundaries.Keys.Where(row=>!active.Contains(row)&&!archived.Contains(row)).ToArray()){boundaries[removed].Reset();boundaries.Remove(removed);}
+        _=NotifyDraftState();
+    }
     private static Row FindOrLoad(IEnumerable<Row> old, SubroomRowView view) { var r=old.FirstOrDefault(x=>x.EntityId==view.EntityId) ?? Row.From(view); r.Load(view); return r; }
-    private async Task InstallTextValue(Row row, string field, string? value) { if(value is null)return;var edited=field switch { "name"=>row.Draft.FriendlyName!=value, "reference"=>row.Draft.ReferenceId!=value, "notes"=>row.Draft.Notes!=value, _=>false };if(edited){row.Draft=field switch { "name"=>row.Draft with { FriendlyName=value,ReferenceId=row.Baseline is null?value:row.Draft.ReferenceId }, "reference"=>row.Draft with {ReferenceId=value}, "notes"=>row.Draft with {Notes=value}, _=>row.Draft };row.Interaction.BeginRetryFromEdit();}await NotifyDraftState(); }
-    private async Task Blur(Row row, string? correctionField = null) { if(!Meaningful(row) || (row.EntityId is not null && !Changed(row)) || !row.Interaction.BeginSave()) return; try { var result=row.Baseline is null ? await (Create?.Invoke(row.Draft)??Unavailable("Creation")) : await (Save?.Invoke(row.Baseline,row.Draft,Id(row,correctionField??"reference"),pendingFocus?.ElementId)??Unavailable("Saving")); if(result.Status==V2SubroomCommandStatus.Unexpected) throw new InvalidOperationException(result.Message ?? "Unexpected V2 subroom command failure."); message=result.Message; if(result.Status==V2SubroomCommandStatus.Committed) { if(result.CreatedEntityId is Guid id && tabFocusAwaitingRefresh) tabFocusCreatedEntityId=id; row.Interaction.CompleteCommitted(result.CreatedEntityId); await (RefreshApplied?.Invoke() ?? Task.CompletedTask); } else if(result.Status is V2SubroomCommandStatus.Unchanged or V2SubroomCommandStatus.Proposal) row.Interaction.CompleteUnchanged(); else Fail(row, correctionField, result.Message, result.FreshBaseline); } catch (InvalidOperationException exception) when (exception.Message.StartsWith("V2 Phase 2a does not permit", StringComparison.Ordinal)) { throw; } catch { message="Save failed; edit a field to try again."; Fail(row, correctionField, message, null); } await NotifyDraftState(); if(row.State==RowState.Failed) await InvokeAsync(StateHasChanged); }
-    private void Fail(Row row, string? correctionField, string? failureMessage, SubroomDurableBaseline? freshBaseline) { row.Interaction.Fail(failureMessage??"Save failed; edit a field to try again.", freshBaseline); pendingTailPromotionId=null; tabFocusAwaitingRefresh=false; tabFocusCreatedEntityId=null; pendingFocus=new(row.ClientDraftId,correctionField??"name"); }
+    private void InstallTextValue(Row row, ChildTableField field, string? value)
+    {
+        if(ChildTableDraftAdapters.InstallGenuineEdit(row.Interaction, ChildTableDraftAdapters.Install(row.Draft, field, value, row.EntityId is null)))Boundary(row).GenuineEdit();
+    }
+    private Task Blur(Row row, string? correctionField = null)
+    {
+        var sourceRoom=RoomId;var generation=routeGeneration;var create=Create;var save=Save;var publish=RefreshApplied;
+        var field=ChildTableBrowserFacts.TryField(correctionField??"reference",out var typed)?typed:ChildTableField.Reference;
+        return Boundary(row).SubmitAsync(field, sharedInteraction, Meaningful(row), Changed(row),
+            async(baseline,draft,initiator,target)=>ChildTableDraftAdapters.Completion(baseline is null
+                ?await(create?.Invoke(draft)??Unavailable("Creation"))
+                :await(save?.Invoke(baseline,draft,Id(row,initiator.Wire()),target?.ElementId)??Unavailable("Saving"))),
+            ()=>Owns(sourceRoom,generation),NotifyDraftState,
+            async()=>{await(publish?.Invoke()??Task.CompletedTask);if(Owns(sourceRoom,generation)){Reconcile();await InvokeAsync(StateHasChanged);}},
+            value=>message=value);
+    }
     // This is the actual DotNetObjectReference callback used by editor.js.  It must
     // never let stale client metadata or a failed create escape into the circuit.
-    [JSInvokable] public async Task<bool> NavigateSubroomAsync(string clientRowId, string field, string direction, string? value=null) { try { if(!Guid.TryParse(clientRowId,out var id) || !fields.Contains(field) || direction is not ("left" or "right" or "up" or "down")) return false; var row=active.Concat(archived).SingleOrDefault(x=>x.ClientDraftId==id); if(row is null) return false; await InstallTextValue(row,field,value);var target=Target(row,field,direction); if(target is null) return false; if(row.State==RowState.Saving) { AdvanceVirtualTarget(row,direction); return true; } if(row.EntityId is not null) { pendingFocus=target; if(Changed(row)) await Blur(row, field); else await InvokeAsync(StateHasChanged); return true; } if(!Meaningful(row)) { if(target.Value.ClientRowId==latentSuccessorId) { row.Interaction.PromoteClientRowId(latentSuccessorId); latentSuccessorId=Guid.NewGuid(); pendingFocus=new(row.ClientDraftId,target.Value.Field!); } else pendingFocus=target; await InvokeAsync(StateHasChanged); return true; } pendingFocus=target; pendingTailPromotionId=target.Value.ClientRowId==latentSuccessorId ? target.Value.ClientRowId : null; await Blur(row, field); return true; } catch { return false; } }
-    [JSInvokable] public async Task BlurSubroomAsync(string clientRowId, string field, string? tabTargetId, string? value=null) { if(!Guid.TryParse(clientRowId,out var id) || !fields.Contains(field)) return; var row=active.Concat(archived).SingleOrDefault(x=>x.ClientDraftId==id); if(row is null)return;await InstallTextValue(row,field,value);if(row.State==RowState.Saving || !Meaningful(row) || (row.EntityId is not null && !Changed(row))) return; if(row.EntityId is null && !string.IsNullOrEmpty(tabTargetId)) { pendingFocus=ChildTableFocusTarget.Element(tabTargetId); tabFocusAwaitingRefresh=true; } await Blur(row, field); }
-    [JSInvokable] public async Task ChildActionSubroomAsync(string action, string entityId) { if (!Guid.TryParse(entityId, out var id)) return; var intent=new V2DeleteConfirmationIntent(V2DeleteConfirmationKind.Subroom,id); if (action == "open-delete") { await (DeleteConfirmationRequested?.Invoke(intent) ?? Task.CompletedTask); return; } if (action == "cancel-delete") { await (DeleteConfirmationCancelled?.Invoke(intent) ?? Task.CompletedTask); return; } if (action == "delete") { await (DeleteConfirmationConfirmed?.Invoke(intent) ?? Task.CompletedTask); return; } var archivedValue = action == "archive"; var result = await (SetArchive?.Invoke(id, archivedValue) ?? Unavailable("Archive")); message=result.Message; if(result.Status==V2SubroomCommandStatus.Committed) await (RefreshApplied?.Invoke() ?? Task.CompletedTask); }
+    [JSInvokable] public Task<bool> NavigateSubroomAsync(string clientRowId, string field, string direction, string? value=null)
+    {
+        if (!Guid.TryParse(clientRowId, out var id) || !ChildTableBrowserFacts.TryField(field, out var typedField) || !fields.Contains(field) || !ChildTableBrowserFacts.TryDirection(direction, out var typedDirection)) return Task.FromResult(false);
+        var row = active.Concat(archived).SingleOrDefault(x => x.ClientDraftId == id);
+        return row is null ? Task.FromResult(false) : Navigate(row, typedField, typedDirection, value);
+    }
+    private async Task<bool> Navigate(Row row, ChildTableField field, ChildTableDirection direction, string? value)
+    {
+        try
+        {
+            if(disposed||!PageOwned||Boundary(row).ProposalExclusive)return false;
+            InstallTextValue(row, field, value);
+            if(Boundary(row).RequiresReload)return false;
+            var rows = row.IsArchived ? archived : active;
+            var decision = ChildTableInteractionPrimitives.Navigate(row.Interaction, sharedInteraction, fields, rows.Select(x => x.ClientDraftId).ToArray(), Meaningful(row), Changed(row), Boundary(row).InFlight,
+                field, direction, (index, current, next) => Target(rows[index], current, next.Wire()), (draft, promoted) => draft with { ClientDraftId = promoted });
+            if (decision == ChildTableNavigationDecision.SubmitBoundary) await Blur(row, field.Wire());
+            else if (decision == ChildTableNavigationDecision.Focus) { await NotifyDraftState(); await InvokeAsync(StateHasChanged); }
+            return decision != ChildTableNavigationDecision.Rejected;
+        }
+        catch { return false; }
+    }
+    [JSInvokable] public Task BlurSubroomAsync(string clientRowId, string field, string? tabTargetId, string? value=null)
+    {
+        if (!Guid.TryParse(clientRowId, out var id) || !ChildTableBrowserFacts.TryField(field, out var typedField) || !fields.Contains(field)) return Task.CompletedTask;
+        var row = active.SingleOrDefault(x => x.ClientDraftId == id);
+        return row is null ? Task.CompletedTask : TextBlur(row, typedField, tabTargetId, value);
+    }
+    private async Task TextBlur(Row row, ChildTableField field, string? tabTargetId, string? value)
+    {
+        if(disposed||!PageOwned||Boundary(row).ProposalExclusive)return;
+        InstallTextValue(row, field, value);
+        if (row.State == RowState.Failed || Boundary(row).RequiresReload || (!Boundary(row).InFlight && ((row.EntityId is null&&!Meaningful(row)) || (row.EntityId is not null&&!Changed(row))))) { await NotifyDraftState(); return; }
+        if ((row.EntityId is null || Boundary(row).InFlight || row.Interaction.HasRetainedCorrection) && !string.IsNullOrEmpty(tabTargetId)) pendingFocus = ChildTableFocusTarget.Element(tabTargetId);
+        await Blur(row, field.Wire());
+    }
+    [JSInvokable] public Task ChildActionSubroomAsync(string action, string entityId)
+    {
+        if (!PageOwned || !Guid.TryParse(entityId, out var id) || !ChildTableBrowserFacts.TryAction(action, out var typedAction)) return Task.CompletedTask;
+        var row = active.Concat(archived).SingleOrDefault(x => x.EntityId == id);
+        return row is null || row.State != RowState.Persisted ? Task.CompletedTask : ChildAction(row, typedAction);
+    }
+    private Task ChildAction(Row row, ChildTableAction action) => action switch
+    {
+        ChildTableAction.Archive when !row.IsArchived => ArchiveCore(row, true),
+        ChildTableAction.Restore when row.IsArchived => ArchiveCore(row, false),
+        ChildTableAction.OpenDelete when row.IsArchived => DeleteCore(row),
+        ChildTableAction.CancelDelete when row.IsArchived => DeleteConfirmationCancelled?.Invoke(new(V2DeleteConfirmationKind.Subroom, row.EntityId!.Value)) ?? Task.CompletedTask,
+        ChildTableAction.Delete when row.IsArchived => DeleteConfirmationConfirmed?.Invoke(new(V2DeleteConfirmationKind.Subroom, row.EntityId!.Value)) ?? Task.CompletedTask,
+        _ => Task.CompletedTask
+    };
     /// <summary>Transfers the typed no-write/conflict reference draft after a page proposal closes.</summary>
-    public void RetainSubroomReferenceConflict(SubroomDurableBaseline baseline, SubroomDraft draft) => pendingReferenceConflictDraft = (baseline.EntityId, draft);
-    private void AdvanceVirtualTarget(Row row, string direction) { if(pendingFocus is not { ClientRowId: Guid clientRowId, Field: string field } current) return; var fieldIndex=fields.IndexOf(field); if(direction=="left" && fieldIndex>0) pendingFocus=new(clientRowId,fields[fieldIndex-1]); else if(direction=="right" && fieldIndex<fields.Length-1) pendingFocus=new(clientRowId,fields[fieldIndex+1]); else if(direction=="up") { pendingFocus=new(row.ClientDraftId,field); pendingTailPromotionId=null; } else if(direction=="down") { pendingFocus=new(latentSuccessorId,field); pendingTailPromotionId=latentSuccessorId; latentSuccessorId=Guid.NewGuid(); } }
+    public Task RetainSubroomReferenceConflict(SubroomDurableBaseline baseline, SubroomDraft draft)
+    {
+        if(!PageOwned)return Task.CompletedTask;
+        var row=active.Concat(archived).SingleOrDefault(x=>x.EntityId==baseline.EntityId);
+        if(row is not null){Boundary(row).ReleaseProposal(baseline,draft);sharedInteraction.PendingFocus=null;sharedInteraction.PendingTailPromotionId=null;}
+        else pendingReferenceConflictDraft=(baseline.EntityId,draft);
+        return NotifyDraftState();
+    }
+    public async Task CompleteReferenceProposal(SubroomReferenceRenameProposal proposal,V2SubroomCommandOutcome outcome)
+    {
+        if(!PageOwned)return;
+        var row=active.SingleOrDefault(x=>x.ClientDraftId==proposal.SourceCurrent.ClientDraftId);
+        if(row is null)return;
+        var baseline=outcome.FreshBaseline??row.Baseline;
+        var draft=outcome.Status==V2SubroomCommandStatus.Committed&&baseline is not null?ChildTableDraftAdapters.From(baseline,row.ClientDraftId):outcome.RetainedDraft??proposal.SourceCurrent;
+        if(outcome.Status is not(V2SubroomCommandStatus.Committed or V2SubroomCommandStatus.Unchanged)&&baseline is not null)
+            draft=ChildTableDraftAdapters.Rebase(proposal.SourceBaseline,draft,ChildTableDraftAdapters.From(baseline,row.ClientDraftId));
+        Boundary(row).ReleaseProposal(baseline,draft,outcome.CreatedEntityId,outcome.RequiresRoomReload,outcome.Status is not(V2SubroomCommandStatus.Committed or V2SubroomCommandStatus.Unchanged),outcome.Message);
+        await NotifyDraftState();
+    }
+    public Task ResumeAfterRoomReloadAsync(SubroomTableView fresh){foreach(var owner in boundaries.Values)owner.ResumeAfterReload();ApplyFreshView(RoomId,fresh);return NotifyDraftState();}
     private ChildTableFocusTarget? Target(Row row,string field,string direction) { var rows=row.IsArchived?archived:active; return ChildTableInteractionPrimitives.Target(fields, row.ClientDraftId, rows.IndexOf(row), rows.Count, row.IsArchived, row.EntityId is null, latentSuccessorId, field, direction, index => rows[index].ClientDraftId); }
-    [JSInvokable] public async Task DropSubroomAsync(string entityId, string partition, int targetIndex) { if (!Guid.TryParse(entityId, out var id) || partition != "active" || Reorder is null) return; var row=active.FirstOrDefault(x=>x.EntityId==id); if(row?.State!=RowState.Persisted) return; var result=await Reorder(id,targetIndex); message=result.Message; if(result.Status==V2SubroomCommandStatus.Committed) await (RefreshApplied?.Invoke() ?? Task.CompletedTask); }
+    [JSInvokable] public async Task DropSubroomAsync(string entityId,string partition,int targetIndex)
+    {
+        if(!PageOwned||!Guid.TryParse(entityId,out var id)||!ChildTableBrowserFacts.TryPartition(partition,out var typedPartition)||typedPartition!=ChildTablePartition.Active||Reorder is null)return;
+        var row=active.FirstOrDefault(x=>x.EntityId==id);if(row?.State!=RowState.Persisted||Boundary(row).HoldsPresentation)return;
+        var source=RoomId;var generation=routeGeneration;var result=await Reorder(id,targetIndex);
+        if(!Owns(source,generation)||result.Status==V2SubroomCommandStatus.Committed&&(!result.PresentationRefreshed||result.RequiresRoomReload))return;
+        message=result.Message;if(result.Status==V2SubroomCommandStatus.Committed)await(RefreshApplied?.Invoke()??Task.CompletedTask);
+    }
     private static V2Severity DisplaySeverity(Row row, V2Severity severity) => row.IsArchived ? V2Severity.Neutral : severity;
     private static V2Severity Max(V2Severity first, V2Severity second) => (V2Severity)Math.Max((int)first, (int)second);
     private static string? SeverityClass(V2Severity? severity) => severity switch { V2Severity.Warning => "warning", V2Severity.Danger => "danger", _ => null };
-    private static string FailureMessage(Row row)=>row.FailureMessage??"Save failed; edit a field to try again."; private Task<V2SubroomCommandOutcome> Unavailable(string verb)=>Task.FromResult(new V2SubroomCommandOutcome(V2SubroomCommandStatus.ExpectedFailure,$"{verb} is unavailable.")); private Task NotifyDraftState()=>DraftStateChanged?.Invoke(active.Any(x=>x.EntityId is null&&Meaningful(x)))??Task.CompletedTask; private static bool Meaningful(Row row)=>!string.IsNullOrEmpty(row.Draft.FriendlyName)||!string.IsNullOrEmpty(row.Draft.ReferenceId)||!string.IsNullOrEmpty(row.Draft.Notes); private static bool Changed(Row row) => row.Baseline is { } baseline && (row.Draft.FriendlyName!=baseline.FriendlyName || row.Draft.ReferenceId!=baseline.ReferenceId || row.Draft.Notes!=baseline.Notes); private static string Id(Row r,string field)=>ChildTableInteractionPrimitives.FieldId(r.ClientDraftId,field);
+    private static string FailureMessage(Row row)=>row.FailureMessage??"Save failed; edit a field to try again."; private Task<V2SubroomCommandOutcome> Unavailable(string verb)=>Task.FromResult(new V2SubroomCommandOutcome(V2SubroomCommandStatus.ExpectedFailure,$"{verb} is unavailable.")); private Task NotifyDraftState()=>disposed?Task.CompletedTask:DraftStateChanged?.Invoke(active.Any(x=>x.EntityId is null&&(Boundary(x).OwnsCreation||Meaningful(x))))??Task.CompletedTask; private static bool Meaningful(Row row)=>!string.IsNullOrEmpty(row.Draft.FriendlyName)||!string.IsNullOrEmpty(row.Draft.ReferenceId)||!string.IsNullOrEmpty(row.Draft.Notes); private static bool Changed(Row row) => row.Baseline is { } baseline && (row.Draft.FriendlyName!=baseline.FriendlyName || row.Draft.ReferenceId!=baseline.ReferenceId || row.Draft.Notes!=baseline.Notes); private static string Id(Row r,string field)=>ChildTableInteractionPrimitives.FieldId(r.ClientDraftId,field);
     private static class RowState { public const ChildTableRowLifecycle Uncommitted=ChildTableRowLifecycle.Uncommitted, Saving=ChildTableRowLifecycle.Saving, Failed=ChildTableRowLifecycle.Failed, Persisted=ChildTableRowLifecycle.Persisted; }
     private sealed class Row : IChildTableRowInteraction {
         private readonly ChildTableRowInteraction<SubroomDurableBaseline, SubroomDraft> interaction;
@@ -81,6 +246,6 @@
         public ChildTableRowInteraction<SubroomDurableBaseline, SubroomDraft> Interaction => interaction;
         public Guid ClientDraftId => interaction.ClientRowId; public Guid? EntityId => interaction.EntityId; Guid IChildTableRowInteraction.ClientRowId => interaction.ClientRowId; public bool IsArchived=>interaction.IsArchived; public ChildTableRowLifecycle State =>interaction.Lifecycle; public string? FailureMessage =>interaction.FailureMessage; public V2Severity FriendlyNameSeverity; public V2Severity ReferenceIdSeverity; public V2Severity UsageSeverity; public SubroomDurableBaseline? Baseline =>interaction.Baseline; public SubroomDraft Draft {get=>interaction.Draft;set=>interaction.ReplaceDraft(value);}
         void IChildTableRowInteraction.ResetForRoute() => interaction.ResetForRoute();
-        public static Row Empty(Guid id)=>new(id,new(id,"","","",null,null,null,null)); public static Row From(SubroomRowView v){var r=Empty(Guid.NewGuid());r.Load(v);return r;} public void Load(SubroomRowView v){FriendlyNameSeverity=v.FriendlyNameSeverity;ReferenceIdSeverity=v.ReferenceIdSeverity;UsageSeverity=v.UsageSeverity;interaction.Load(v.EntityId,v.IsArchived,RoomEditorV2CommandService.FromView(v),new(ClientDraftId,v.FriendlyName,v.ReferenceId,v.Notes,v.SceneUnitX,v.SceneUnitY,v.SceneUnitWidth,v.SceneUnitHeight));}
+        public static Row Empty(Guid id)=>new(id,new(id,"","","",null,null,null,null)); public static Row From(SubroomRowView v){var r=Empty(Guid.NewGuid());r.Load(v);return r;} public void Load(SubroomRowView v){FriendlyNameSeverity=v.FriendlyNameSeverity;ReferenceIdSeverity=v.ReferenceIdSeverity;UsageSeverity=v.UsageSeverity;interaction.Load(v.EntityId,v.IsArchived,RoomEditorV2CommandService.FromView(v),new(ClientDraftId,v.FriendlyName,v.ReferenceId,v.Notes,v.SceneUnitX,v.SceneUnitY,v.SceneUnitWidth,v.SceneUnitHeight),retainCorrection:true,rebaseCorrection:ChildTableDraftAdapters.Rebase);}
     }
 }

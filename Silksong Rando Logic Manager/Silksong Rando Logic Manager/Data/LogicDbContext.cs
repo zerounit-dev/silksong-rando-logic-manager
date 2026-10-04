@@ -19,6 +19,8 @@ public sealed class LogicDbContext(DbContextOptions<LogicDbContext> options) : D
     public DbSet<MapOverlay> MapOverlays => Set<MapOverlay>();
     public DbSet<RequirementPredicate> RequirementPredicates => Set<RequirementPredicate>();
     public DbSet<RequirementItem> RequirementItems => Set<RequirementItem>();
+    public DbSet<RequirementCountable> RequirementCountables => Set<RequirementCountable>();
+    public DbSet<RequirementEnemyType> RequirementEnemyTypes => Set<RequirementEnemyType>();
 
 #if DEBUG
     public override void Dispose()
@@ -61,6 +63,8 @@ public sealed class LogicDbContext(DbContextOptions<LogicDbContext> options) : D
         ConfigureMapOverlay(modelBuilder.Entity<MapOverlay>());
         ConfigureRequirementPredicate(modelBuilder.Entity<RequirementPredicate>());
         ConfigureRequirementItem(modelBuilder.Entity<RequirementItem>());
+        ConfigureRequirementCountable(modelBuilder.Entity<RequirementCountable>());
+        ConfigureRequirementEnemyType(modelBuilder.Entity<RequirementEnemyType>());
     }
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
@@ -118,6 +122,7 @@ public sealed class LogicDbContext(DbContextOptions<LogicDbContext> options) : D
     private static void ConfigureRoomTransition(EntityTypeBuilder<RoomTransition> entity)
     {
         ConfigureArchivable(entity);
+        entity.Property(x => x.IsUnsafeArrival).IsRequired().HasDefaultValue(false);
         entity.Property(x => x.Alias).IsRequired();
         entity.Property(x => x.FriendlyName).IsRequired();
         entity.Property(x => x.InGameId).UseCollation("NOCASE");
@@ -215,6 +220,24 @@ public sealed class LogicDbContext(DbContextOptions<LogicDbContext> options) : D
     }
 
     private static void ConfigureRequirementItem(EntityTypeBuilder<RequirementItem> entity)
+    {
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Name).IsRequired();
+        entity.Property(x => x.OutputValue).IsRequired();
+        entity.Property(x => x.Aliases).IsRequired();
+        entity.Property(x => x.Notes).IsRequired();
+    }
+
+    private static void ConfigureRequirementCountable(EntityTypeBuilder<RequirementCountable> entity)
+    {
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Name).IsRequired();
+        entity.Property(x => x.OutputValue).IsRequired();
+        entity.Property(x => x.Aliases).IsRequired();
+        entity.Property(x => x.Notes).IsRequired();
+    }
+
+    private static void ConfigureRequirementEnemyType(EntityTypeBuilder<RequirementEnemyType> entity)
     {
         entity.HasKey(x => x.Id);
         entity.Property(x => x.Name).IsRequired();

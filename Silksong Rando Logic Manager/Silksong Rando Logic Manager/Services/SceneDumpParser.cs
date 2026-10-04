@@ -3,7 +3,7 @@ using System.Text;
 
 namespace Silksong_Rando_Logic_Manager.Services;
 
-public sealed class SceneDumpParser
+public sealed partial class SceneDumpParser
 {
     public const long MaximumBytes = 256L * 1024 * 1024;
 
@@ -45,7 +45,7 @@ public sealed class SceneDumpParser
                     dumpStage = json.ReadNullableString();
                     break;
                 case "rootObjects":
-                    roots = ParseObjects("rootObjects");
+                    roots = ParseObjects("rootObjects", out _);
                     break;
                 case "mapContext":
                     mapContext = ParseMapContext();
@@ -64,7 +64,9 @@ public sealed class SceneDumpParser
             AssignContext(roots[index], null, 0, index.ToString(CultureInfo.InvariantCulture));
         }
 
-        return new SceneDumpReview(sceneName, roots, warnings.ToArray(), VerifiedSceneUnitSize(sceneName, dumpStage, mapContext));
+        var review = new SceneDumpReview(sceneName, roots, warnings.ToArray(), VerifiedSceneUnitSize(sceneName, dumpStage, mapContext));
+        ScenePlacementWorldResolver.Apply(review);
+        return review;
     }
 
     private SceneMapContextEvidence? ParseMapContext()
@@ -214,12 +216,14 @@ public sealed class SceneDumpParser
         return new SceneUnitSize(width, height);
     }
 
-    private List<SceneDumpObject> ParseObjects(string context)
+    private List<SceneDumpObject> ParseObjects(string context, out bool reliable)
     {
+        reliable = true;
         var objects = new List<SceneDumpObject>();
         if (!json.TryConsume('['))
         {
             Warn(context, "Expected an array.");
+            reliable = false;
             json.SkipValue();
             return objects;
         }
@@ -230,6 +234,7 @@ public sealed class SceneDumpParser
             if (json.Peek() != '{')
             {
                 Warn($"{context}[{index}]", "Expected an object.");
+                reliable = false;
                 json.SkipValue();
             }
             else
@@ -256,13 +261,20 @@ public sealed class SceneDumpParser
         ScenePosition? localPosition = null;
         var components = new List<SceneDumpComponent>();
         var children = new List<SceneDumpObject>();
+        bool componentsReliable = false, childrenReliable = false, exportError = false;
+        int? instanceId = null;
+        var members = new HashSet<string>(StringComparer.Ordinal);
 
         while (!json.TryConsume('}'))
         {
             var property = json.ReadPropertyName();
             json.Expect(':');
+            if (!members.Add(property)) exportError = true;
             switch (property)
             {
+                case "instanceId":
+                    instanceId = json.ReadNullableInt();
+                    break;
                 case "name":
                     name = json.ReadNullableString() ?? string.Empty;
                     break;
@@ -282,10 +294,14 @@ public sealed class SceneDumpParser
                     (worldPosition, localPosition) = ParseTransform($"{context}.transform");
                     break;
                 case "components":
-                    components = ParseComponents($"{context}.components");
+                    components = ParseComponents($"{context}.components", out componentsReliable);
                     break;
                 case "children":
-                    children = ParseObjects($"{context}.children");
+                    children = ParseObjects($"{context}.children", out childrenReliable);
+                    break;
+                case "error":
+                    exportError = true;
+                    json.SkipValue();
                     break;
                 default:
                     json.SkipValue();
@@ -305,7 +321,10 @@ public sealed class SceneDumpParser
             Warn(context, "Transform position data is missing.");
         }
 
-        return new SceneDumpObject(name, tag, layer, activeSelf, activeInHierarchy, worldPosition, localPosition, components, children);
+        return new SceneDumpObject(name, tag, layer, activeSelf, activeInHierarchy, worldPosition, localPosition, components, children)
+        { HasReliableFillerEvidence = componentsReliable && childrenReliable && !exportError,
+          CaptureInstanceId = instanceId, HasReliableWorldIdentity = !exportError && !string.IsNullOrWhiteSpace(name),
+          HasReliableWorldComponents = componentsReliable && !exportError };
     }
 
     private (ScenePosition? World, ScenePosition? Local) ParseTransform(string context)
@@ -377,12 +396,14 @@ public sealed class SceneDumpParser
         return new ScenePosition(x, y, z);
     }
 
-    private List<SceneDumpComponent> ParseComponents(string context)
+    private List<SceneDumpComponent> ParseComponents(string context, out bool reliable)
     {
+        reliable = true;
         var components = new List<SceneDumpComponent>();
         if (!json.TryConsume('['))
         {
             Warn(context, "Expected an array.");
+            reliable = false;
             json.SkipValue();
             return components;
         }
@@ -393,6 +414,7 @@ public sealed class SceneDumpParser
             if (json.Peek() != '{')
             {
                 Warn($"{context}[{index}]", "Expected an object.");
+                reliable = false;
                 json.SkipValue();
             }
             else
@@ -412,10 +434,12 @@ public sealed class SceneDumpParser
         json.Expect('{');
         var type = string.Empty;
         var evidence = new SceneComponentEvidence();
+        var members = new HashSet<string>(StringComparer.Ordinal);
         while (!json.TryConsume('}'))
         {
             var property = json.ReadPropertyName();
             json.Expect(':');
+            if (!members.Add(property)) evidence.Filler.Invalid = true;
             if (property == "type")
             {
                 type = json.ReadNullableString() ?? string.Empty;
@@ -426,6 +450,7 @@ public sealed class SceneDumpParser
             }
             else
             {
+                if (property == "error") evidence.Filler.Invalid = true;
                 json.SkipValue();
             }
 
@@ -437,22 +462,64 @@ public sealed class SceneDumpParser
             Warn(context, "Component type is missing.");
         }
 
+        evidence.Filler.Invalid |= evidence.World.HasExportError;
         return new SceneDumpComponent(
             type,
             type.StartsWith("Persistent", StringComparison.Ordinal) ? evidence.ItemDataId : null,
             evidence.TargetScene,
-            evidence.EntryPoint);
+            evidence.EntryPoint,
+            type == "HealthManager" && evidence.IsPartOfSendToTarget is true && evidence.DamageTargetType == "HealthManager",
+            type is "EnemyDeathEffectsRegular" or "EnemyDeathEffectsNoEffect" ? evidence.DirectJournal.Names.ToArray()
+                : type == "PlayMakerFSM" ? evidence.FsmJournal.Names.ToArray() : [],
+            type is "EnemyDeathEffectsRegular" or "EnemyDeathEffectsNoEffect" ? evidence.DirectJournal.Malformed
+                : type == "PlayMakerFSM" && evidence.FsmJournal.Malformed)
+        { HasReliableFillerEvidence = evidence.Filler.DataPresent && !evidence.Filler.Invalid,
+          ConditionalFillerEligible = evidence.Filler.Eligible(type),
+          WorldEvidence = FinishWorldEvidence(type, evidence) };
     }
 
-    private void ScanComponentData(SceneComponentEvidence evidence, bool insideItemData, bool isComponentDataRoot, string context)
+    private bool ScanComponentData(SceneComponentEvidence evidence, bool insideItemData, bool isComponentDataRoot, string context,
+        FillerShape? shape = null, bool isDataType = false)
     {
         if (json.TryConsume('{'))
         {
+            if (isComponentDataRoot) { evidence.Filler.DataPresent = true; evidence.Filler.ObjectData = true; }
+            var valid = shape is null || shape.Kind == FillerValueKind.Object;
+            var seen = new HashSet<string>(StringComparer.Ordinal);
             while (!json.TryConsume('}'))
             {
                 var property = json.ReadPropertyName();
                 json.Expect(':');
-                if (property == "targetScene")
+                if (!seen.Add(property)) { valid = false; evidence.Filler.Invalid = true; }
+                if (property == "error") evidence.Filler.Invalid = true;
+                FillerShape? childShape = null;
+                if (isComponentDataRoot)
+                {
+                    evidence.Filler.Fields.Add(property);
+                    FillerFields.TryGetValue(property, out childShape);
+                }
+                else if (shape is not null && (shape.Fields is null || !shape.Fields.TryGetValue(property, out childShape))) valid = false;
+                if (isComponentDataRoot && property == "journalRecord")
+                {
+                    if (json.Peek() == 'n') json.SkipValue();
+                    else AddJournal(evidence.DirectJournal, ParseReference());
+                }
+                else if (isComponentDataRoot && property == "isPartOfSendToTarget")
+                {
+                    evidence.IsPartOfSendToTarget = json.ReadNullableBoolean();
+                }
+                else if (isComponentDataRoot && property == "sendDamageTo")
+                {
+                    evidence.DamageTargetType = ParseReference().Type;
+                }
+                else if (isComponentDataRoot && property == "fsm")
+                {
+                    ParseFsm(evidence.FsmJournal, evidence.World);
+                }
+                else if (isComponentDataRoot && ReadWorldField(property, evidence))
+                {
+                }
+                else if (property == "targetScene")
                 {
                     evidence.TargetScene ??= json.ReadNullableString();
                 }
@@ -466,24 +533,34 @@ public sealed class SceneDumpParser
                 }
                 else
                 {
-                    ScanComponentData(evidence, insideItemData || property == "itemData", false, $"{context}.{property}");
+                    var childValid = ScanComponentData(evidence, insideItemData || property == "itemData", false, $"{context}.{property}",
+                        childShape, isComponentDataRoot && property == "$type");
+                    valid &= childValid;
+                    // A supplied root type wrapper must be well-formed even for native data.
+                    // Conditional field guards remain admission-only for their owning types.
+                    if (isComponentDataRoot && property == "$type" && !childValid) evidence.Filler.Invalid = true;
+                    if (isComponentDataRoot && childShape is not null && childValid) evidence.Filler.Valid.Add(property);
                 }
 
                 json.TryConsume(',');
             }
 
-            return;
+            return valid && (shape?.Required is null || shape.Required.All(seen.Contains));
         }
 
         if (json.TryConsume('['))
         {
+            if (isComponentDataRoot) evidence.Filler.DataPresent = true;
+            var valid = shape is null || shape.Kind == FillerValueKind.Array;
+            var count = 0;
             while (!json.TryConsume(']'))
             {
-                ScanComponentData(evidence, insideItemData, false, context);
+                count++;
+                valid &= ScanComponentData(evidence, insideItemData, false, context, shape?.Element);
                 json.TryConsume(',');
             }
 
-            return;
+            return valid && (shape?.EmptyOnly is not true || count == 0);
         }
 
         if (isComponentDataRoot && json.Peek() != 'n')
@@ -491,7 +568,27 @@ public sealed class SceneDumpParser
             Warn(context, "Component data is not an object, array, or null.");
         }
 
+        if (json.Peek() == '"')
+        {
+            var stringValue = json.ReadNullableString();
+            if (IsMissingEvidence(stringValue)) evidence.Filler.Invalid = true;
+            if (isDataType) evidence.Filler.DataType = stringValue;
+            return !isComponentDataRoot && (shape is null || shape.Kind == FillerValueKind.String &&
+                !IsMissingEvidence(stringValue) && (shape.ExactString is null || shape.ExactString == stringValue));
+        }
+        if (isComponentDataRoot) evidence.Filler.Invalid = true;
+        if (shape?.Kind == FillerValueKind.Number)
+            return json.ReadNullableDouble() is { } number && double.IsFinite(number) &&
+                (!shape.IntegerOnly || number is >= int.MinValue and <= int.MaxValue && Math.Truncate(number) == number);
+        if (shape?.Kind == FillerValueKind.Boolean)
+            return json.ReadNullableBoolean() is { } booleanValue && (shape.ExactBoolean is null || booleanValue == shape.ExactBoolean);
+        if (json.Peek() == 'n')
+        {
+            _ = json.ReadNullableString(); // Exact null token, not a missing critical field.
+            return shape is null || shape.Kind == FillerValueKind.Null || shape.Nullable;
+        }
         json.SkipValue();
+        return !isComponentDataRoot && shape is null;
     }
 
     private void AssignContext(SceneDumpObject node, Guid? parentId, int depth, string path)
@@ -513,7 +610,160 @@ public sealed class SceneDumpParser
         public string? ItemDataId { get; set; }
         public string? TargetScene { get; set; }
         public string? EntryPoint { get; set; }
+        public bool? IsPartOfSendToTarget { get; set; }
+        public string? DamageTargetType { get; set; }
+        public SceneJournalEvidence DirectJournal { get; } = new();
+        public SceneJournalEvidence FsmJournal { get; } = new();
+        public FillerDataEvidence Filler { get; } = new();
+        public WorldDataEvidence World { get; } = new();
     }
+
+    private sealed class SceneJournalEvidence
+    {
+        public List<string> Names { get; } = [];
+        public bool Malformed { get; set; }
+    }
+
+    // Only the direct component's fsm.states[].actionData is admitted. Each state
+    // retains indexed scalar arrays and reference wrappers, never its raw JSON.
+    private void ParseFsm(SceneJournalEvidence evidence, WorldDataEvidence world)
+    {
+        var fsmFields = WorldMembers(world, property =>
+        {
+            if (property == "$type") { WorldType(world, "HutongGames.PlayMaker.Fsm"); return; }
+            if (property != "states") { json.SkipValue(); return; }
+            WorldArray(world, () =>
+            {
+                string? stateName = null;
+                var tests = new WorldDataEvidence();
+                var stateFields = WorldMembers(tests, stateProperty =>
+                {
+                    if (stateProperty == "$type") WorldType(tests, "HutongGames.PlayMaker.FsmState");
+                    else if (stateProperty == "name") stateName = WorldText(tests);
+                    else if (stateProperty == "actionData") ParseActionData(evidence, tests);
+                    else json.SkipValue();
+                });
+                if (!stateFields.Contains("name") || !stateFields.Contains("actionData")) tests.Invalid = true;
+                world.FsmUncertain |= tests.Invalid || tests.FsmUncertain;
+                world.HasExportError |= tests.HasExportError;
+                if (!tests.Invalid) world.FsmTests.AddRange(tests.FsmTests.Select(test => test with { State = stateName }));
+            });
+        });
+        if (!fsmFields.Contains("states")) world.Invalid = true;
+    }
+
+    private void ParseActionData(SceneJournalEvidence evidence, WorldDataEvidence world)
+    {
+        List<string?> names = [], parameterNames = [], parameterTypes = [];
+        List<bool?> enabled = [];
+        List<int?> starts = [], positions = [];
+        List<SceneReference> objects = [];
+        List<SceneLiteralString> strings = [];
+        List<string?> events = [];
+        var actionFields = WorldMembers(world, property =>
+        {
+            switch (property)
+            {
+                case "$type": WorldType(world, "HutongGames.PlayMaker.ActionData"); break;
+                case "actionNames": names = WorldValues(world, () => WorldText(world)); break;
+                case "actionEnabled": enabled = WorldValues(world, () => WorldBoolean(world)); break;
+                case "actionStartIndex": starts = WorldValues(world, () => WorldIndex(world)); break;
+                case "paramName": parameterNames = WorldValues(world, () => WorldText(world, allowEmpty: true)); break;
+                case "paramDataType": parameterTypes = WorldValues(world, () => WorldText(world)); break;
+                case "paramDataPos": positions = WorldValues(world, () => WorldIndex(world)); break;
+                case "fsmObjectParams": objects = ParseValues(ParseFsmObjectReference); break;
+                case "fsmStringParams": strings = WorldValues(world, () => ParseLiteralString(world)); break;
+                case "stringParams": events = WorldValues(world, () => WorldText(world, allowEmpty: true)); break;
+                default: json.SkipValue(); break;
+            }
+        });
+        if (!new[] { "actionNames", "actionEnabled", "actionStartIndex", "paramName", "paramDataType", "paramDataPos", "fsmStringParams", "stringParams" }.All(actionFields.Contains))
+            world.Invalid = true;
+        DecodeWorldTests(world, names, enabled, starts, parameterNames, parameterTypes, positions, strings, events);
+        for (var action = 0; action < names.Count; action++)
+        {
+            if (names[action] is not ("RecordJournalKill" or "RecordJournalKillV2")) continue;
+            if (action < enabled.Count && enabled[action] is false) continue;
+            var start = action < starts.Count ? starts[action] : null;
+            var end = action + 1 < names.Count
+                ? action + 1 < starts.Count ? starts[action + 1] : null
+                : parameterNames.Count;
+            if (action >= enabled.Count || enabled[action] is not true ||
+                start is not { } first || end is not { } last || first < 0 || last <= first ||
+                last > parameterNames.Count || last > parameterTypes.Count || last > positions.Count)
+            {
+                evidence.Malformed = true;
+                continue;
+            }
+            var records = 0;
+            for (var parameter = first; parameter < last; parameter++)
+            {
+                if (parameterNames[parameter] != "Record") continue;
+                records++;
+                if (parameterTypes[parameter] == "FsmObject" && positions[parameter] is { } index && index >= 0 && index < objects.Count)
+                    AddJournal(evidence, objects[index]);
+                else evidence.Malformed = true;
+            }
+            if (records != 1) evidence.Malformed = true;
+        }
+    }
+
+    private SceneReference ParseFsmObjectReference()
+    {
+        SceneReference reference = new(null, null);
+        ParseMembers(property =>
+        {
+            if (property == "value") reference = ParseReference();
+            else json.SkipValue();
+        });
+        return reference;
+    }
+
+    private SceneReference ParseReference()
+    {
+        string? type = null, name = null;
+        ParseMembers(property =>
+        {
+            if (property == "type") type = json.ReadNullableString();
+            else if (property == "name") name = json.ReadNullableString();
+            else json.SkipValue();
+        });
+        return new(type, name);
+    }
+
+    private static void AddJournal(SceneJournalEvidence evidence, SceneReference reference)
+    {
+        if (reference.Type == "EnemyJournalRecord" && !string.IsNullOrWhiteSpace(reference.Name))
+            evidence.Names.Add(reference.Name);
+        else evidence.Malformed = true;
+    }
+
+    private void ParseMembers(Action<string> read)
+    {
+        if (!json.TryConsume('{')) { json.SkipValue(); return; }
+        while (!json.TryConsume('}'))
+        {
+            var property = json.ReadPropertyName();
+            json.Expect(':');
+            read(property);
+            json.TryConsume(',');
+        }
+    }
+
+    private void ParseArray(Action read)
+    {
+        if (!json.TryConsume('[')) { json.SkipValue(); return; }
+        while (!json.TryConsume(']')) { read(); json.TryConsume(','); }
+    }
+
+    private List<T> ParseValues<T>(Func<T> read)
+    {
+        List<T> values = [];
+        ParseArray(() => values.Add(read()));
+        return values;
+    }
+
+    private sealed record SceneReference(string? Type, string? Name);
 
     private sealed class SceneMapContextEvidence
     {
@@ -566,9 +816,30 @@ public sealed class SceneDumpObject(
     public IReadOnlyList<SceneDumpObject> Children { get; } = children;
     public List<string> CandidateReasons { get; } = [];
     public SceneDumpClassification Classification { get; set; }
+    public bool IsAct3Only { get; internal set; }
+    public int? CaptureInstanceId { get; internal set; }
+    public bool HasReliableWorldIdentity { get; internal set; }
+    public bool HasReliableWorldComponents { get; internal set; }
+    public bool IsEnemyActorCandidate { get; internal set; }
+    public ScenePlacementWorldAvailability PlacementWorld { get; internal set; }
+    public IReadOnlyList<ScenePlayerDataCondition> PlayerDataConditions { get; internal set; } = [];
+    public IReadOnlyList<string> WorldUncertainty { get; internal set; } = [];
+    // Permanent scoped distinction: SW1 enemy/candidate proof versus SR1 non-enemy context.
+    public bool ShowAct3Indication => IsEnemyActorCandidate || Classification == SceneDumpClassification.Enemy
+        ? PlacementWorld == ScenePlacementWorldAvailability.BlackThreadOnly : IsAct3Only;
+    public string? JournalName { get; internal set; }
+    public bool HasReliableFillerEvidence { get; internal set; }
+    public bool IsFiller { get; internal set; }
+    public bool HasKeptDescendant { get; internal set; }
 }
 
-public sealed record SceneDumpComponent(string Type, string? ItemDataId, string? TargetScene, string? EntryPoint);
+public sealed record SceneDumpComponent(string Type, string? ItemDataId, string? TargetScene, string? EntryPoint,
+    bool RedirectedHealthReceiver, IReadOnlyList<string> JournalNames, bool MalformedJournal)
+{
+    public bool HasReliableFillerEvidence { get; internal init; }
+    public bool ConditionalFillerEligible { get; internal init; }
+    public SceneComponentWorldEvidence? WorldEvidence { get; internal init; }
+}
 
 public sealed record ScenePosition(double? X, double? Y, double? Z);
 
@@ -578,7 +849,8 @@ public enum SceneDumpClassification
 {
     Other,
     Exit,
-    Check
+    Check,
+    Enemy
 }
 
 public sealed class SceneDumpParseException(string message) : Exception(message);

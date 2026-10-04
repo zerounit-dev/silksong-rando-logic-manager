@@ -6,11 +6,20 @@
 @inject IJSRuntime JS
 @inject DiagnosticState Diagnostics
 @using Silksong_Rando_Logic_Manager.Services
+@using System.Text
 
 <div class="sidebar-layout">
     <div class="nav-header">
         <a class="nav-title" href="/">Silksong Logic</a>
-        <input class="search-entry" placeholder="search groups or rooms" @bind="searchText" @bind:event="oninput" autocomplete="off" />
+        <input class="search-entry" placeholder="search groups or rooms" aria-label="Search groups or rooms" @bind="searchText" @bind:event="oninput" autocomplete="off" />
+        <button class="advanced-search-toggle" type="button" aria-expanded="@showAdvancedSearch" aria-controls="advanced-sidebar-search" aria-label="@(showAdvancedSearch ? "Collapse advanced search" : "Expand advanced search")" @onclick="ToggleAdvancedSearchAsync"><i class="fa-solid @(showAdvancedSearch ? "fa-caret-down" : "fa-caret-right")" aria-hidden="true"></i><span>advanced search</span></button>
+        @if (showAdvancedSearch)
+        {
+            <div id="advanced-sidebar-search" class="advanced-search-fields">
+                <input class="search-entry" placeholder="location name" aria-label="Search location names" @bind="locationSearchText" @bind:event="oninput" autocomplete="off" />
+                <input class="search-entry" placeholder="requirements" aria-label="Search requirements" @bind="requirementsSearchText" @bind:event="oninput" autocomplete="off" />
+            </div>
+        }
     </div>
 
 @if (workspace is null)
@@ -26,9 +35,9 @@ else
             </div>
             <button class="archive-mode-button tree-action" type="button" title="@(showArchivedRooms ? "Hide archived rooms" : "Show archived rooms")" aria-label="@(showArchivedRooms ? "Hide archived rooms" : "Show archived rooms")" aria-pressed="@showArchivedRooms" @onclick="ToggleArchiveModeAsync"><i class="fa-solid @(showArchivedRooms ? "fa-eye-slash" : "fa-eye")" aria-hidden="true"></i> @(showArchivedRooms ? "hide archive" : "show archive")</button>
         </div>
-        @if (workspace!.Rooms.Any(x => x.RoomGroupId is null && IsVisibleRoom(x)))
+        @{ var ungroupedRooms = workspace!.Rooms.Where(x => x.RoomGroupId is null && RoomPassesFilters(x, false)).ToList(); }
+        @if (ungroupedRooms.Count > 0)
         {
-            var ungroupedRooms = workspace.Rooms.Where(x => x.RoomGroupId is null && IsVisibleRoom(x)).ToList();
             <section class="room-group">
                 <div class="group-heading" @ondragover:preventDefault @ondragover="(() => SetDropTarget(null, ungroupedRooms.Count(x => !x.IsArchived)))" @ondrop="(() => DropRoomAsync(null, ungroupedRooms.Count(x => !x.IsArchived)))">
                     <span class="group-label @StatusClass(GroupStatus(null))">Ungrouped</span>
@@ -56,9 +65,9 @@ else
         {
             var groupDropIndex = groupIndex;
             var group = workspace.RoomGroups[groupIndex];
-            var groupMatches = Matches(group.FriendlyName);
-            var groupRooms = workspace.Rooms.Where(x => x.RoomGroupId == group.Id && IsVisibleRoom(x) && (groupMatches || Matches(x.FriendlyName))).ToList();
-            if (!groupMatches && groupRooms.Count == 0)
+            var groupMatches = MatchesNameSearch(group.FriendlyName);
+            var groupRooms = workspace.Rooms.Where(x => x.RoomGroupId == group.Id && RoomPassesFilters(x, groupMatches)).ToList();
+            if (groupRooms.Count == 0 && (AdvancedSearchIsActive || !groupMatches))
             {
                 continue;
             }
@@ -166,6 +175,12 @@ else
     private ElementReference groupFriendlyNameInput;
     private readonly HashSet<Guid> collapsedGroupIds = [];
     private string searchText = string.Empty;
+    private string locationSearchText = string.Empty;
+    private string requirementsSearchText = string.Empty;
+    private bool showAdvancedSearch;
+    private IReadOnlyDictionary<Guid, IReadOnlyList<string>>? locationNamesByRoom;
+    private IReadOnlyDictionary<Guid, IReadOnlyList<string>>? requirementsByRoom;
+    private Guid? currentRoomRouteId;
     private bool initialized;
     private bool showArchivedRooms;
     private bool sidebarStateRestored;
@@ -178,6 +193,7 @@ else
 
     protected override async Task OnInitializedAsync()
     {
+        currentRoomRouteId = GetRoomRouteId(Navigation.Uri);
         WorkspaceChanges.Changed += HandleWorkspaceChanged;
         Navigation.LocationChanged += HandleLocationChanged;
         await ExecuteAsync(ReloadAsync);
@@ -242,6 +258,12 @@ else
     }
 
     private bool IsVisibleRoom(SidebarRoom room) => !room.IsArchived || showArchivedRooms;
+
+    private bool RoomPassesFilters(SidebarRoom room, bool groupMatchesName) =>
+        IsVisibleRoom(room)
+        && (!NameSearchIsActive || groupMatchesName || MatchesNameSearch(room.FriendlyName))
+        && MatchesLocationSearch(room.Id)
+        && MatchesRequirementsSearch(room.Id);
 
     private string RoomLinkClass(SidebarRoom room)
     {
@@ -418,16 +440,59 @@ else
 
     private bool IsEffectivelyCollapsed(Guid groupId)
     {
-        if (string.IsNullOrWhiteSpace(searchText))
-        {
-            return IsCollapsed(groupId);
-        }
-
-        var group = workspace!.RoomGroups.Single(x => x.Id == groupId);
-        return !Matches(group.FriendlyName) && !workspace.Rooms.Any(x => x.RoomGroupId == groupId && IsVisibleRoom(x) && Matches(x.FriendlyName));
+        return AnySearchIsActive ? false : IsCollapsed(groupId);
     }
 
-    private bool Matches(string value) => string.IsNullOrWhiteSpace(searchText) || value.Contains(searchText.Trim(), StringComparison.OrdinalIgnoreCase);
+    private bool NameSearchIsActive => SearchTermIsActive(searchText);
+    private bool AdvancedSearchIsActive => SearchTermIsActive(locationSearchText) || SearchTermIsActive(requirementsSearchText);
+    private bool AnySearchIsActive => NameSearchIsActive || AdvancedSearchIsActive;
+
+    private bool MatchesNameSearch(string value) => MatchesSearch(value, searchText);
+
+    private bool MatchesLocationSearch(Guid roomId) =>
+        !SearchTermIsActive(locationSearchText)
+        || locationNamesByRoom is not null
+            && locationNamesByRoom.TryGetValue(roomId, out var names)
+            && names.Any(value => MatchesSearch(value, locationSearchText));
+
+    private bool MatchesRequirementsSearch(Guid roomId) =>
+        !SearchTermIsActive(requirementsSearchText)
+        || requirementsByRoom is not null
+            && requirementsByRoom.TryGetValue(roomId, out var requirements)
+            && requirements.Any(value => MatchesSearch(value, requirementsSearchText));
+
+    private static bool SearchTermIsActive(string value) => NormalizeSearchText(value).Length > 0;
+
+    private static bool MatchesSearch(string source, string term)
+    {
+        var normalizedTerm = NormalizeSearchText(term);
+        return normalizedTerm.Length == 0
+            || NormalizeSearchText(source).Contains(normalizedTerm, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizeSearchText(string value)
+    {
+        var result = new StringBuilder(value.Length);
+        var pendingSpace = false;
+        foreach (var character in value)
+        {
+            if (char.IsWhiteSpace(character))
+            {
+                pendingSpace = result.Length > 0;
+                continue;
+            }
+
+            if (pendingSpace)
+            {
+                result.Append(' ');
+                pendingSpace = false;
+            }
+
+            result.Append(character);
+        }
+
+        return result.ToString();
+    }
 
     private static string GroupedRoomLinkText(SidebarRoomGroup group, SidebarRoom room) =>
         !string.IsNullOrWhiteSpace(group.FriendlyName) &&
@@ -454,7 +519,7 @@ else
 
     private Task ToggleGroupAsync(Guid groupId) => ExecuteAsync(async () =>
     {
-        if (!string.IsNullOrWhiteSpace(searchText))
+        if (AnySearchIsActive)
         {
             return;
         }
@@ -521,7 +586,62 @@ else
         if (scope.HasFlag(WorkspaceChangeScope.Sidebar)) _ = RefreshAfterWorkspaceChangeAsync();
     }
 
-    private void HandleLocationChanged(object? sender, LocationChangedEventArgs args) => _ = InvokeAsync(StateHasChanged);
+    private void HandleLocationChanged(object? sender, LocationChangedEventArgs args)
+    {
+        var previousRoomId = currentRoomRouteId;
+        var nextRoomId = GetRoomRouteId(args.Location);
+        currentRoomRouteId = nextRoomId;
+        _ = InvokeAsync(async () =>
+        {
+            if (showAdvancedSearch && previousRoomId is { } previous && nextRoomId is { } next && previous != next)
+            {
+                await ExecuteAsync(LoadAdvancedSearchAsync);
+            }
+
+            StateHasChanged();
+        });
+    }
+
+    private async Task ToggleAdvancedSearchAsync()
+    {
+        if (showAdvancedSearch)
+        {
+            showAdvancedSearch = false;
+            locationSearchText = string.Empty;
+            requirementsSearchText = string.Empty;
+            locationNamesByRoom = null;
+            requirementsByRoom = null;
+            return;
+        }
+
+        showAdvancedSearch = true;
+        await ExecuteAsync(LoadAdvancedSearchAsync);
+    }
+
+    private async Task LoadAdvancedSearchAsync()
+    {
+        var locationRows = await Catalog.GetSidebarLocationSearchAsync();
+        var requirements = await Catalog.GetSidebarRequirementsSearchAsync();
+        var requirementRows = requirements.Transitions.Concat(requirements.Connections).Concat(requirements.Checks);
+        locationNamesByRoom = GroupSearchValues(locationRows.Select(x => (x.RoomId, x.FriendlyName)));
+        requirementsByRoom = GroupSearchValues(requirementRows.Select(x => (x.RoomId, x.Requirements)));
+    }
+
+    private static IReadOnlyDictionary<Guid, IReadOnlyList<string>> GroupSearchValues(IEnumerable<(Guid RoomId, string Value)> rows) =>
+        rows.GroupBy(x => x.RoomId).ToDictionary(
+            group => group.Key,
+            group => (IReadOnlyList<string>)group.Select(x => x.Value).ToArray());
+
+    private Guid? GetRoomRouteId(string uri)
+    {
+        var path = Navigation.ToBaseRelativePath(uri).Split('?', '#')[0].Trim('/');
+        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        return segments.Length == 2
+            && string.Equals(segments[0], "rooms", StringComparison.OrdinalIgnoreCase)
+            && Guid.TryParse(segments[1], out var roomId)
+                ? roomId
+                : null;
+    }
 
     private async Task RefreshAfterWorkspaceChangeAsync()
     {

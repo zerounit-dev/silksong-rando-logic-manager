@@ -18,6 +18,8 @@ public sealed class RequirementCatalogueImportService(RequirementCatalogueWriteC
 
                 await db.RequirementPredicates.ExecuteDeleteAsync(ct);
                 await db.RequirementItems.ExecuteDeleteAsync(ct);
+                await db.RequirementCountables.ExecuteDeleteAsync(ct);
+                await db.RequirementEnemyTypes.ExecuteDeleteAsync(ct);
 
                 var predicates = snapshot.Predicates.Select(predicate =>
                 {
@@ -38,6 +40,16 @@ public sealed class RequirementCatalogueImportService(RequirementCatalogueWriteC
                 }).ToArray();
                 db.RequirementPredicates.AddRange(predicates);
                 db.RequirementItems.AddRange(items);
+                db.RequirementCountables.AddRange(snapshot.Countables.Select(x => new RequirementCountable
+                {
+                    Id = x.Id, Name = x.Name, Category = x.Category, OutputValue = x.OutputValue,
+                    Notes = x.Notes, SortOrder = x.SortOrder, Aliases = x.Aliases
+                }));
+                db.RequirementEnemyTypes.AddRange(snapshot.EnemyTypes.Select(x => new RequirementEnemyType
+                {
+                    Id = x.Id, Name = x.Name, Category = x.Category, OutputValue = x.OutputValue,
+                    Notes = x.Notes, SortOrder = x.SortOrder, Aliases = x.Aliases
+                }));
                 await db.SaveChangesAsync(ct);
                 return RequirementCatalogueImportOutcome.Committed();
             }, cancellationToken);
@@ -61,13 +73,23 @@ public sealed class RequirementCatalogueImportService(RequirementCatalogueWriteC
                 RequirementCatalogueLanguage.TryParsePersistedValue(x.InputSyntax, out var syntax) ? syntax : (RequirementInputSyntax)(-1), x.OutputSyntax, x.Notes,
                 x.Aliases)),
             snapshot.Items.Select(x => new RequirementCatalogueItemValidation(x.Id, x.Name, x.Category, x.OutputValue, x.Notes,
-                x.Aliases)));
+                x.Aliases)))
+        .Concat(RequirementCatalogueValidator.ValidateReferenceValues(snapshot.Countables.Select(x =>
+            new RequirementCatalogueItemValidation(x.Id, x.Name, x.Category, x.OutputValue, x.Notes, x.Aliases))))
+        .Concat(RequirementCatalogueValidator.ValidateReferenceValues(snapshot.EnemyTypes.Select(x =>
+            new RequirementCatalogueItemValidation(x.Id, x.Name, x.Category, x.OutputValue, x.Notes, x.Aliases))))
+        .ToArray();
 
     private static bool HasValidStructure(RequirementCatalogueSnapshot snapshot)
     {
-        if (!HasContiguousOrder(snapshot.Predicates.Select(x => x.SortOrder)) || !HasContiguousOrder(snapshot.Items.Select(x => x.SortOrder))) return false;
+        if (!HasContiguousOrder(snapshot.Predicates.Select(x => x.SortOrder)) || !HasContiguousOrder(snapshot.Items.Select(x => x.SortOrder)) ||
+            !HasContiguousOrder(snapshot.Countables.Select(x => x.SortOrder)) || !HasContiguousOrder(snapshot.EnemyTypes.Select(x => x.SortOrder))) return false;
+        if (!snapshot.Predicates.Select(x => x.Aliases).Concat(snapshot.Items.Concat(snapshot.Countables).Concat(snapshot.EnemyTypes).Select(x => x.Aliases))
+            .All(aliases => RequirementCatalogueLanguage.TryCanonicalizeAliases(aliases, out var canonical, out _, out _) &&
+                string.Equals(aliases, canonical, StringComparison.Ordinal))) return false;
         var identities = new HashSet<Guid>();
-        return snapshot.Predicates.Select(x => x.Id).Concat(snapshot.Items.Select(x => x.Id)).All(id => id != Guid.Empty && identities.Add(id));
+        return snapshot.Predicates.Select(x => x.Id).Concat(snapshot.Items.Concat(snapshot.Countables).Concat(snapshot.EnemyTypes).Select(x => x.Id))
+            .All(id => id != Guid.Empty && identities.Add(id));
     }
 
     private static bool HasContiguousOrder(IEnumerable<int> values) => values.Select((value, index) => value == index).All(value => value);

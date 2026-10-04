@@ -2,6 +2,11 @@ namespace Silksong_Rando_Logic_Manager.Services;
 
 public static class RequirementCatalogueValidator
 {
+    // Literal-value catalogues use the item-shaped integrity rules, each in its
+    // own namespace; typed recognition does not merge those namespaces.
+    public static IReadOnlyList<RequirementCatalogueValidationIssue> ValidateReferenceValues(
+        IEnumerable<RequirementCatalogueItemValidation> definitions) => Validate([], definitions);
+
     public static RequirementDefinitionDraftValidation ValidateDraft(ApplyRequirementPredicate draft)
     {
         var syntax = RequirementCatalogueLanguage.TryParsePersistedValue(draft.InputSyntax, out var parsed)

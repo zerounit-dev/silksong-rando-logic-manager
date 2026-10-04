@@ -9,7 +9,8 @@ public sealed class ConnectionAnnotationService
     public ConnectionAnnotationGroup? FindEligibleGroup(SubroomConnection connection, IEnumerable<SubroomConnection> connections, IEnumerable<Subroom> subrooms)
     {
         if (connection.IsArchived || string.IsNullOrWhiteSpace(connection.Alias)) return null;
-        var group = connections.Where(item => !item.IsArchived && item.RoomId == connection.RoomId && SameAlias(item.Alias, connection.Alias)).ToArray();
+        var group = connections.Where(item => !item.IsArchived && item.RoomId == connection.RoomId && SameAlias(item.Alias, connection.Alias))
+            .OrderBy(item => item.SortOrder).ThenBy(item => item.Id).ToArray();
         return group.Length > 0 && group.All(item =>
             validation.ConnectionAlias(item) == ValidationSeverity.Neutral &&
             validation.ConnectionFriendlyName(item) == ValidationSeverity.Neutral &&

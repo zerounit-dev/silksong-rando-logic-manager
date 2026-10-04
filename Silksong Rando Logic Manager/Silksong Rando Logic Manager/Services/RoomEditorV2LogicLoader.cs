@@ -49,6 +49,10 @@ public sealed class RoomEditorV2LogicLoader(IDbContextFactory<LogicDbContext> co
         var checkFacts = await CheckValidationLoader.LoadAsync(db, checks, cancellationToken);
         var predicates = await RequirementsParserPredicateLoader.LoadAsync(db, cancellationToken);
         var items = await RequirementsParserItemLoader.LoadAsync(db, cancellationToken);
+        var countables = await db.RequirementCountables.AsNoTracking().OrderBy(x => x.SortOrder).ThenBy(x => x.Id)
+            .Select(x => new RequirementsParserCountableView(RequirementCatalogueLanguage.ParseAliases(x.Aliases))).ToListAsync(cancellationToken);
+        var enemies = await db.RequirementEnemyTypes.AsNoTracking().OrderBy(x => x.SortOrder).ThenBy(x => x.Id)
+            .Select(x => new RequirementsParserEnemyView(RequirementCatalogueLanguage.ParseAliases(x.Aliases))).ToListAsync(cancellationToken);
         var view = RoomEditorV2Mapper.Map(header, suggestions, roomCandidates, subrooms, transitions, connections, checks, transitionFacts, checkFacts);
         var status = await statusService.LoadAsync(db, [roomId], cancellationToken);
         view = view with { Header = view.Header with { AppliedStatus = status.GetValueOrDefault(roomId) } };
@@ -58,7 +62,7 @@ public sealed class RoomEditorV2LogicLoader(IDbContextFactory<LogicDbContext> co
                 suggestions.Select(x => new RequirementsParserRoomView(x.Id, x.ReferenceId)).ToArray(),
                 checkFacts.NameConflicts.Select(x => new RequirementsParserCheckView(x.RoomId, x.FriendlyName)).ToArray(),
                 predicates,
-                items)
+                items, countables, enemies)
         };
         return includeScene && sceneLoader is not null
             ? view with { Scene = await sceneLoader.LoadAsync(db, roomId, cancellationToken) }
@@ -87,11 +91,28 @@ public sealed record V2AppliedRefreshDiagnostic(long Sequence, TimeSpan ServerEl
 /// <summary>Completion of a current-room recheck, including whether its refresh applied to this page.</summary>
 public sealed record RoomRequirementRecheckCompletion(RequirementValidationPreflightResult Result, bool RefreshApplied);
 
+/// <summary>The SQLite command committed; only its required presentation refresh failed.</summary>
+public sealed class ChildPostCommitRefreshException<TOutcome>(TOutcome committed, Exception cause)
+    : Exception("The child command committed, but the complete room refresh failed.", cause)
+{
+    public TOutcome Committed { get; } = committed;
+}
+
 public sealed class RoomEditorV2RefreshCoordinator(IRoomEditorV2LogicLoader loader, ISceneLayoutLoader? sceneLoader = null, TimeProvider? timeProvider = null, Action? sidebarInvalidated = null) : IDisposable
 {
     private CancellationTokenSource? loading; private long iterator; private long appliedRefreshSequence; private Guid currentRoomId; private bool disposed;
     private readonly TimeProvider clock = timeProvider ?? TimeProvider.System;
     public RoomEditorV2View? View { get; private set; } public Guid CurrentRoomId => currentRoomId;
+    private Guid? checkRecoveryRoom;
+    public bool RequiresCheckRoomReload => checkRecoveryRoom == currentRoomId;
+    public async Task<bool> ReloadCheckRoomAsync(Guid roomId)
+    {
+        var before=LastAppliedRefresh?.Sequence;
+        var owner=iterator;
+        var missing = await RefreshAsync(roomId, loadScene: true);
+        if(!disposed && currentRoomId == roomId && iterator == owner + 1 && (missing || LastAppliedRefresh?.Sequence != before))checkRecoveryRoom=null;
+        return missing;
+    }
     private int activeLoads;
     public bool IsLoading => Volatile.Read(ref activeLoads) > 0;
     /// <summary>Page-local route/refresh generation used to reject completion-bound stale command results.</summary>
@@ -108,7 +129,7 @@ public sealed class RoomEditorV2RefreshCoordinator(IRoomEditorV2LogicLoader load
         {
         if (currentRoomId != roomId) InvalidateRouteState();
         loading?.Cancel(); loading?.Dispose(); var cancellation = loading = new(); var refresh = ++iterator;
-        if (currentRoomId != roomId) View = null;
+        if (currentRoomId != roomId) { View = null; checkRecoveryRoom = null; }
         currentRoomId = roomId;
         var started = clock.GetTimestamp();
         var useBatch = loadScene && loader is IRoomEditorV2SceneBatchLoader;
@@ -138,44 +159,56 @@ public sealed class RoomEditorV2RefreshCoordinator(IRoomEditorV2LogicLoader load
     }
     public async Task<V2SubroomCommandOutcome> CommitSubroomCommandAsync(Guid roomId, string command, Func<Task<V2SubroomCommandOutcome>> execute, bool sceneRelevant = false)
     {
-        var result = await execute();
-        if (result.Status != V2SubroomCommandStatus.Committed) return result;
-        OperationTrace.RecordCommitted(command);
-        await RefreshAfterCommandAsync(roomId, sceneRelevant);
-        OperationTrace.RecordCompletedRefresh(command);
-        return result;
+        if(RequiresCheckRoomReload)return new(V2SubroomCommandStatus.ExpectedFailure,"Reload room before editing.");
+        return await CommitChildCommandAsync(roomId, command, execute, result => result.Status == V2SubroomCommandStatus.Committed,
+            (result, applied, reload) => result with { PresentationRefreshed = applied, RequiresRoomReload = reload }, sceneRelevant);
     }
     public async Task<V2CheckCommandOutcome> CommitCheckCommandAsync(Guid roomId, string command, Func<Task<V2CheckCommandOutcome>> execute, bool sceneRelevant = false)
     {
-        var result = await execute();
-        if (result.Status != V2CheckCommandStatus.Committed) return result;
-        OperationTrace.RecordCommitted(command);
-        await RefreshAfterCommandAsync(roomId, sceneRelevant);
-        OperationTrace.RecordCompletedRefresh(command);
-        return result;
+        if(RequiresCheckRoomReload)return new(V2CheckCommandStatus.ExpectedFailure,"Reload room before editing.");
+        return await CommitChildCommandAsync(roomId, command, execute, result => result.Status == V2CheckCommandStatus.Committed,
+            (result, applied, reload) => result with { PresentationRefreshed = applied, RequiresRoomReload = reload }, sceneRelevant);
     }
     public async Task<V2TransitionCommandOutcome> CommitTransitionCommandAsync(Guid roomId, string command, Func<Task<V2TransitionCommandOutcome>> execute, bool sceneRelevant = false)
     {
-        var result = await execute();
-        if (result.Status != V2TransitionCommandStatus.Committed) return result;
-        OperationTrace.RecordCommitted(command);
-        await RefreshAfterCommandAsync(roomId, sceneRelevant);
-        OperationTrace.RecordCompletedRefresh(command);
-        return result;
+        if(RequiresCheckRoomReload)return new(V2TransitionCommandStatus.ExpectedFailure,"Reload room before editing.");
+        return await CommitChildCommandAsync(roomId, command, execute, result => result.Status == V2TransitionCommandStatus.Committed,
+            (result, applied, reload) => result with { PresentationRefreshed = applied, RequiresRoomReload = reload }, sceneRelevant);
     }
     public async Task<V2ConnectionCommandOutcome> CommitConnectionCommandAsync(Guid roomId, string command, Func<Task<V2ConnectionCommandOutcome>> execute, bool sceneRelevant = false)
     {
-        var result = await execute();
-        if (result.Status != V2ConnectionCommandStatus.Committed) return result;
+        if(RequiresCheckRoomReload)return new(V2ConnectionCommandStatus.ExpectedFailure,"Reload room before editing.");
+        return await CommitChildCommandAsync(roomId, command, execute, result => result.Status == V2ConnectionCommandStatus.Committed,
+            (result, applied, reload) => result with { PresentationRefreshed = applied, RequiresRoomReload = reload }, sceneRelevant,
+            result => result.AnnotationRefreshImpact == V2AnnotationRefreshImpact.CanvasAndViewport);
+    }
+    private async Task<TOutcome> CommitChildCommandAsync<TOutcome>(Guid roomId, string command,
+        Func<Task<TOutcome>> execute, Func<TOutcome, bool> committed,
+        Func<TOutcome, bool, bool, TOutcome> completion, bool sceneRelevant, Func<TOutcome, bool>? resultSceneRelevant = null)
+    {
+        var owner = iterator;
+        var result = completion(await execute(), false, false);
+        if (!committed(result) || disposed || owner != iterator || currentRoomId != roomId) return result;
         OperationTrace.RecordCommitted(command);
-        await RefreshAfterCommandAsync(roomId, sceneRelevant);
+        bool applied;
+        try { applied = await RefreshAfterCommandAsync(roomId, sceneRelevant || resultSceneRelevant?.Invoke(result) == true); }
+        catch (Exception cause)
+        {
+            if (disposed || currentRoomId != roomId || iterator != owner + 1) return result;
+            // One room recovery lock for every child outcome, not competing modes.
+            checkRecoveryRoom = roomId;
+            throw new ChildPostCommitRefreshException<TOutcome>(completion(result, false, true), cause);
+        }
+        if (disposed || currentRoomId != roomId || iterator != owner + 1 || !applied) return result;
         OperationTrace.RecordCompletedRefresh(command);
-        return result;
+        return completion(result, true, false);
     }
     public async Task<V2RoomHeaderCommandOutcome> CommitRoomHeaderCommandAsync(Guid roomId, string command, Func<Task<V2RoomHeaderCommandOutcome>> execute, bool sceneRelevant = false)
     {
+        if(RequiresCheckRoomReload)return new(V2RoomHeaderCommandStatus.Unchanged,"Reload room before editing.");
+        var owner=iterator;
         var result = await execute();
-        if (result.Status != V2RoomHeaderCommandStatus.Committed) return result;
+        if (result.Status != V2RoomHeaderCommandStatus.Committed||disposed||iterator!=owner||currentRoomId!=roomId) return result;
         OperationTrace.RecordCommitted(command);
         await RefreshAfterCommandAsync(roomId, sceneRelevant);
         OperationTrace.RecordCompletedRefresh(command);
@@ -183,6 +216,7 @@ public sealed class RoomEditorV2RefreshCoordinator(IRoomEditorV2LogicLoader load
     }
     public async Task<V2RoomSceneDimensionsCommandOutcome> CommitRoomSceneDimensionsCommandAsync(Guid roomId, string command, Func<Task<V2RoomSceneDimensionsCommandOutcome>> execute)
     {
+        if(RequiresCheckRoomReload)return new(V2RoomSceneDimensionsCommandStatus.ExpectedFailure,"Reload room before editing.");
         var commandIterator = iterator;
         var result = await execute();
         if (result.Status != V2RoomSceneDimensionsCommandStatus.Committed) return result;
@@ -197,6 +231,7 @@ public sealed class RoomEditorV2RefreshCoordinator(IRoomEditorV2LogicLoader load
     }
     public async Task<V2SceneImageCaptureCommandOutcome> CommitSceneImageCommandAsync(Guid roomId, string command, Func<Task<V2SceneImageCaptureCommandOutcome>> execute)
     {
+        if(RequiresCheckRoomReload)return new(V2SceneImageCaptureCommandStatus.ExpectedFailure,"Reload room before editing.");
         var commandIterator = iterator;
         var result = await execute();
         if (result.Status != V2SceneImageCaptureCommandStatus.Committed) return result;
@@ -208,8 +243,10 @@ public sealed class RoomEditorV2RefreshCoordinator(IRoomEditorV2LogicLoader load
     }
     public async Task<V2RoomLifecycleCommandOutcome> CommitRoomLifecycleCommandAsync(Guid roomId, string command, Func<Task<V2RoomLifecycleCommandOutcome>> execute, bool sceneRelevant = false)
     {
+        if(RequiresCheckRoomReload)return new(V2RoomLifecycleCommandStatus.ExpectedFailure,"Reload room before editing.");
+        var owner=iterator;
         var result = await execute();
-        if (result.Status != V2RoomLifecycleCommandStatus.Committed) return result;
+        if (result.Status != V2RoomLifecycleCommandStatus.Committed||disposed||iterator!=owner||currentRoomId!=roomId) return result;
         OperationTrace.RecordCommitted(command);
         await RefreshAfterCommandAsync(roomId, sceneRelevant);
         OperationTrace.RecordCompletedRefresh(command);
@@ -228,8 +265,9 @@ public sealed class RoomEditorV2RefreshCoordinator(IRoomEditorV2LogicLoader load
     private async Task<bool> RefreshAfterCommandAsync(Guid roomId, bool loadScene)
     {
         var before = LastAppliedRefresh?.Sequence;
+        var expected = iterator + 1;
         await RefreshAsync(roomId, loadScene);
-        var applied = LastAppliedRefresh?.Sequence != before;
+        var applied = !disposed && currentRoomId == roomId && iterator == expected && LastAppliedRefresh?.Sequence != before;
         if (applied) sidebarInvalidated?.Invoke();
         return applied;
     }
@@ -261,7 +299,7 @@ public static class SceneRefreshImpact
     public static bool SubroomSave(SubroomDurableBaseline baseline, SubroomDraft draft) => baseline.FriendlyName != draft.FriendlyName || baseline.ReferenceId != draft.ReferenceId;
     public const bool SubroomGeometry = true;
     public static bool TransitionSave(TransitionDurableBaseline baseline, TransitionDraft draft) => baseline.Alias != draft.Alias || baseline.FriendlyName != draft.FriendlyName || baseline.SourceSubroomReferenceText != draft.SourceSubroomReferenceText;
-    public static bool CheckSave(CheckDurableBaseline baseline, CheckDraft draft) => baseline.FriendlyName != draft.FriendlyName || baseline.SubroomReferenceText != draft.SubroomReferenceText;
+    public static bool CheckSave(CheckDurableBaseline baseline, CheckDraft draft) => baseline.FriendlyName != draft.FriendlyName || baseline.SubroomReferenceText != draft.SubroomReferenceText || baseline.LocationType != draft.LocationType;
     public static bool ConnectionSave(ConnectionDurableBaseline baseline, ConnectionDraft draft) => baseline.Alias != draft.Alias || baseline.FriendlyName != draft.FriendlyName || baseline.SourceSubroomReferenceText != draft.SourceSubroomReferenceText || baseline.DestinationSubroomReferenceText != draft.DestinationSubroomReferenceText;
     public static bool TransitionMetadata(TransitionDurableBaseline baseline, TransitionInGameMetadataDraft draft) => baseline.InGamePositionX != draft.InGamePositionX || baseline.InGamePositionY != draft.InGamePositionY || baseline.AnnotationSceneUnitX != draft.AnnotationSceneUnitX || baseline.AnnotationSceneUnitY != draft.AnnotationSceneUnitY;
     public static bool CheckMetadata(CheckMetadataDurableBaseline baseline, CheckInGameMetadataDraft draft) => baseline.InGamePositionX != draft.InGamePositionX || baseline.InGamePositionY != draft.InGamePositionY || baseline.AnnotationSceneUnitX != draft.AnnotationSceneUnitX || baseline.AnnotationSceneUnitY != draft.AnnotationSceneUnitY;
@@ -279,7 +317,7 @@ public static class SceneRefreshImpact
 internal sealed record RoomHeaderLoad(Guid Id, string FriendlyName, string ReferenceId, string? InGameId, string? Contributors, string? Comments, double? Width, double? Height, double? ScaleX, double? ScaleY, double? PanX, double? PanY, bool Stale, bool Archived, bool CanExportZone, DateTime UpdatedUtc);
 internal sealed record RoomReferenceLoad(Guid Id, string ReferenceId, string? InGameId, bool Archived);
 internal sealed record SubroomLoad(Guid Id, Guid RoomId, string ReferenceId, string FriendlyName, string Notes, double? X, double? Y, double? Width, double? Height, bool AnnotationEnabled, int SortOrder, bool Archived, DateTime UpdatedUtc);
-internal sealed record TransitionLoad(Guid Id, Guid RoomId, string Alias, string FriendlyName, string? InGameId, double? InGameX, double? InGameY, double? InGameZ, double? LocalX, double? LocalY, double? LocalZ, double? AnnotationX, double? AnnotationY, string? Source, string? DestinationRoom, string? DestinationAlias, string Requirements, string Notes, Guid? SourceId, Guid? DestinationRoomId, Guid? DestinationId, int SortOrder, bool Todo, bool? Verified, bool Archived, DateTime UpdatedUtc, bool EnableAnnotation, bool? RequirementsParseSucceeded);
+internal sealed record TransitionLoad(Guid Id, Guid RoomId, string Alias, string FriendlyName, string? InGameId, double? InGameX, double? InGameY, double? InGameZ, double? LocalX, double? LocalY, double? LocalZ, double? AnnotationX, double? AnnotationY, string? Source, string? DestinationRoom, string? DestinationAlias, string Requirements, string Notes, Guid? SourceId, Guid? DestinationRoomId, Guid? DestinationId, int SortOrder, bool Todo, bool? Verified, bool Archived, DateTime UpdatedUtc, bool EnableAnnotation, bool? RequirementsParseSucceeded, bool IsUnsafeArrival);
 internal sealed record ConnectionLoad(Guid Id, Guid RoomId, string Alias, string FriendlyName, string Source, string Destination, string Requirements, string Notes, bool AnnotationEnabled, double? X, double? Y, Guid? SourceId, Guid? DestinationId, int SortOrder, bool Archived, bool Todo, bool? Verified, DateTime UpdatedUtc, bool? RequirementsParseSucceeded);
 internal sealed record CheckLoad(Guid Id, Guid RoomId, string FriendlyName, string? InGameId, double? InGameX, double? InGameY, double? InGameZ, double? LocalX, double? LocalY, double? LocalZ, double? AnnotationX, double? AnnotationY, string? Subroom, string Requirements, string Notes, string? LocationType, bool AnnotationEnabled, Guid? SubroomId, int SortOrder, bool Todo, bool? Verified, bool Archived, DateTime UpdatedUtc, bool? RequirementsParseSucceeded);
 internal sealed record TransitionFactLoad(Guid Id, Guid RoomId, string Alias, Guid? DestinationRoomId, Guid? DestinationId, string? InGameId, bool Archived, string? DestinationRoomReferenceText = null, string? DestinationTransitionAliasText = null);
@@ -300,9 +338,9 @@ internal static class RoomReferenceCandidateLoader
     }
 }
 internal static class SubroomLoader { internal static Task<List<SubroomLoad>> LoadAsync(LogicDbContext db, Guid id, CancellationToken token) => db.Subrooms.AsNoTracking().Where(x => x.RoomId == id).Select(x => new SubroomLoad(x.Id,x.RoomId,x.ReferenceId,x.FriendlyName,x.Notes ?? "",x.SceneUnitX,x.SceneUnitY,x.SceneUnitWidth,x.SceneUnitHeight,x.EnableAnnotation,x.SortOrder,x.IsArchived,x.UpdatedUtc)).ToListAsync(token); }
-internal static class TransitionLoader { internal static Task<List<TransitionLoad>> LoadAsync(LogicDbContext db, Guid id, CancellationToken token) => db.RoomTransitions.AsNoTracking().Where(x => x.RoomId == id).Select(x => new TransitionLoad(x.Id,x.RoomId,x.Alias,x.FriendlyName,x.InGameId,x.InGamePositionX,x.InGamePositionY,x.InGamePositionZ,x.LocalPositionX,x.LocalPositionY,x.LocalPositionZ,x.AnnotationSceneUnitX,x.AnnotationSceneUnitY,x.SourceSubroomReferenceText,x.DestinationRoomReferenceText,x.DestinationTransitionAliasText,x.Requirements,x.Notes,x.ResolvedSourceSubroomId,x.ResolvedDestinationRoomId,x.ResolvedDestinationTransitionId,x.SortOrder,x.IsTodo,x.IsVerified,x.IsArchived,x.UpdatedUtc, x.EnableAnnotation,x.RequirementsParseSucceeded)).ToListAsync(token); }
+internal static class TransitionLoader { internal static Task<List<TransitionLoad>> LoadAsync(LogicDbContext db, Guid id, CancellationToken token) => db.RoomTransitions.AsNoTracking().Where(x => x.RoomId == id).Select(x => new TransitionLoad(x.Id,x.RoomId,x.Alias,x.FriendlyName,x.InGameId,x.InGamePositionX,x.InGamePositionY,x.InGamePositionZ,x.LocalPositionX,x.LocalPositionY,x.LocalPositionZ,x.AnnotationSceneUnitX,x.AnnotationSceneUnitY,x.SourceSubroomReferenceText,x.DestinationRoomReferenceText,x.DestinationTransitionAliasText,x.Requirements,x.Notes,x.ResolvedSourceSubroomId,x.ResolvedDestinationRoomId,x.ResolvedDestinationTransitionId,x.SortOrder,x.IsTodo,x.IsVerified,x.IsArchived,x.UpdatedUtc, x.EnableAnnotation,x.RequirementsParseSucceeded,x.IsUnsafeArrival)).ToListAsync(token); }
 internal static class ConnectionLoader { internal static Task<List<ConnectionLoad>> LoadAsync(LogicDbContext db, Guid id, CancellationToken token) => db.SubroomConnections.AsNoTracking().Where(x => x.RoomId == id).Select(x => new ConnectionLoad(x.Id,x.RoomId,x.Alias,x.FriendlyName,x.SourceSubroomReferenceText,x.DestinationSubroomReferenceText,x.Requirements,x.Notes,x.EnableAnnotation,x.SceneUnitX,x.SceneUnitY,x.ResolvedSourceSubroomId,x.ResolvedDestinationSubroomId,x.SortOrder,x.IsArchived,x.IsTodo,x.IsVerified,x.UpdatedUtc,x.RequirementsParseSucceeded)).ToListAsync(token); }
-internal static class CheckLoader { internal static Task<List<CheckLoad>> LoadAsync(LogicDbContext db, Guid id, CancellationToken token) => db.CheckLocations.AsNoTracking().Where(x => x.RoomId == id).Select(x => new CheckLoad(x.Id,x.RoomId,x.FriendlyName,x.InGameId,x.InGamePositionX,x.InGamePositionY,x.InGamePositionZ,x.LocalPositionX,x.LocalPositionY,x.LocalPositionZ,x.AnnotationSceneUnitX,x.AnnotationSceneUnitY,x.SubroomReferenceText,x.Requirements,x.Notes,x.LocationType,x.EnableAnnotation,x.ResolvedSubroomId,x.SortOrder,x.IsTodo,x.IsVerified,x.IsArchived,x.UpdatedUtc,x.RequirementsParseSucceeded)).ToListAsync(token); }
+internal static class CheckLoader { internal static Task<List<CheckLoad>> LoadAsync(LogicDbContext db, Guid id, CancellationToken token) => db.CheckLocations.AsNoTracking().Where(x => x.RoomId == id).OrderBy(x => x.SortOrder).ThenBy(x => x.Id).Select(x => new CheckLoad(x.Id,x.RoomId,x.FriendlyName,x.InGameId,x.InGamePositionX,x.InGamePositionY,x.InGamePositionZ,x.LocalPositionX,x.LocalPositionY,x.LocalPositionZ,x.AnnotationSceneUnitX,x.AnnotationSceneUnitY,x.SubroomReferenceText,x.Requirements,x.Notes,x.LocationType,x.EnableAnnotation,x.ResolvedSubroomId,x.SortOrder,x.IsTodo,x.IsVerified,x.IsArchived,x.UpdatedUtc,x.RequirementsParseSucceeded)).ToListAsync(token); }
 
 internal static class TransitionValidationLoader
 {
@@ -346,13 +384,9 @@ public static class RoomEditorV2Mapper
                 connections),
             ApplyConnectionRequirementStatus(mappedConnections.ArchivedRows, connections, true, header.Archived),
             mappedConnections.SubroomReferenceSuggestions);
-        var mappedChecks = CheckTableMapper.Map(subrooms, checks, transitionFacts, checkFacts, header.Archived);
-        mappedChecks = new CheckTableView(
-            ApplyCheckRequirementStatus(mappedChecks.ActiveRows, checks, false, header.Archived),
-            ApplyCheckRequirementStatus(mappedChecks.ArchivedRows, checks, true, header.Archived),
-            mappedChecks.SubroomReferenceSuggestions, mappedChecks.LocationTypes);
+        var (mappedChecks, mappedEnemies) = CheckTableMapper.Map(subrooms, checks, transitionFacts, checkFacts, header.Archived);
         return new(mappedHeader,
-            mappedSubrooms, mappedTransitions, mappedConnections, mappedChecks);
+            mappedSubrooms, mappedTransitions, mappedConnections, mappedChecks, mappedEnemies);
 
         static IReadOnlyList<ConnectionRowView> ApplyConnectionRequirementStatus(
             IReadOnlyList<ConnectionRowView> mapped, IReadOnlyList<ConnectionLoad> loads, bool archived, bool owningRoomArchived)
@@ -385,28 +419,13 @@ public static class RoomEditorV2Mapper
                 : row).ToArray();
         }
 
-        static IReadOnlyList<CheckRowView> ApplyCheckRequirementStatus(
-            IReadOnlyList<CheckRowView> mapped, IReadOnlyList<CheckLoad> loads, bool archived, bool owningRoomArchived)
-        {
-            var byId = loads.ToDictionary(value => value.Id);
-            return mapped.Select(row =>
-            {
-                var load = byId[row.EntityId];
-                return row with
-                {
-                    RequirementsSeverity = archived ? V2Severity.Neutral : owningRoomArchived
-                        ? MapperSupport.Required(load.Requirements)
-                        : MapperSupport.Requirements(load.Requirements, load.RequirementsParseSucceeded)
-                };
-            }).ToArray();
-        }
     }
     /// <summary>
     /// Reconciles the complete logical batch. A caller may retain a scene only
     /// for an intentionally skipped same-room scene load; a loaded null scene is
     /// authoritative and clears the prior projection.
     /// </summary>
-    public static RoomEditorV2View Reconcile(RoomEditorV2View? current, RoomEditorV2View fresh, bool retainCurrentScene = false) => new(RoomHeaderMapper.Reconcile(current?.Header, fresh.Header), SubroomTableMapper.Reconcile(current?.Subrooms, fresh.Subrooms), TransitionTableMapper.Reconcile(current?.Transitions, fresh.Transitions), ConnectionTableMapper.Reconcile(current?.Connections, fresh.Connections), CheckTableMapper.Reconcile(current?.Checks, fresh.Checks))
+    public static RoomEditorV2View Reconcile(RoomEditorV2View? current, RoomEditorV2View fresh, bool retainCurrentScene = false) => new(RoomHeaderMapper.Reconcile(current?.Header, fresh.Header), SubroomTableMapper.Reconcile(current?.Subrooms, fresh.Subrooms), TransitionTableMapper.Reconcile(current?.Transitions, fresh.Transitions), ConnectionTableMapper.Reconcile(current?.Connections, fresh.Connections), fresh.CheckLocations, fresh.Enemies)
     {
         RequirementsParserContext = fresh.RequirementsParserContext,
         Scene = fresh.Scene ?? (retainCurrentScene && current?.Header.RoomId == fresh.Header.RoomId ? current.Scene : null)
@@ -464,7 +483,7 @@ public static class TransitionTableMapper
                 (string.IsNullOrWhiteSpace(resolvedTarget.DestinationRoomReferenceText) || string.IsNullOrWhiteSpace(resolvedTarget.DestinationTransitionAliasText)) &&
                 suggestions.Count(y => !y.Archived && MapperSupport.Same(y.ReferenceId, header.ReferenceId)) == 1 &&
                 active.Count(y => MapperSupport.Same(y.Alias, x.Alias)) == 1;
-            return new(x.Id,x.SortOrder,x.Archived,x.UpdatedUtc,x.RequirementsParseSucceeded,x.Alias,x.FriendlyName,x.Source,x.DestinationRoom,x.DestinationAlias,x.Requirements,x.Notes,x.Todo,x.Verified,x.InGameId,x.InGameX,x.InGameY,x.InGameZ,x.LocalX,x.LocalY,x.LocalZ,x.AnnotationX,x.AnnotationY,isActive?MapperSupport.Alias(x.Alias,active.Select(y=>y.Alias)):V2Severity.Neutral,isActive?MapperSupport.Duplicate(x.FriendlyName,active.Select(y=>y.FriendlyName)):V2Severity.Neutral,isActive?MapperSupport.ReferenceSeverity(MapperSupport.Presence(x.Source,activeSubs.Any()),source):V2Severity.Neutral,isActive?MapperSupport.ReferenceSeverity(MapperSupport.Required(x.DestinationRoom),room):V2Severity.Neutral,isActive?MapperSupport.ReferenceSeverity(MapperSupport.Max(MapperSupport.Alias(x.DestinationAlias,[]),pair),alias):V2Severity.Neutral,isActive?(header.Archived?MapperSupport.Required(x.Requirements):MapperSupport.Requirements(x.Requirements,x.RequirementsParseSucceeded)):V2Severity.Neutral,game,source,room,alias,inverse,x.EnableAnnotation,canAuthorInverse,inverseTarget?.RoomId);
+            return new(x.Id,x.SortOrder,x.Archived,x.UpdatedUtc,x.RequirementsParseSucceeded,x.Alias,x.FriendlyName,x.Source,x.DestinationRoom,x.DestinationAlias,x.Requirements,x.Notes,x.Todo,x.Verified,x.InGameId,x.InGameX,x.InGameY,x.InGameZ,x.LocalX,x.LocalY,x.LocalZ,x.AnnotationX,x.AnnotationY,isActive?MapperSupport.Alias(x.Alias,active.Select(y=>y.Alias)):V2Severity.Neutral,isActive?MapperSupport.Duplicate(x.FriendlyName,active.Select(y=>y.FriendlyName)):V2Severity.Neutral,isActive?MapperSupport.ReferenceSeverity(MapperSupport.Presence(x.Source,activeSubs.Any()),source):V2Severity.Neutral,isActive?MapperSupport.ReferenceSeverity(MapperSupport.Required(x.DestinationRoom),room):V2Severity.Neutral,isActive?MapperSupport.ReferenceSeverity(MapperSupport.Max(MapperSupport.Alias(x.DestinationAlias,[]),pair),alias):V2Severity.Neutral,isActive?(header.Archived?MapperSupport.Required(x.Requirements):MapperSupport.Requirements(x.Requirements,x.RequirementsParseSucceeded)):V2Severity.Neutral,game,source,room,alias,inverse,x.IsUnsafeArrival,x.EnableAnnotation,canAuthorInverse,inverseTarget?.RoomId);
         }
         V2ReferenceState DestinationAlias(TransitionLoad x,V2ReferenceState roomState){ if(!MapperSupport.Text(x.DestinationAlias))return V2ReferenceState.None; if(roomState==V2ReferenceState.TargetArchived)return V2ReferenceState.TargetArchived; if(roomState!=V2ReferenceState.Resolved||x.DestinationRoomId is null)return x.DestinationId is null?V2ReferenceState.Unresolved:V2ReferenceState.OutOfSync; var matches=facts.DestinationAliases.Where(y=>!y.Archived&&y.RoomId==x.DestinationRoomId&&MapperSupport.Same(y.Alias,x.DestinationAlias)).ToArray(); if(matches.Length==0){var archived=facts.DestinationAliases.Any(y=>y.Archived&&y.RoomId==x.DestinationRoomId&&MapperSupport.Same(y.Alias,x.DestinationAlias));return archived?V2ReferenceState.TargetArchived:x.DestinationId is null?V2ReferenceState.Unresolved:V2ReferenceState.OutOfSync;} return matches.Length>1?V2ReferenceState.Ambiguous:matches[0].Id==x.DestinationId?V2ReferenceState.Resolved:V2ReferenceState.OutOfSync; }
         V2InverseState Inverse(TransitionLoad x)=>x.DestinationRoomId is null||x.DestinationId is null?V2InverseState.None:facts.Inverses.Count(y=>y.RoomId==x.DestinationRoomId&&y.DestinationRoomId==header.Id&&y.DestinationId==x.Id) switch{0=>V2InverseState.Zero,1=>V2InverseState.One,_=>V2InverseState.Multiple};
@@ -477,33 +496,71 @@ public static class ConnectionTableMapper
     internal static ConnectionTableView Reconcile(ConnectionTableView? _,ConnectionTableView fresh)=>fresh;
     public static IReadOnlyList<ConnectionRowView> MapPlacementEligibility(IReadOnlyList<ConnectionRowView> rows)
     {
-        var groups = rows.GroupBy(row => row.Alias.Trim(), StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.OrdinalIgnoreCase);
+        var groups = rows.Where(row => !row.IsArchived).GroupBy(row => row.Alias.Trim(), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.OrderBy(row => row.SortOrder).ThenBy(row => row.EntityId).First(), StringComparer.OrdinalIgnoreCase);
         return rows.Select(row =>
         {
-            var group = groups[row.Alias.Trim()];
+            var canonical = row.IsArchived ? row : groups[row.Alias.Trim()];
             var eligible = !row.IsArchived && row.AliasSeverity == V2Severity.Neutral &&
                 row.FriendlyNameSeverity == V2Severity.Neutral && row.PathwaySeverity == V2Severity.Neutral &&
                 row.NoSubroomSeverity == V2Severity.Neutral;
-            var enabled = group.All(member => member.EnableAnnotation);
-            var positioned = group.All(member => member.SceneUnitX is double x && member.SceneUnitY is double y && double.IsFinite(x) && double.IsFinite(y));
+            var enabled = canonical.EnableAnnotation;
+            var positioned = canonical.SceneUnitX is double x && canonical.SceneUnitY is double y && double.IsFinite(x) && double.IsFinite(y);
             return row with
             {
-                CanPlaceAnnotation = eligible && (!group.Any(member => member.EnableAnnotation) || enabled && !positioned),
+                CanPlaceAnnotation = eligible && (!enabled || !positioned),
                 CanRemoveAnnotation = eligible && enabled && positioned,
                 HasCompleteAnnotationCoordinates = positioned,
                 DurableSceneUnitX = row.SceneUnitX,
                 DurableSceneUnitY = row.SceneUnitY,
-                SceneUnitX = positioned ? row.SceneUnitX : null,
-                SceneUnitY = positioned ? row.SceneUnitY : null
+                EffectiveEnableAnnotation = enabled,
+                AnnotationMarkerEntityId = eligible ? canonical.EntityId : null
             };
         }).ToArray();
     }
 }
 public static class CheckTableMapper
 {
-    internal static CheckTableView Map(IReadOnlyList<SubroomLoad> subrooms,IReadOnlyList<CheckLoad> rows,TransitionFacts transitions,CheckFacts facts,bool owningRoomArchived){var activeSubrooms=subrooms.Where(x=>!x.Archived).ToArray();var suggestions=activeSubrooms.Select(x=>x.ReferenceId).OrderBy(x=>x,StringComparer.OrdinalIgnoreCase).ToArray();return new(MapRows(false),MapRows(true),suggestions,CheckLocationTypeCatalogue.Definitions);IReadOnlyList<CheckRowView> MapRows(bool archived)=>rows.Where(x=>x.Archived==archived).OrderBy(x=>x.SortOrder).Select(x=>{var state=MapperSupport.Reference(x.Subroom,x.SubroomId,subrooms.Select(y=>(y.Id,y.ReferenceId,y.Archived)));var active=!x.Archived;var names=facts.NameConflicts.Where(y=>MapperSupport.Same(y.FriendlyName,x.FriendlyName)).ToArray();var name=!MapperSupport.Text(x.FriendlyName)?V2Severity.Warning:names.Count(y=>y.RoomId==x.RoomId)>1?V2Severity.Danger:names.Any(y=>y.RoomId!=x.RoomId)?V2Severity.Warning:V2Severity.Neutral;var game=active&&MapperSupport.Text(x.InGameId)&&(transitions.InGameConflicts.Any(y=>y.RoomId==x.RoomId&&MapperSupport.Same(y.InGameId,x.InGameId))||facts.InGameConflicts.Any(y=>y.Id!=x.Id&&y.RoomId==x.RoomId&&MapperSupport.Same(y.InGameId,x.InGameId)))?V2Severity.Danger:V2Severity.Neutral;var typeDefinition=CheckLocationTypeCatalogue.Definitions.FirstOrDefault(y=>string.Equals(y.OutputValue,x.LocationType,StringComparison.Ordinal));var type=active&&!owningRoomArchived&&typeDefinition is null?V2Severity.Danger:V2Severity.Neutral;var typeDisplay=x.LocationType is null?"Unknown":typeDefinition?.Name??$"Unrecognized: {x.LocationType}";return new CheckRowView(x.Id,x.SortOrder,x.Archived,x.UpdatedUtc,x.RequirementsParseSucceeded,x.FriendlyName,x.Subroom,x.Requirements,x.Notes,x.LocationType,typeDisplay,x.Todo,x.Verified,x.InGameId,x.InGameX,x.InGameY,x.InGameZ,x.LocalX,x.LocalY,x.LocalZ,x.AnnotationX,x.AnnotationY,x.AnnotationEnabled,active?name:V2Severity.Neutral,active?MapperSupport.ReferenceSeverity(MapperSupport.Presence(x.Subroom,activeSubrooms.Any()),state):V2Severity.Neutral,active?MapperSupport.Required(x.Requirements):V2Severity.Neutral,game,MapperSupport.Pair(x.AnnotationX,x.AnnotationY),type,state);}).ToArray();}
-    internal static CheckTableView Reconcile(CheckTableView? _,CheckTableView fresh)=>fresh;
+    internal static (CheckLocationsTableView CheckLocations, EnemiesTableView Enemies) Map(
+        IReadOnlyList<SubroomLoad> subrooms, IReadOnlyList<CheckLoad> rows,
+        TransitionFacts transitions, CheckFacts facts, bool owningRoomArchived)
+    {
+        var activeSubrooms = subrooms.Where(x => !x.Archived).ToArray();
+        var suggestions = Array.AsReadOnly(activeSubrooms.Select(x => x.ReferenceId)
+            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray());
+        var types = CheckLocationTypeCatalogue.Definitions;
+        var checksActive = new List<CheckRowView>(); var checksArchived = new List<CheckRowView>();
+        var enemiesActive = new List<CheckRowView>(); var enemiesArchived = new List<CheckRowView>();
+        foreach (var x in rows.OrderBy(x => x.SortOrder).ThenBy(x => x.Id))
+        {
+            var state = MapperSupport.Reference(x.Subroom, x.SubroomId, subrooms.Select(y => (y.Id, y.ReferenceId, y.Archived)));
+            var active = !x.Archived;
+            var names = facts.NameConflicts.Where(y => MapperSupport.Same(y.FriendlyName, x.FriendlyName)).ToArray();
+            var name = !MapperSupport.Text(x.FriendlyName) ? V2Severity.Warning
+                : names.Count(y => y.RoomId == x.RoomId) > 1 ? V2Severity.Danger
+                : names.Any(y => y.RoomId != x.RoomId) ? V2Severity.Warning : V2Severity.Neutral;
+            var game = active && MapperSupport.Text(x.InGameId) &&
+                (transitions.InGameConflicts.Any(y => y.RoomId == x.RoomId && MapperSupport.Same(y.InGameId, x.InGameId)) ||
+                 facts.InGameConflicts.Any(y => y.Id != x.Id && y.RoomId == x.RoomId && MapperSupport.Same(y.InGameId, x.InGameId)))
+                ? V2Severity.Danger : V2Severity.Neutral;
+            var definition = types.FirstOrDefault(y => string.Equals(y.OutputValue, x.LocationType, StringComparison.Ordinal));
+            var isEnemy = definition?.Group == "enemies";
+            var row = new CheckRowView(x.Id, x.SortOrder, x.Archived, x.UpdatedUtc, x.RequirementsParseSucceeded,
+                x.FriendlyName, x.Subroom, x.Requirements, x.Notes, x.LocationType,
+                x.LocationType is null ? "Unknown" : definition?.Name ?? $"Unrecognized: {x.LocationType}",
+                x.Todo, x.Verified, x.InGameId, x.InGameX, x.InGameY, x.InGameZ, x.LocalX, x.LocalY, x.LocalZ,
+                x.AnnotationX, x.AnnotationY, x.AnnotationEnabled, active ? name : V2Severity.Neutral,
+                active ? MapperSupport.ReferenceSeverity(MapperSupport.Presence(x.Subroom, activeSubrooms.Length > 0), state) : V2Severity.Neutral,
+                !active ? V2Severity.Neutral : owningRoomArchived ? MapperSupport.Required(x.Requirements)
+                    : MapperSupport.Requirements(x.Requirements, x.RequirementsParseSucceeded),
+                game, MapperSupport.Pair(x.AnnotationX, x.AnnotationY),
+                active && !owningRoomArchived && definition is null ? V2Severity.Danger : V2Severity.Neutral, state)
+                { IsEnemy = isEnemy };
+            (isEnemy ? active ? enemiesActive : enemiesArchived : active ? checksActive : checksArchived).Add(row);
+        }
+        return (new(checksActive.ToArray(), checksArchived.ToArray(), suggestions, types),
+            new(enemiesActive.ToArray(), enemiesArchived.ToArray(), suggestions, types));
+    }
 }
 internal static class MapperSupport
 {

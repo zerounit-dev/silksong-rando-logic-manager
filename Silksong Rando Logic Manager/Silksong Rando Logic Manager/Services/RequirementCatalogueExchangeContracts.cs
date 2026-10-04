@@ -15,12 +15,16 @@ public sealed record RequirementCatalogueImportParseResult(
 
 public sealed record RequirementCatalogueSnapshot(
     IReadOnlyList<RequirementCatalogueExchangePredicate> Predicates,
-    IReadOnlyList<RequirementCatalogueExchangeItem> Items);
+    IReadOnlyList<RequirementCatalogueExchangeItem> Items,
+    IReadOnlyList<RequirementCatalogueExchangeItem> Countables,
+    IReadOnlyList<RequirementCatalogueExchangeItem> EnemyTypes);
 
 public sealed record RequirementCatalogueExchangeDocument(
     [property: JsonPropertyName("requirementCatalogueVersion")] int RequirementCatalogueVersion,
     [property: JsonPropertyName("predicates")] IReadOnlyList<RequirementCatalogueExchangePredicate> Predicates,
-    [property: JsonPropertyName("items")] IReadOnlyList<RequirementCatalogueExchangeItem> Items);
+    [property: JsonPropertyName("items")] IReadOnlyList<RequirementCatalogueExchangeItem> Items,
+    [property: JsonPropertyName("countables")] IReadOnlyList<RequirementCatalogueExchangeItem> Countables,
+    [property: JsonPropertyName("enemyTypes")] IReadOnlyList<RequirementCatalogueExchangeItem> EnemyTypes);
 
 public sealed record RequirementCatalogueExchangePredicate(
     [property: JsonPropertyName("id")] Guid Id,

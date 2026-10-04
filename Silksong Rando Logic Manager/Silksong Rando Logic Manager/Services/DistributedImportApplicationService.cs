@@ -54,13 +54,23 @@ public sealed class DistributedImportApplicationService(IDbContextFactory<LogicD
         // Keep/skip are no-write decisions but are still constrained to the kind
         // that was reviewed. An identical document admits no decision at all.
         if (!IsAdmitted(reviewed.Kind, intent)) return new DistributedImportRejected(["The room decision is not valid for this comparison."]);
+        if (intent is ImportChangedRoom changedIntent)
+        {
+            var planErrors = ValidateChildPlan(reviewed, changedIntent.ChildPlan);
+            if (planErrors.Count != 0) return new DistributedImportRejected(planErrors);
+        }
         if (reviewed.Kind == DistributedRoomComparisonKind.New && intent is SkipIncomingRoom) return new DistributedImportRoomSkipped(intent.RoomId, Decide(state, intent.RoomId));
         if (reviewed.Kind == DistributedRoomComparisonKind.Changed && intent is KeepMasterRoom) return new DistributedImportRoomKept(intent.RoomId, Decide(state, intent.RoomId));
 
         try
         {
-            var outcome = await ApplyReviewedRoomAsync(incoming, reviewed, ct);
-            return outcome is DistributedImportRoomApplied applied ? applied with { State = Decide(state, applied.RoomId) } : outcome;
+            var outcome = await ApplyReviewedRoomAsync(incoming, reviewed, (intent as ImportChangedRoom)?.ChildPlan, ct);
+            return outcome switch
+            {
+                DistributedImportRoomApplied applied => applied with { State = Decide(state, applied.RoomId) },
+                DistributedImportRoomBecameIdentical identical => identical with { State = Decide(state, identical.RoomId) },
+                _ => outcome
+            };
         }
         catch (DbUpdateException ex) { return new DistributedImportFailed("room", ex.Message, state); }
     }
@@ -98,19 +108,31 @@ public sealed class DistributedImportApplicationService(IDbContextFactory<LogicD
     }
 
     // Fresh comparison and mutation intentionally share this one SQLite transaction.
-    private async Task<DistributedImportOutcome> ApplyReviewedRoomAsync(DistributedRoomDocument incoming, DistributedRoomComparison reviewed, CancellationToken ct)
+    private async Task<DistributedImportOutcome> ApplyReviewedRoomAsync(DistributedRoomDocument incoming, DistributedRoomComparison reviewed, DistributedRoomChildPlan? childPlan, CancellationToken ct)
     {
         await using var db = await contexts.CreateDbContextAsync(ct);
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         var fresh = await CompareAsync(db, incoming, ct);
-        if (!SameComparison(reviewed, fresh)) return new DistributedImportComparisonRefreshed(fresh);
+        if (!SameComparison(reviewed, fresh))
+            return fresh.Kind == DistributedRoomComparisonKind.Identical
+                ? new DistributedImportRoomBecameIdentical(incoming.Id, fresh, null!)
+                : new DistributedImportComparisonRefreshed(fresh);
+        if (reviewed.Kind == DistributedRoomComparisonKind.Changed)
+        {
+            var planErrors = ValidateChildPlan(fresh, childPlan!);
+            if (planErrors.Count != 0) return new DistributedImportRejected(planErrors);
+        }
 
         var room = await db.Rooms.SingleOrDefaultAsync(x => x.Id == incoming.Id, ct);
         var invalidateSceneImage = room is null || CaptureStateDiffers(room, incoming);
         if (room is null) { room = new Room { Id = incoming.Id }; db.Rooms.Add(room); }
         var groupExists = incoming.RoomGroupId is { } group && await db.RoomGroups.AnyAsync(x => x.Id == group, ct);
         CopyRoom(room, incoming, groupExists ? incoming.RoomGroupId : null);
-        await ReplaceChildrenAsync(db, room.Id, incoming, timeProvider.GetUtcNow().UtcDateTime, ct);
+        var operationUtc = timeProvider.GetUtcNow().UtcDateTime;
+        if (reviewed.Kind == DistributedRoomComparisonKind.New)
+            await ReplaceChildrenAsync(db, room.Id, incoming, operationUtc, ct);
+        else
+            await ReconcileSelectedChildrenAsync(db, room.Id, incoming, childPlan!, operationUtc, ct);
         using (db.SuppressAuditMetadata()) { await db.SaveChangesAsync(ct); await new LogicReferenceResolver(db).ResolveAsync(ct); }
         await tx.CommitAsync(ct);
         if (invalidateSceneImage) await sceneImages.DeleteAsync(incoming.Id, ct);
@@ -128,7 +150,7 @@ public sealed class DistributedImportApplicationService(IDbContextFactory<LogicD
                 var row = current.GetValueOrDefault(source.Id);
                 var isIncomingOnly = row is null;
                 if (row is null) { row = new RoomGroup { Id = source.Id }; db.RoomGroups.Add(row); }
-                if (exportVersion == 4) row.IsVirtual = source.IsVirtual;
+                if (exportVersion >= 4) row.IsVirtual = source.IsVirtual;
                 else if (isIncomingOnly) row.IsVirtual = RoomGraphExportService.CanonicalValue(source.FriendlyName) == "fast-travel";
                 row.FriendlyName = source.FriendlyName; row.ZoneReferenceText = source.ZoneReferenceText; row.SortOrder = source.SortOrder; row.CreatedUtc = source.CreatedUtc; row.UpdatedUtc = source.UpdatedUtc;
             }
@@ -249,16 +271,127 @@ public sealed class DistributedImportApplicationService(IDbContextFactory<LogicD
     private static async Task ReplaceChildrenAsync(LogicDbContext db, Guid roomId, DistributedRoomDocument incoming, DateTime now, CancellationToken ct)
     {
         var subs=await db.Subrooms.Where(x=>x.RoomId==roomId).ToDictionaryAsync(x=>x.Id,ct); foreach(var x in incoming.Subrooms){ if(!subs.TryGetValue(x.Id,out var r)){r=new Subroom{Id=x.Id,RoomId=roomId};db.Subrooms.Add(r);} r.ReferenceId=x.ReferenceId;r.FriendlyName=x.FriendlyName;r.Notes=x.Notes;r.SceneUnitX=x.SceneUnitX;r.SceneUnitY=x.SceneUnitY;r.SceneUnitWidth=x.SceneUnitWidth;r.SceneUnitHeight=x.SceneUnitHeight;r.EnableAnnotation=x.EnableAnnotation;r.SortOrder=x.SortOrder;r.IsArchived=x.IsArchived;r.ArchivedUtc=x.ArchivedUtc;r.CreatedUtc=x.CreatedUtc;r.UpdatedUtc=x.UpdatedUtc;} ArchiveMissing(subs, incoming.Subrooms.Select(x=>x.Id), now);
-        var trans=await db.RoomTransitions.Where(x=>x.RoomId==roomId).ToDictionaryAsync(x=>x.Id,ct); foreach(var x in incoming.Transitions){ if(!trans.TryGetValue(x.Id,out var r)){r=new RoomTransition{Id=x.Id,RoomId=roomId};db.RoomTransitions.Add(r);} r.Alias=x.Alias;r.FriendlyName=x.FriendlyName;r.InGameId=x.InGameId;r.InGamePositionX=x.InGamePositionX;r.InGamePositionY=x.InGamePositionY;r.InGamePositionZ=x.InGamePositionZ;r.LocalPositionX=x.LocalPositionX;r.LocalPositionY=x.LocalPositionY;r.LocalPositionZ=x.LocalPositionZ;r.AnnotationSceneUnitX=x.AnnotationSceneUnitX;r.AnnotationSceneUnitY=x.AnnotationSceneUnitY;r.EnableAnnotation=x.EnableAnnotation;r.SourceSubroomReferenceText=x.SourceSubroomReferenceText;r.DestinationRoomReferenceText=x.DestinationRoomReferenceText;r.DestinationTransitionAliasText=x.DestinationTransitionAliasText;r.Requirements=x.Requirements;r.RequirementsParseSucceeded=null;r.Notes=x.Notes;r.SortOrder=x.SortOrder;r.IsTodo=x.IsTodo;r.IsVerified=x.IsVerified;r.IsArchived=x.IsArchived;r.ArchivedUtc=x.ArchivedUtc;r.CreatedUtc=x.CreatedUtc;r.UpdatedUtc=x.UpdatedUtc;} ArchiveMissing(trans, incoming.Transitions.Select(x=>x.Id), now);
+        var trans=await db.RoomTransitions.Where(x=>x.RoomId==roomId).ToDictionaryAsync(x=>x.Id,ct); foreach(var x in incoming.Transitions){ if(!trans.TryGetValue(x.Id,out var r)){r=new RoomTransition{Id=x.Id,RoomId=roomId};db.RoomTransitions.Add(r);} r.Alias=x.Alias;r.FriendlyName=x.FriendlyName;r.InGameId=x.InGameId;r.IsUnsafeArrival=x.IsUnsafeArrival;r.InGamePositionX=x.InGamePositionX;r.InGamePositionY=x.InGamePositionY;r.InGamePositionZ=x.InGamePositionZ;r.LocalPositionX=x.LocalPositionX;r.LocalPositionY=x.LocalPositionY;r.LocalPositionZ=x.LocalPositionZ;r.AnnotationSceneUnitX=x.AnnotationSceneUnitX;r.AnnotationSceneUnitY=x.AnnotationSceneUnitY;r.EnableAnnotation=x.EnableAnnotation;r.SourceSubroomReferenceText=x.SourceSubroomReferenceText;r.DestinationRoomReferenceText=x.DestinationRoomReferenceText;r.DestinationTransitionAliasText=x.DestinationTransitionAliasText;r.Requirements=x.Requirements;r.RequirementsParseSucceeded=null;r.Notes=x.Notes;r.SortOrder=x.SortOrder;r.IsTodo=x.IsTodo;r.IsVerified=x.IsVerified;r.IsArchived=x.IsArchived;r.ArchivedUtc=x.ArchivedUtc;r.CreatedUtc=x.CreatedUtc;r.UpdatedUtc=x.UpdatedUtc;} ArchiveMissing(trans, incoming.Transitions.Select(x=>x.Id), now);
         var cons=await db.SubroomConnections.Where(x=>x.RoomId==roomId).ToDictionaryAsync(x=>x.Id,ct); foreach(var x in incoming.Connections){ if(!cons.TryGetValue(x.Id,out var r)){r=new SubroomConnection{Id=x.Id,RoomId=roomId};db.SubroomConnections.Add(r);} r.Alias=x.Alias;r.FriendlyName=x.FriendlyName;r.SourceSubroomReferenceText=x.SourceSubroomReferenceText;r.DestinationSubroomReferenceText=x.DestinationSubroomReferenceText;r.Requirements=x.Requirements;r.RequirementsParseSucceeded=null;r.Notes=x.Notes;r.EnableAnnotation=x.EnableAnnotation;r.SceneUnitX=x.SceneUnitX;r.SceneUnitY=x.SceneUnitY;r.SortOrder=x.SortOrder;r.IsTodo=x.IsTodo;r.IsVerified=x.IsVerified;r.IsArchived=x.IsArchived;r.ArchivedUtc=x.ArchivedUtc;r.CreatedUtc=x.CreatedUtc;r.UpdatedUtc=x.UpdatedUtc;} ArchiveMissing(cons, incoming.Connections.Select(x=>x.Id), now);
         var checks=await db.CheckLocations.Where(x=>x.RoomId==roomId).ToDictionaryAsync(x=>x.Id,ct); foreach(var x in incoming.Checks){ if(!checks.TryGetValue(x.Id,out var r)){r=new CheckLocation{Id=x.Id,RoomId=roomId};db.CheckLocations.Add(r);} r.FriendlyName=x.FriendlyName;r.InGameId=x.InGameId;r.InGamePositionX=x.InGamePositionX;r.InGamePositionY=x.InGamePositionY;r.InGamePositionZ=x.InGamePositionZ;r.LocalPositionX=x.LocalPositionX;r.LocalPositionY=x.LocalPositionY;r.LocalPositionZ=x.LocalPositionZ;r.AnnotationSceneUnitX=x.AnnotationSceneUnitX;r.AnnotationSceneUnitY=x.AnnotationSceneUnitY;r.SubroomReferenceText=x.SubroomReferenceText;r.Requirements=x.Requirements;r.RequirementsParseSucceeded=null;r.Notes=x.Notes;r.LocationType=x.LocationType;r.EnableAnnotation=x.EnableAnnotation;r.SortOrder=x.SortOrder;r.IsTodo=x.IsTodo;r.IsVerified=x.IsVerified;r.IsArchived=x.IsArchived;r.ArchivedUtc=x.ArchivedUtc;r.CreatedUtc=x.CreatedUtc;r.UpdatedUtc=x.UpdatedUtc;} ArchiveMissing(checks, incoming.Checks.Select(x=>x.Id), now);
     }
     private static void ArchiveMissing<T>(Dictionary<Guid,T> current, IEnumerable<Guid> incoming, DateTime now) where T : ArchivableEntity { var ids=incoming.ToHashSet(); foreach(var row in current.Values.Where(x=>!ids.Contains(x.Id)&&!x.IsArchived)){row.IsArchived=true;row.ArchivedUtc=now;row.UpdatedUtc=now;} }
 
+    private static async Task ReconcileSelectedChildrenAsync(LogicDbContext db, Guid roomId, DistributedRoomDocument incoming, DistributedRoomChildPlan plan, DateTime now, CancellationToken ct)
+    {
+        var choices = plan.Decisions.ToDictionary(x => x.Key, x => x.Choice);
+
+        var subrooms = await db.Subrooms.Where(x => x.RoomId == roomId).ToDictionaryAsync(x => x.Id, ct);
+        foreach (var source in incoming.Subrooms)
+        {
+            var key = new DistributedChildDecisionKey(DistributedChildCategory.Subroom, source.Id);
+            if (subrooms.TryGetValue(source.Id, out var row))
+            {
+                if (!choices.TryGetValue(key, out var choice) || choice == DistributedChildChoice.Current) continue;
+            }
+            else
+            {
+                if (choices[key] == DistributedChildChoice.Current) continue;
+                row = new Subroom { Id = source.Id, RoomId = roomId };
+                db.Subrooms.Add(row);
+            }
+            CopySubroom(row, source);
+        }
+        ArchiveSelected(subrooms, incoming.Subrooms.Select(x => x.Id), DistributedChildCategory.Subroom, choices, now);
+
+        var transitions = await db.RoomTransitions.Where(x => x.RoomId == roomId).ToDictionaryAsync(x => x.Id, ct);
+        foreach (var source in incoming.Transitions)
+        {
+            var key = new DistributedChildDecisionKey(DistributedChildCategory.Transition, source.Id);
+            if (transitions.TryGetValue(source.Id, out var row))
+            {
+                if (!choices.TryGetValue(key, out var choice) || choice == DistributedChildChoice.Current) continue;
+            }
+            else
+            {
+                if (choices[key] == DistributedChildChoice.Current) continue;
+                row = new RoomTransition { Id = source.Id, RoomId = roomId };
+                db.RoomTransitions.Add(row);
+            }
+            CopyTransition(row, source);
+        }
+        ArchiveSelected(transitions, incoming.Transitions.Select(x => x.Id), DistributedChildCategory.Transition, choices, now);
+
+        var connections = await db.SubroomConnections.Where(x => x.RoomId == roomId).ToDictionaryAsync(x => x.Id, ct);
+        foreach (var source in incoming.Connections)
+        {
+            var key = new DistributedChildDecisionKey(DistributedChildCategory.Connection, source.Id);
+            if (connections.TryGetValue(source.Id, out var row))
+            {
+                if (!choices.TryGetValue(key, out var choice) || choice == DistributedChildChoice.Current) continue;
+            }
+            else
+            {
+                if (choices[key] == DistributedChildChoice.Current) continue;
+                row = new SubroomConnection { Id = source.Id, RoomId = roomId };
+                db.SubroomConnections.Add(row);
+            }
+            CopyConnection(row, source);
+        }
+        ArchiveSelected(connections, incoming.Connections.Select(x => x.Id), DistributedChildCategory.Connection, choices, now);
+
+        var checks = await db.CheckLocations.Where(x => x.RoomId == roomId).ToDictionaryAsync(x => x.Id, ct);
+        foreach (var source in incoming.Checks)
+        {
+            var key = new DistributedChildDecisionKey(DistributedChildCategory.Check, source.Id);
+            if (checks.TryGetValue(source.Id, out var row))
+            {
+                if (!choices.TryGetValue(key, out var choice) || choice == DistributedChildChoice.Current) continue;
+            }
+            else
+            {
+                if (choices[key] == DistributedChildChoice.Current) continue;
+                row = new CheckLocation { Id = source.Id, RoomId = roomId };
+                db.CheckLocations.Add(row);
+            }
+            CopyCheck(row, source);
+        }
+        ArchiveSelected(checks, incoming.Checks.Select(x => x.Id), DistributedChildCategory.Check, choices, now);
+    }
+
+    private static void CopySubroom(Subroom row, DistributedSubroom source)
+    {
+        row.ReferenceId=source.ReferenceId; row.FriendlyName=source.FriendlyName; row.Notes=source.Notes; row.SceneUnitX=source.SceneUnitX; row.SceneUnitY=source.SceneUnitY; row.SceneUnitWidth=source.SceneUnitWidth; row.SceneUnitHeight=source.SceneUnitHeight; row.EnableAnnotation=source.EnableAnnotation; row.SortOrder=source.SortOrder; row.IsArchived=source.IsArchived; row.ArchivedUtc=source.ArchivedUtc; row.CreatedUtc=source.CreatedUtc; row.UpdatedUtc=source.UpdatedUtc;
+    }
+
+    private static void CopyTransition(RoomTransition row, DistributedTransition source)
+    {
+        row.IsUnsafeArrival = source.IsUnsafeArrival;
+        row.Alias=source.Alias; row.FriendlyName=source.FriendlyName; row.InGameId=source.InGameId; row.InGamePositionX=source.InGamePositionX; row.InGamePositionY=source.InGamePositionY; row.InGamePositionZ=source.InGamePositionZ; row.LocalPositionX=source.LocalPositionX; row.LocalPositionY=source.LocalPositionY; row.LocalPositionZ=source.LocalPositionZ; row.AnnotationSceneUnitX=source.AnnotationSceneUnitX; row.AnnotationSceneUnitY=source.AnnotationSceneUnitY; row.EnableAnnotation=source.EnableAnnotation; row.SourceSubroomReferenceText=source.SourceSubroomReferenceText; row.DestinationRoomReferenceText=source.DestinationRoomReferenceText; row.DestinationTransitionAliasText=source.DestinationTransitionAliasText; row.Requirements=source.Requirements; row.RequirementsParseSucceeded=null; row.Notes=source.Notes; row.SortOrder=source.SortOrder; row.IsTodo=source.IsTodo; row.IsVerified=source.IsVerified; row.IsArchived=source.IsArchived; row.ArchivedUtc=source.ArchivedUtc; row.CreatedUtc=source.CreatedUtc; row.UpdatedUtc=source.UpdatedUtc;
+    }
+
+    private static void CopyConnection(SubroomConnection row, DistributedConnection source)
+    {
+        row.Alias=source.Alias; row.FriendlyName=source.FriendlyName; row.SourceSubroomReferenceText=source.SourceSubroomReferenceText; row.DestinationSubroomReferenceText=source.DestinationSubroomReferenceText; row.Requirements=source.Requirements; row.RequirementsParseSucceeded=null; row.Notes=source.Notes; row.EnableAnnotation=source.EnableAnnotation; row.SceneUnitX=source.SceneUnitX; row.SceneUnitY=source.SceneUnitY; row.SortOrder=source.SortOrder; row.IsTodo=source.IsTodo; row.IsVerified=source.IsVerified; row.IsArchived=source.IsArchived; row.ArchivedUtc=source.ArchivedUtc; row.CreatedUtc=source.CreatedUtc; row.UpdatedUtc=source.UpdatedUtc;
+    }
+
+    private static void CopyCheck(CheckLocation row, DistributedCheck source)
+    {
+        row.FriendlyName=source.FriendlyName; row.InGameId=source.InGameId; row.InGamePositionX=source.InGamePositionX; row.InGamePositionY=source.InGamePositionY; row.InGamePositionZ=source.InGamePositionZ; row.LocalPositionX=source.LocalPositionX; row.LocalPositionY=source.LocalPositionY; row.LocalPositionZ=source.LocalPositionZ; row.AnnotationSceneUnitX=source.AnnotationSceneUnitX; row.AnnotationSceneUnitY=source.AnnotationSceneUnitY; row.SubroomReferenceText=source.SubroomReferenceText; row.Requirements=source.Requirements; row.RequirementsParseSucceeded=null; row.Notes=source.Notes; row.LocationType=source.LocationType; row.EnableAnnotation=source.EnableAnnotation; row.SortOrder=source.SortOrder; row.IsTodo=source.IsTodo; row.IsVerified=source.IsVerified; row.IsArchived=source.IsArchived; row.ArchivedUtc=source.ArchivedUtc; row.CreatedUtc=source.CreatedUtc; row.UpdatedUtc=source.UpdatedUtc;
+    }
+
+    private static void ArchiveSelected<T>(IReadOnlyDictionary<Guid, T> current, IEnumerable<Guid> incomingIds, DistributedChildCategory category, IReadOnlyDictionary<DistributedChildDecisionKey, DistributedChildChoice> choices, DateTime now) where T : ArchivableEntity
+    {
+        var incoming = incomingIds.ToHashSet();
+        foreach (var row in current.Values.Where(x => !incoming.Contains(x.Id)))
+        {
+            var key = new DistributedChildDecisionKey(category, row.Id);
+            if (!choices.TryGetValue(key, out var choice) || choice != DistributedChildChoice.Incoming || row.IsArchived) continue;
+            row.IsArchived = true;
+            row.ArchivedUtc = now;
+            row.UpdatedUtc = now;
+        }
+    }
+
     private async Task<DistributedRoomComparison> CompareAsync(DistributedRoomDocument incoming, CancellationToken ct) { await using var db = await contexts.CreateDbContextAsync(ct); return await CompareAsync(db, incoming, ct); }
     private static async Task<DistributedRoomComparison> CompareAsync(LogicDbContext db, DistributedRoomDocument incoming, CancellationToken ct) { var p=await DistributedImportProjectionLoader.LoadRoomAsync(db,incoming.Id,ct); var current=p is null ? null : DistributedImportProjectionMapper.MapRoom(p); var identities=await db.Rooms.AsNoTracking().Select(x=>new DistributedImportRoomIdentity(x.Id,x.FriendlyName,x.InGameId)).ToArrayAsync(ct); return DistributedRoomComparisonService.CompareWithIdentities(current,incoming,identities); }
     private static bool ReadyForRooms(DistributedImportOrchestrationState state, out DistributedImportOutcome rejected) { if (!state.HasStarted) { rejected=new DistributedImportRejected(["Start import is required before room operations."]); return false; } if (!state.RoomGroupingStageCompleted) { rejected=new DistributedImportRejected(["Room grouping must complete or be skipped before room operations."]); return false; } rejected=null!; return true; }
-    private static bool IsAdmitted(DistributedRoomComparisonKind kind, DistributedRoomDecisionIntent intent) => kind switch { DistributedRoomComparisonKind.New => intent is SkipIncomingRoom or ImportIncomingRoom, DistributedRoomComparisonKind.Changed => intent is KeepMasterRoom or UseIncomingRoom, _ => false };
+    private static bool IsAdmitted(DistributedRoomComparisonKind kind, DistributedRoomDecisionIntent intent) => kind switch { DistributedRoomComparisonKind.New => intent is SkipIncomingRoom or ImportIncomingRoom, DistributedRoomComparisonKind.Changed => intent is KeepMasterRoom or ImportChangedRoom, _ => false };
     private static bool Failed(DistributedImportStageOutcome value, out string error) { error=value.Detail?["failed:".Length..] ?? string.Empty; return value.Detail?.StartsWith("failed:", StringComparison.Ordinal)==true; }
 
     private async Task<DistributedImportOrchestrationState> CreateReadyStateAsync(DistributedImportPackage package, DistributedImportStageOutcome map, DistributedImportStageOutcome groups, CancellationToken ct)
@@ -299,4 +432,43 @@ public sealed class DistributedImportApplicationService(IDbContextFactory<LogicD
         async Task CheckOwners<T>(IEnumerable<(Guid Id,Guid Owner)> incoming, IQueryable<T> query, Func<T,Guid> id, Func<T,Guid> owner,string name){var local=(await query.ToListAsync(ct)).Where(x=>all.Contains(id(x))).ToDictionary(id,owner);foreach(var x in incoming)if(local.TryGetValue(x.Id,out var found)&&found!=x.Owner)errors.Add($"{name} GUID {x.Id} belongs to a different local room.");} await CheckOwners(package.Rooms.SelectMany(r=>r.Subrooms.Select(x=>(x.Id,r.Id))),db.Subrooms,x=>x.Id,x=>x.RoomId,"Subroom");await CheckOwners(package.Rooms.SelectMany(r=>r.Transitions.Select(x=>(x.Id,r.Id))),db.RoomTransitions,x=>x.Id,x=>x.RoomId,"Transition");await CheckOwners(package.Rooms.SelectMany(r=>r.Connections.Select(x=>(x.Id,r.Id))),db.SubroomConnections,x=>x.Id,x=>x.RoomId,"Connection");await CheckOwners(package.Rooms.SelectMany(r=>r.Checks.Select(x=>(x.Id,r.Id))),db.CheckLocations,x=>x.Id,x=>x.RoomId,"Check"); return errors;
     }
     private static bool SameComparison(DistributedRoomComparison left, DistributedRoomComparison right) => JsonSerializer.Serialize(left)==JsonSerializer.Serialize(right);
+
+    private static IReadOnlyList<string> ValidateChildPlan(DistributedRoomComparison comparison, DistributedRoomChildPlan? plan)
+    {
+        var errors = new List<string>();
+        if (plan is null) return ["A complete child plan is required for a changed room import."];
+        if (plan.RoomId != comparison.RoomId) errors.Add("The child plan does not match the reviewed room.");
+        if (plan.Decisions is null) return [.. errors, "A complete child decision list is required for a changed room import."];
+
+        var expected = new Dictionary<DistributedChildDecisionKey, DistributedComparisonEvidence>();
+        AddExpected(DistributedChildCategory.Subroom, comparison.Subrooms);
+        AddExpected(DistributedChildCategory.Transition, comparison.Transitions);
+        AddExpected(DistributedChildCategory.Connection, comparison.Connections);
+        AddExpected(DistributedChildCategory.Check, comparison.Checks);
+
+        var supplied = new Dictionary<DistributedChildDecisionKey, DistributedChildDecision>();
+        foreach (var decision in plan.Decisions)
+        {
+            if (!Enum.IsDefined(decision.Category)) { errors.Add($"Child decision {decision.EntityId} has an unknown category."); continue; }
+            if (!Enum.IsDefined(decision.Choice)) errors.Add($"Child decision {decision.EntityId} has an unknown choice.");
+            if (!supplied.TryAdd(decision.Key, decision)) { errors.Add($"Child decision {decision.EntityId} is duplicated in {decision.Category}."); continue; }
+            if (!expected.TryGetValue(decision.Key, out var evidence))
+            {
+                errors.Add(expected.Keys.Any(x => x.EntityId == decision.EntityId)
+                    ? $"Child decision {decision.EntityId} uses the wrong category."
+                    : $"Child decision {decision.EntityId} is not part of the reviewed differences.");
+            }
+            else if (decision.Evidence != evidence)
+                errors.Add($"Child decision {decision.EntityId} is incompatible with the reviewed evidence.");
+        }
+        foreach (var key in expected.Keys.Where(key => !supplied.ContainsKey(key)))
+            errors.Add($"The child plan is missing {key.Category} decision {key.EntityId}.");
+        return errors;
+
+        void AddExpected<T>(DistributedChildCategory category, IReadOnlyList<DistributedChildComparison<T>> rows)
+        {
+            foreach (var row in rows.Where(x => x.Evidence != DistributedComparisonEvidence.Neutral))
+                expected.Add(new(category, row.EntityId), row.Evidence);
+        }
+    }
 }

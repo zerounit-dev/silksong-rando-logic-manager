@@ -12,7 +12,9 @@ internal sealed record RoomGraphTranslationContext(
     IReadOnlyList<RoomGraphPredicateDefinition> Predicates,
     IReadOnlyList<RoomGraphItemDefinition> Items,
     IReadOnlyList<RoomGraphRequirementRoom> Rooms,
-    IReadOnlyList<RoomGraphRequirementCheck> Checks);
+    IReadOnlyList<RoomGraphRequirementCheck> Checks,
+    IReadOnlyList<RoomGraphItemDefinition> Countables,
+    IReadOnlyList<RoomGraphItemDefinition> Enemies);
 
 internal static class RoomGraphRequirementTranslator
 {
@@ -265,6 +267,57 @@ internal static class RoomGraphRequirementTranslator
                         var dependency = ResolveDependency(raw[prefix..]);
                         arguments = arguments with { CheckGraphId = dependency.LocationId };
                         failure = dependency.Failure;
+                    }
+                    break;
+                case RequirementInputSyntax.RequiredDifficultyThenPredicateThenEnemy:
+                    var difficultyEnd = normalized.IndexOf(' ');
+                    var leading = difficultyEnd < 0 ? normalized : normalized[..difficultyEnd];
+                    var enemySource = difficultyEnd < 0 ? "" : normalized[(difficultyEnd + 1)..];
+                    if (enemySource == normalizedAlias || TryRemainder(enemySource, normalizedAlias, out _))
+                    {
+                        matched = true;
+                        if (!Difficulties.Contains(leading)) failure = $"invalid required difficulty: {leading}";
+                        else if (!TryRemainder(enemySource, normalizedAlias, out var enemyText)) failure = $"required enemy is missing for: {raw}";
+                        else
+                        {
+                            var enemies = context.Enemies.Where(enemy => enemy.Aliases.Any(value => RequirementCatalogueLanguage.NormalizeIdentification(value) == enemyText)).ToArray();
+                            if (enemies.Length == 1) arguments = arguments with { Difficulty = leading, EnemyOutputValue = enemies[0].OutputValue };
+                            else failure = enemies.Length == 0 ? $"unrecognized enemy: {enemyText}" : $"ambiguous enemy: {enemyText}";
+                        }
+                    }
+                    else if (normalized == normalizedAlias || TryRemainder(normalized, normalizedAlias, out _))
+                    { matched = true; failure = $"required difficulty is missing for: {raw}"; }
+                    break;
+                case RequirementInputSyntax.PredicateThenQuantityThenCountable:
+                    var countPrefix = PrefixLength(raw, alias);
+                    if (countPrefix >= 0)
+                    {
+                        matched = true;
+                        if (!RequirementTypedQuantity.TryRead(raw[countPrefix..], out var count, out var countableText))
+                            failure = $"a canonical positive Int32 quantity and countable are required for: {raw}";
+                        else
+                        {
+                            var identity = RequirementCatalogueLanguage.NormalizeIdentification(countableText);
+                            var countables = context.Countables.Where(countable => countable.Aliases.Any(value => RequirementCatalogueLanguage.NormalizeIdentification(value) == identity)).ToArray();
+                            if (countables.Length == 1) arguments = arguments with { Quantity = count, CountableOutputValue = countables[0].OutputValue };
+                            else failure = countables.Length == 0 ? $"unrecognized countable: {countableText}" : $"ambiguous countable: {countableText}";
+                        }
+                    }
+                    break;
+                case RequirementInputSyntax.PredicateThenCountableThenQuantity:
+                    var countableFirstPrefix = PrefixLength(raw, alias);
+                    if (countableFirstPrefix >= 0)
+                    {
+                        matched = true;
+                        if (!RequirementTypedQuantity.TryReadLast(raw[countableFirstPrefix..], out var finalCount, out var countableFirstText))
+                            failure = $"a countable and final canonical positive Int32 quantity are required for: {raw}";
+                        else
+                        {
+                            var countableFirstIdentity = RequirementCatalogueLanguage.NormalizeIdentification(countableFirstText);
+                            var countableFirstMatches = context.Countables.Where(countable => countable.Aliases.Any(value => RequirementCatalogueLanguage.NormalizeIdentification(value) == countableFirstIdentity)).ToArray();
+                            if (countableFirstMatches.Length == 1) arguments = arguments with { Quantity = finalCount, CountableOutputValue = countableFirstMatches[0].OutputValue };
+                            else failure = countableFirstMatches.Length == 0 ? $"unrecognized countable: {countableFirstText}" : $"ambiguous countable: {countableFirstText}";
+                        }
                     }
                     break;
                 default:

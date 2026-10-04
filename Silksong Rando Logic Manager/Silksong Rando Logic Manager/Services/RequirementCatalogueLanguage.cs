@@ -13,7 +13,10 @@ public static class RequirementCatalogueLanguage
         new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenDirection, "{predicate} {direction}", "Predicate + direction"),
         new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenItem, "{predicate} {item}", "Predicate + item"),
         new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenCheck, "{predicate} {check}", "Predicate + check"),
-        new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenQuantity, "{predicate} {quantity}", "Predicate + quantity")
+        new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenQuantity, "{predicate} {quantity}", "Predicate + quantity"),
+        new RequirementInputSyntaxOption(RequirementInputSyntax.RequiredDifficultyThenPredicateThenEnemy, "{difficulty} {predicate} {enemy}", "Required difficulty + predicate + enemy"),
+        new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenQuantityThenCountable, "{predicate} {quantity} {countable}", "Predicate + quantity + countable"),
+        new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenCountableThenQuantity, "{predicate} {countable} {quantity}", "Predicate + countable + quantity")
     };
 
     public static IReadOnlyList<RequirementInputSyntaxOption> InputSyntaxOptions => inputSyntaxOptions;
@@ -136,6 +139,9 @@ public static class RequirementCatalogueLanguage
         RequirementInputSyntax.PredicateThenItem => new HashSet<RequirementOutputPlaceholder> { RequirementOutputPlaceholder.Item },
         RequirementInputSyntax.PredicateThenCheck => new HashSet<RequirementOutputPlaceholder> { RequirementOutputPlaceholder.Check },
         RequirementInputSyntax.PredicateThenQuantity => new HashSet<RequirementOutputPlaceholder> { RequirementOutputPlaceholder.Quantity },
+        RequirementInputSyntax.RequiredDifficultyThenPredicateThenEnemy => new HashSet<RequirementOutputPlaceholder> { RequirementOutputPlaceholder.Difficulty, RequirementOutputPlaceholder.Enemy },
+        RequirementInputSyntax.PredicateThenQuantityThenCountable => new HashSet<RequirementOutputPlaceholder> { RequirementOutputPlaceholder.Quantity, RequirementOutputPlaceholder.Countable },
+        RequirementInputSyntax.PredicateThenCountableThenQuantity => new HashSet<RequirementOutputPlaceholder> { RequirementOutputPlaceholder.Countable, RequirementOutputPlaceholder.Quantity },
         _ => throw new ArgumentOutOfRangeException(nameof(inputSyntax), inputSyntax, "Unsupported requirement input syntax.")
     };
 
@@ -150,7 +156,9 @@ public enum RequirementOutputPlaceholder
     Direction,
     Item,
     Quantity,
-    Check
+    Check,
+    Enemy,
+    Countable
 }
 
 public abstract record RequirementOutputToken;
@@ -234,8 +242,10 @@ public static class RequirementOutputTemplate
             "item" => RequirementOutputPlaceholder.Item,
             "quantity" => RequirementOutputPlaceholder.Quantity,
             "check" => RequirementOutputPlaceholder.Check,
+            "enemy" => RequirementOutputPlaceholder.Enemy,
+            "countable" => RequirementOutputPlaceholder.Countable,
             _ => default
         };
-        return value is "difficulty" or "direction" or "item" or "quantity" or "check";
+        return value is "difficulty" or "direction" or "item" or "quantity" or "check" or "enemy" or "countable";
     }
 }

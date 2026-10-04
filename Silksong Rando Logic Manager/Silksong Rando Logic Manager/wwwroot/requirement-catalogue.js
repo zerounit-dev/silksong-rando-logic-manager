@@ -7,7 +7,7 @@ window.requirementCatalogueDrag = (() => {
         handlers = {
             dragstart: event => { const grip = event.target.closest("[data-requirement-catalogue-grip]"); if (!grip || grip.disabled) return; const row = grip.closest("[data-requirement-catalogue-row]"); active = { row, kind: row.dataset.catalogueKind }; event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", row.dataset.catalogueId); row.classList.add("catalogue-dragging"); },
             dragover: event => { if (!active) return; const row = event.target.closest("[data-requirement-catalogue-row], [data-requirement-catalogue-tail]"); if (!row || (row.dataset.catalogueKind && row.dataset.catalogueKind !== active.kind) || (row.dataset.requirementCatalogueTail && row.dataset.requirementCatalogueTail !== active.kind)) return; event.preventDefault(); document.querySelectorAll(".catalogue-drop-before").forEach(x => x.classList.remove("catalogue-drop-before")); row.classList.add("catalogue-drop-before"); },
-            drop: async event => { if (!active) return; const row = event.target.closest("[data-requirement-catalogue-row], [data-requirement-catalogue-tail]"); if (!row || (row.dataset.catalogueKind && row.dataset.catalogueKind !== active.kind) || (row.dataset.requirementCatalogueTail && row.dataset.requirementCatalogueTail !== active.kind)) { cleanup(); return; } event.preventDefault(); const rows = [...row.closest("tbody").querySelectorAll("[data-requirement-catalogue-row]")]; const source = rows.indexOf(active.row), target = row.dataset.requirementCatalogueTail ? rows.length - 1 : rows.indexOf(row); const targetIndex = source < target ? target - 1 : target; const id = active.row.dataset.catalogueId, kind = active.kind; cleanup(); await dotnet.invokeMethodAsync("Drop", kind, id, targetIndex); },
+            drop: async event => { if (!active) return; const row = event.target.closest("[data-requirement-catalogue-row], [data-requirement-catalogue-tail]"); if (!row || (row.dataset.catalogueKind && row.dataset.catalogueKind !== active.kind) || (row.dataset.requirementCatalogueTail && row.dataset.requirementCatalogueTail !== active.kind)) { cleanup(); return; } event.preventDefault(); const rows = [...row.closest("tbody").querySelectorAll("[data-requirement-catalogue-row]")]; const source = rows.indexOf(active.row), target = row.dataset.requirementCatalogueTail ? rows.length : rows.indexOf(row); const targetIndex = source < target ? target - 1 : target; const id = active.row.dataset.catalogueId, kind = active.kind; cleanup(); await dotnet.invokeMethodAsync("Drop", kind, id, targetIndex); },
             dragend: cleanup,
             keydown: event => { if (event.key === "Escape") cleanup(); }
         };
@@ -37,7 +37,9 @@ window.requirementCatalogueDrag = (() => {
         if (!output.trim()) return "Output syntax is required.";
         const required = {
             "{predicate}": [], "{difficulty?} {predicate}": ["difficulty"], "{difficulty} {predicate}": ["difficulty"],
-            "{predicate} {direction}": ["direction"], "{predicate} {item}": ["item"], "{predicate} {check}": ["check"], "{predicate} {quantity}": ["quantity"]
+            "{predicate} {direction}": ["direction"], "{predicate} {item}": ["item"], "{predicate} {check}": ["check"], "{predicate} {quantity}": ["quantity"],
+            "{difficulty} {predicate} {enemy}": ["difficulty", "enemy"], "{predicate} {quantity} {countable}": ["quantity", "countable"],
+            "{predicate} {countable} {quantity}": ["countable", "quantity"]
         }[syntax];
         if (!required) return "Input syntax is not supported.";
         const tokens = [];
@@ -48,7 +50,7 @@ window.requirementCatalogueDrag = (() => {
             if (close < 0) return "Output syntax has an unmatched opening brace.";
             const token = output.slice(index + 1, close);
             if (token.includes("{")) return "Output syntax has malformed braces.";
-            if (!["difficulty", "direction", "item", "quantity", "check"].includes(token)) return `Output syntax placeholder '{${token}}' is not supported.`;
+            if (!["difficulty", "direction", "item", "quantity", "check", "enemy", "countable"].includes(token)) return `Output syntax placeholder '{${token}}' is not supported.`;
             tokens.push(token); index = close;
         }
         for (const token of tokens) {
@@ -78,6 +80,7 @@ window.requirementCatalogueDrag = (() => {
         } else if (!value(modal, "OutputValue").trim()) issues.OutputValue = "Output value is required.";
         localMessages(modal, issues);
         modal.querySelector('[data-requirement-definition-action="apply"]').disabled = Object.keys(issues).length !== 0 || definition?.inFlightToken !== null;
+        modal.querySelector('[data-requirement-definition-action="cancel"]').disabled = definition?.inFlightToken !== null;
         return Object.keys(issues).length === 0;
     };
     const command = modal => {
@@ -98,7 +101,6 @@ window.requirementCatalogueDrag = (() => {
     document.addEventListener("input", event => {
         const modal = event.target.closest("[data-requirement-definition]");
         if (!modal || !event.target.matches("[data-requirement-definition-field]")) return;
-        modal.querySelectorAll("[data-requirement-definition-apply-result]").forEach(result => result.remove());
         if (event.target.dataset.requirementDefinitionField === "Aliases") definition.aliasTouched = true;
         if (event.target.dataset.requirementDefinitionField === "Name" && definition.isNew && !definition.aliasTouched) field(modal, "Aliases").value = mirroredAlias(event.target.value);
         validateDefinition(modal);
@@ -110,7 +112,9 @@ window.requirementCatalogueDrag = (() => {
         definition.inFlightToken = token;
         validateDefinition(modal);
         try {
-            await dotnet.invokeMethodAsync(modal.dataset.definitionKind === "predicate" ? "ApplyPredicateDraft" : "ApplyItemDraft", Number(sequence), command(modal));
+            const method = { predicate: "ApplyPredicateDraft", item: "ApplyItemDraft", countable: "ApplyCountableDraft", "enemy-type": "ApplyEnemyTypeDraft" }[modal.dataset.definitionKind];
+            if (!method) throw new Error("Unknown catalogue definition kind.");
+            await dotnet.invokeMethodAsync(method, Number(sequence), command(modal));
         } finally {
             const current = document.querySelector("[data-requirement-definition]");
             if (definition?.sequence === sequence && definition.inFlightToken === token && current?.dataset.definitionSequence === sequence) {
@@ -120,6 +124,7 @@ window.requirementCatalogueDrag = (() => {
         }
     };
     const closeDefinition = async modal => {
+        if (definition?.inFlightToken !== null) return;
         const sequence = Number(modal.dataset.definitionSequence);
         definition = null;
         definitionBackdropPointer = null;

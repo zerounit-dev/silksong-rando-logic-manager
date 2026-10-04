@@ -38,7 +38,7 @@ public interface IRoomEditorV2CommandService
     Task<V2CheckCommandOutcome> ResetCheckAnnotationAsync(Guid roomId, CheckMetadataDurableBaseline baseline) => throw new NotSupportedException();
     Task<V2CheckCommandOutcome> ShowAndSelectCheckAnnotationAsync(Guid roomId, CheckMetadataDurableBaseline baseline) => throw new NotSupportedException();
     Task<V2CheckCommandOutcome> CreateCheckAsync(Guid roomId, CheckDraft draft) => throw new NotSupportedException();
-    Task<V2CheckCommandOutcome> ReorderCheckAsync(Guid roomId, Guid entityId, int targetIndex) => throw new NotSupportedException();
+    Task<V2CheckCommandOutcome> ReorderCheckAsync(Guid roomId, Guid entityId, bool enemies, int targetIndex);
     Task<V2CheckCommandOutcome> SetCheckArchiveAsync(Guid roomId, Guid entityId, bool archived) => throw new NotSupportedException();
     Task<V2CheckCommandOutcome> DeleteCheckAsync(Guid roomId, Guid entityId) => throw new NotSupportedException();
     Task<V2TransitionCommandOutcome> SaveTransitionAsync(Guid roomId, TransitionDurableBaseline baseline, TransitionDraft draft) => throw new NotSupportedException();
@@ -173,8 +173,6 @@ public sealed class RoomEditorV2CommandService(LogicCatalogService catalog, Requ
                 return new(V2ConnectionCommandStatus.Missing, "This connection is no longer in the current room.");
             if (target.IsArchived)
                 return new(V2ConnectionCommandStatus.ExpectedFailure, "This connection is no longer active in the current room.");
-            if (!target.EnableAnnotation)
-                return new(V2ConnectionCommandStatus.Unchanged);
             await connections.RemoveAnnotationAsync(entityId, roomId);
             return new(V2ConnectionCommandStatus.Committed, AnnotationRefreshImpact: V2AnnotationRefreshImpact.CanvasAndViewport);
         }
@@ -191,16 +189,15 @@ public sealed class RoomEditorV2CommandService(LogicCatalogService catalog, Requ
                 .Select(row => new { row.RoomId, row.IsArchived, row.Alias }).SingleOrDefaultAsync();
             if (target is null || target.RoomId != roomId) return new(V2ConnectionCommandStatus.Missing, "This connection is no longer in the current room.");
             if (target.IsArchived) return new(V2ConnectionCommandStatus.ExpectedFailure, "This connection is no longer active in the current room.");
-            var hasGroupGeometry = await db.SubroomConnections.AsNoTracking().AnyAsync(row => row.RoomId == roomId && !row.IsArchived &&
-                row.Alias.Trim().ToLower() == target.Alias.Trim().ToLower() && (row.SceneUnitX != null || row.SceneUnitY != null));
-            if (!hasGroupGeometry) return new(V2ConnectionCommandStatus.Unchanged);
             await connections.ClearAnnotationAsync(entityId, roomId);
             return new(V2ConnectionCommandStatus.Committed, AnnotationRefreshImpact: V2AnnotationRefreshImpact.CanvasAndViewport);
         }
         catch (InvalidOperationException ex) { return new(V2ConnectionCommandStatus.ExpectedFailure, ex.Message); }
         catch (Exception ex) { return new(V2ConnectionCommandStatus.Unexpected, ex.Message); }
     }
-    public async Task<V2ConnectionCommandOutcome> ShowConnectionAnnotationAsync(Guid roomId, Guid entityId)
+    public Task<V2ConnectionCommandOutcome> ShowConnectionAnnotationAsync(Guid roomId, Guid entityId)
+        => ShowConnectionAnnotationAsync(roomId, entityId, select: false);
+    private async Task<V2ConnectionCommandOutcome> ShowConnectionAnnotationAsync(Guid roomId, Guid entityId, bool select)
     {
         try
         {
@@ -210,20 +207,15 @@ public sealed class RoomEditorV2CommandService(LogicCatalogService catalog, Requ
                 .Select(row => new { row.RoomId, row.IsArchived, row.EnableAnnotation }).SingleOrDefaultAsync();
             if (target is null || target.RoomId != roomId) return new(V2ConnectionCommandStatus.Missing, "This connection is no longer in the current room.");
             if (target.IsArchived) return new(V2ConnectionCommandStatus.Missing, "This connection is no longer active in the current room.");
-            if (target.EnableAnnotation) return new(V2ConnectionCommandStatus.Unchanged);
-            await connections.ShowAnnotationAsync(entityId, roomId);
-            return new(V2ConnectionCommandStatus.Committed, AnnotationRefreshImpact: V2AnnotationRefreshImpact.CanvasAndViewport);
+            var patch = await connections.ShowAnnotationAsync(entityId, roomId);
+            return new(V2ConnectionCommandStatus.Committed, AnnotationRefreshImpact: V2AnnotationRefreshImpact.CanvasAndViewport,
+                PostRefreshSelection: select ? new(V2AnnotationSelectionKind.Connection, patch.CurrentRoomConnections.OrderBy(row => row.SortOrder).ThenBy(row => row.Id).First().Id) : null);
         }
         catch (InvalidOperationException ex) { return new(V2ConnectionCommandStatus.ExpectedFailure, ex.Message); }
         catch (Exception ex) { return new(V2ConnectionCommandStatus.Unexpected, ex.Message); }
     }
-    public async Task<V2ConnectionCommandOutcome> ShowAndSelectConnectionAnnotationAsync(Guid roomId, Guid entityId)
-    {
-        var result = await ShowConnectionAnnotationAsync(roomId, entityId);
-        return result.Status == V2ConnectionCommandStatus.Committed
-            ? result with { PostRefreshSelection = new(V2AnnotationSelectionKind.Connection, entityId) }
-            : result;
-    }
+    public Task<V2ConnectionCommandOutcome> ShowAndSelectConnectionAnnotationAsync(Guid roomId, Guid entityId)
+        => ShowConnectionAnnotationAsync(roomId, entityId, select: true);
     public async Task<V2RoomHeaderCommandOutcome> SaveRoomHeaderAsync(Guid roomId, RoomHeaderDurableBaseline baseline, RoomHeaderDraft draft)
     {
         // Reference ID is never an ordinary header save: its pre-commit proposal
@@ -379,6 +371,12 @@ public sealed class RoomEditorV2CommandService(LogicCatalogService catalog, Requ
     private static string? HeaderValue(Room x, string field) => field switch { nameof(Room.FriendlyName) => x.FriendlyName, nameof(Room.InGameId) => x.InGameId, nameof(Room.Contributors) => x.Contributors, nameof(Room.ReferenceId) => x.ReferenceId, _ => x.Comments };
     private static void ApplyHeader(Room room, RoomHeaderDraft draft, IEnumerable<string> fields) { foreach (var field in fields) switch (field) { case nameof(Room.FriendlyName): room.FriendlyName = draft.FriendlyName; break; case nameof(Room.InGameId): room.InGameId = draft.InGameId; break; case nameof(Room.Contributors): room.Contributors = draft.Contributors; break; case nameof(Room.Comments): room.Comments = draft.Comments; break; case nameof(Room.ReferenceId): room.ReferenceId = draft.ReferenceId; break; } }
     private static DateTime NextUpdatedUtc(DateTime current) { var now = DateTime.UtcNow; return now <= current ? current.AddTicks(1) : now; }
+    public static bool IsPotentialSubroomReferencePreparation(SubroomDurableBaseline? baseline, SubroomDraft draft)
+        => baseline is not null && draft.ReferenceId != baseline.ReferenceId;
+    public static bool IsPotentialInversePreparation(TransitionDurableBaseline? baseline, TransitionDraft draft)
+        => (baseline is null || baseline.DestinationRoomReferenceText != draft.DestinationRoomReferenceText || baseline.DestinationTransitionAliasText != draft.DestinationTransitionAliasText)
+            && !string.IsNullOrWhiteSpace(draft.DestinationRoomReferenceText) && !string.IsNullOrWhiteSpace(draft.DestinationTransitionAliasText) && !string.IsNullOrWhiteSpace(draft.Alias);
+
     public async Task<V2SubroomCommandOutcome> SaveSubroomAsync(Guid roomId, SubroomDurableBaseline baseline, SubroomDraft draft)
     {
         if (draft.ReferenceId != baseline.ReferenceId) return await PrepareSubroomReferenceRenameAsync(roomId, baseline, draft);
@@ -389,8 +387,8 @@ public sealed class RoomEditorV2CommandService(LogicCatalogService catalog, Requ
             var patch = await catalog.SaveSubroomWithPatchAsync(ToEntity(baseline), ToEntity(baseline, draft), roomId);
             return patch.Status switch
             {
-                ChildRowSaveStatus.Committed => new(V2SubroomCommandStatus.Committed, ResolverElapsed: patch.Outcome.ResolverElapsed),
-                ChildRowSaveStatus.Unchanged => new(V2SubroomCommandStatus.Unchanged, ResolverElapsed: patch.Outcome.ResolverElapsed),
+                ChildRowSaveStatus.Committed => new(V2SubroomCommandStatus.Committed, FreshBaseline: FromEntity(patch.SavedRow!), ResolverElapsed: patch.Outcome.ResolverElapsed),
+                ChildRowSaveStatus.Unchanged => new(V2SubroomCommandStatus.Unchanged, FreshBaseline: FromEntity(patch.SavedRow!), ResolverElapsed: patch.Outcome.ResolverElapsed),
                 ChildRowSaveStatus.Missing => new(V2SubroomCommandStatus.Missing, "This subroom no longer exists.", null, draft, ResolverElapsed: patch.Outcome.ResolverElapsed),
                 ChildRowSaveStatus.Conflict => new(V2SubroomCommandStatus.Conflict, "This subroom changed elsewhere.", FromEntity(patch.SavedRow!), draft, ResolverElapsed: patch.Outcome.ResolverElapsed),
                 _ => new(V2SubroomCommandStatus.Unexpected)
@@ -401,7 +399,7 @@ public sealed class RoomEditorV2CommandService(LogicCatalogService catalog, Requ
 
     public async Task<V2SubroomCommandOutcome> PrepareSubroomReferenceRenameAsync(Guid roomId, SubroomDurableBaseline baseline, SubroomDraft draft)
     {
-        if (draft.ReferenceId == baseline.ReferenceId) return await SaveSubroomAsync(roomId, baseline, draft);
+        if (!IsPotentialSubroomReferencePreparation(baseline, draft)) return await SaveSubroomAsync(roomId, baseline, draft);
         if (GeometryChanged(baseline, draft)) throw new InvalidOperationException("V2 Phase 2a does not permit subroom geometry persistence.");
         try
         {
@@ -438,7 +436,7 @@ public sealed class RoomEditorV2CommandService(LogicCatalogService catalog, Requ
             if (changes.Count == 0) return new(V2SubroomCommandStatus.Unchanged);
             ApplySubroom(source, proposal.SourceCurrent, changes); source.UpdatedUtc = NextUpdatedUtc(source.UpdatedUtc);
             if (updateReferences) { foreach (var t in transitions) { t.SourceSubroomReferenceText = proposal.SourceCurrent.ReferenceId; t.UpdatedUtc = NextUpdatedUtc(t.UpdatedUtc); } foreach (var e in proposal.ConnectionTargets) { var t = connections[e.EntityId]; if (e.FieldName == nameof(SubroomConnection.SourceSubroomReferenceText)) t.SourceSubroomReferenceText = proposal.SourceCurrent.ReferenceId; else t.DestinationSubroomReferenceText = proposal.SourceCurrent.ReferenceId; } foreach (var t in connections.Values) t.UpdatedUtc = NextUpdatedUtc(t.UpdatedUtc); foreach (var t in checks) { t.SubroomReferenceText = proposal.SourceCurrent.ReferenceId; t.UpdatedUtc = NextUpdatedUtc(t.UpdatedUtc); } }
-            await db.SaveChangesAsync(); var watch = System.Diagnostics.Stopwatch.StartNew(); await new LogicReferenceResolver(db).ResolveScopedAsync(source, new HashSet<string>(StringComparer.Ordinal) { nameof(Subroom.ReferenceId) }, new Dictionary<string, string?>(StringComparer.Ordinal) { [nameof(Subroom.ReferenceId)] = proposal.SourceBaseline.ReferenceId }); watch.Stop(); await tx.CommitAsync(); return new(V2SubroomCommandStatus.Committed, ResolverElapsed: watch.Elapsed);
+            await db.SaveChangesAsync(); var watch = System.Diagnostics.Stopwatch.StartNew(); await new LogicReferenceResolver(db).ResolveScopedAsync(source, new HashSet<string>(StringComparer.Ordinal) { nameof(Subroom.ReferenceId) }, new Dictionary<string, string?>(StringComparer.Ordinal) { [nameof(Subroom.ReferenceId)] = proposal.SourceBaseline.ReferenceId }); watch.Stop(); await tx.CommitAsync(); return new(V2SubroomCommandStatus.Committed, FreshBaseline: FromEntity(source), ResolverElapsed: watch.Elapsed);
         }
         catch (Exception ex) { return new(V2SubroomCommandStatus.Unexpected, ex.Message, null, proposal.SourceCurrent); }
     }
@@ -454,7 +452,7 @@ public sealed class RoomEditorV2CommandService(LogicCatalogService catalog, Requ
         try
         {
             var created = await catalog.CreateSubroomWithOutcomeAsync(roomId, new Subroom { FriendlyName = draft.FriendlyName, ReferenceId = draft.ReferenceId, Notes = draft.Notes });
-            return new(V2SubroomCommandStatus.Committed, CreatedEntityId: created.Entity.Id, ResolverElapsed: created.ResolverElapsed);
+            return new(V2SubroomCommandStatus.Committed, FreshBaseline: FromEntity(created.Entity), CreatedEntityId: created.Entity.Id, ResolverElapsed: created.ResolverElapsed);
         }
         catch (Exception ex) { return new(V2SubroomCommandStatus.Unexpected, ex.Message, null, draft); }
     }
@@ -544,14 +542,14 @@ public sealed class RoomEditorV2CommandService(LogicCatalogService catalog, Requ
             var patch = await catalog.SaveCheckWithPatchAsync(ToEntity(baseline), ToEntity(baseline, draft), roomId);
             return patch.Status switch
             {
-                ChildRowSaveStatus.Committed => new(V2CheckCommandStatus.Committed, ResolverElapsed: patch.Outcome.ResolverElapsed),
-                ChildRowSaveStatus.Unchanged => new(V2CheckCommandStatus.Unchanged, ResolverElapsed: patch.Outcome.ResolverElapsed),
+                ChildRowSaveStatus.Committed => new(V2CheckCommandStatus.Committed, FreshBaseline: FromEntity(patch.SavedRow!), ResolverElapsed: patch.Outcome.ResolverElapsed, CommittedIsEnemy: CheckLocationTypeCatalogue.IsEnemy(patch.SavedRow!.LocationType)),
+                ChildRowSaveStatus.Unchanged => new(V2CheckCommandStatus.Unchanged, FreshBaseline: FromEntity(patch.SavedRow!), ResolverElapsed: patch.Outcome.ResolverElapsed),
                 ChildRowSaveStatus.Missing => new(V2CheckCommandStatus.Missing, "This check no longer exists.", null, draft, ResolverElapsed: patch.Outcome.ResolverElapsed),
                 ChildRowSaveStatus.Conflict => new(V2CheckCommandStatus.Conflict, "This check changed elsewhere.", FromEntity(patch.SavedRow!), draft, ResolverElapsed: patch.Outcome.ResolverElapsed),
                 _ => new(V2CheckCommandStatus.Unexpected)
             };
         }
-        catch (Exception ex) { return new(V2CheckCommandStatus.Unexpected, ex.Message, null, draft); }
+        catch { throw; }
     }
     public async Task<V2CheckCommandOutcome> SaveCheckMetadataAsync(Guid roomId, CheckMetadataDurableBaseline baseline, CheckInGameMetadataDraft draft)
     {
@@ -644,10 +642,14 @@ public sealed class RoomEditorV2CommandService(LogicCatalogService catalog, Requ
     }
     public async Task<V2CheckCommandOutcome> CreateCheckAsync(Guid roomId, CheckDraft draft)
     {
-        try { var created = await catalog.CreateCheckWithOutcomeAsync(roomId, new CheckLocation { FriendlyName=draft.FriendlyName, SubroomReferenceText=draft.SubroomReferenceText, Requirements=draft.Requirements, Notes=draft.Notes, LocationType=draft.LocationType, IsTodo=draft.IsTodo, IsVerified=draft.IsVerified }); return new(V2CheckCommandStatus.Committed, CreatedEntityId: created.Entity.Id, ResolverElapsed: created.ResolverElapsed); }
-        catch (Exception ex) { return new(V2CheckCommandStatus.Unexpected, ex.Message, null, draft); }
+        try { var created = await catalog.CreateCheckWithOutcomeAsync(roomId, new CheckLocation { FriendlyName=draft.FriendlyName, SubroomReferenceText=draft.SubroomReferenceText, Requirements=draft.Requirements, Notes=draft.Notes, LocationType=draft.LocationType, IsTodo=draft.IsTodo, IsVerified=draft.IsVerified }); return new(V2CheckCommandStatus.Committed, FreshBaseline: FromEntity(created.Entity), CreatedEntityId: created.Entity.Id, ResolverElapsed: created.ResolverElapsed, CommittedIsEnemy: CheckLocationTypeCatalogue.IsEnemy(created.Entity.LocationType)); }
+        catch { throw; }
     }
-    public async Task<V2CheckCommandOutcome> ReorderCheckAsync(Guid roomId, Guid entityId, int targetIndex) => await CheckStructural(async () => await catalog.MoveCheckAsync(entityId, targetIndex));
+    public async Task<V2CheckCommandOutcome> ReorderCheckAsync(Guid roomId, Guid entityId, bool enemies, int targetIndex)
+    {
+        try { await catalog.MoveCheckSectionAsync(roomId, entityId, enemies, targetIndex); return new(V2CheckCommandStatus.Committed); }
+        catch (InvalidOperationException exception) { return new(V2CheckCommandStatus.ExpectedFailure, exception.Message); }
+    }
     public async Task<V2CheckCommandOutcome> SetCheckArchiveAsync(Guid roomId, Guid entityId, bool archived) => await CheckStructural(async () => await catalog.SetArchivedAsync(new CheckLocation { Id=entityId }, archived));
     public async Task<V2CheckCommandOutcome> DeleteCheckAsync(Guid roomId, Guid entityId) => await CheckStructural(async () => await catalog.DeleteCheckPermanentlyAsync(entityId));
     private static async Task<V2CheckCommandOutcome> CheckStructural(Func<Task> action) { try { await action(); return new(V2CheckCommandStatus.Committed); } catch (InvalidOperationException ex) { return new(V2CheckCommandStatus.ExpectedFailure, ex.Message); } catch (Exception ex) { return new(V2CheckCommandStatus.Unexpected, ex.Message); } }
@@ -678,7 +680,7 @@ public sealed class RoomEditorV2CommandService(LogicCatalogService catalog, Requ
             var durable = await catalog.ReadTransitionAsync(baseline.EntityId);
             if (durable is null || durable.RoomId != roomId || durable.IsArchived)
                 return new(V2TransitionCommandStatus.Missing, "This transition is no longer active in the current room.", null, draft);
-            var patch = await catalog.SaveTransitionWithPatchAsync(TransitionEntity(baseline), TransitionEntity(baseline, draft), roomId); return patch.Status switch { ChildRowSaveStatus.Committed => new(V2TransitionCommandStatus.Committed, ResolverElapsed: patch.Outcome.ResolverElapsed), ChildRowSaveStatus.Unchanged => new(V2TransitionCommandStatus.Unchanged, ResolverElapsed: patch.Outcome.ResolverElapsed), ChildRowSaveStatus.Missing => new(V2TransitionCommandStatus.Missing, "This transition no longer exists.", null, draft), ChildRowSaveStatus.Conflict => new(V2TransitionCommandStatus.Conflict, "This transition changed elsewhere.", TransitionBaseline(patch.SavedRow!), draft), _ => new(V2TransitionCommandStatus.Unexpected) };
+            var patch = await catalog.SaveTransitionWithPatchAsync(TransitionEntity(baseline), TransitionEntity(baseline, draft), roomId); return patch.Status switch { ChildRowSaveStatus.Committed => new(V2TransitionCommandStatus.Committed, FreshBaseline: TransitionBaseline(patch.SavedRow!), ResolverElapsed: patch.Outcome.ResolverElapsed), ChildRowSaveStatus.Unchanged => new(V2TransitionCommandStatus.Unchanged, FreshBaseline: TransitionBaseline(patch.SavedRow!), ResolverElapsed: patch.Outcome.ResolverElapsed), ChildRowSaveStatus.Missing => new(V2TransitionCommandStatus.Missing, "This transition no longer exists.", null, draft), ChildRowSaveStatus.Conflict => new(V2TransitionCommandStatus.Conflict, "This transition changed elsewhere.", TransitionBaseline(patch.SavedRow!), draft), _ => new(V2TransitionCommandStatus.Unexpected) };
         }
         catch (Exception ex) { return new(V2TransitionCommandStatus.Unexpected, ex.Message, null, draft); }
     }
@@ -759,7 +761,7 @@ public sealed class RoomEditorV2CommandService(LogicCatalogService catalog, Requ
             if (candidate is null)
             {
                 var created = await catalog.CreateTransitionWithOutcomeAsync(roomId, TransitionEntity(null, draft));
-                return new(V2TransitionCommandStatus.Committed, CreatedEntityId: created.Entity.Id, ResolverElapsed: created.ResolverElapsed);
+                return new(V2TransitionCommandStatus.Committed, FreshBaseline: TransitionBaseline(created.Entity), CreatedEntityId: created.Entity.Id, ResolverElapsed: created.ResolverElapsed);
             }
             var inverse = candidate.Value;
             return new(V2TransitionCommandStatus.Proposal, CreateProposal: new(draft, inverse.Target,
@@ -789,9 +791,7 @@ public sealed class RoomEditorV2CommandService(LogicCatalogService catalog, Requ
         try
         {
             // Inverse setup is tied only to a destination edit, never an unrelated save.
-            if (baseline.DestinationRoomReferenceText == draft.DestinationRoomReferenceText && baseline.DestinationTransitionAliasText == draft.DestinationTransitionAliasText)
-                return await SaveTransitionAsync(roomId, baseline, draft);
-            if (string.IsNullOrWhiteSpace(draft.DestinationRoomReferenceText) || string.IsNullOrWhiteSpace(draft.DestinationTransitionAliasText) || string.IsNullOrWhiteSpace(draft.Alias))
+            if (!IsPotentialInversePreparation(baseline, draft))
                 return await SaveTransitionAsync(roomId, baseline, draft);
 
             await using var db = await contexts.CreateDbContextAsync();
@@ -802,10 +802,10 @@ public sealed class RoomEditorV2CommandService(LogicCatalogService catalog, Requ
                 .SingleOrDefaultAsync();
             if (source is null) return new(V2TransitionCommandStatus.Missing, "This transition no longer exists.", null, draft);
 
-            var destinationRooms = await db.Rooms.AsNoTracking().Where(x => !x.IsArchived && x.ReferenceId.Trim().ToLower() == draft.DestinationRoomReferenceText.Trim().ToLower()).Select(x => x.Id).ToListAsync();
+            var destinationRooms = await db.Rooms.AsNoTracking().Where(x => !x.IsArchived && x.ReferenceId.Trim().ToLower() == draft.DestinationRoomReferenceText!.Trim().ToLower()).Select(x => x.Id).ToListAsync();
             if (destinationRooms.Count != 1) return await SaveTransitionAsync(roomId, baseline, draft);
             var targets = await db.RoomTransitions.AsNoTracking()
-                .Where(x => !x.IsArchived && x.RoomId == destinationRooms[0] && x.Alias.Trim().ToLower() == draft.DestinationTransitionAliasText.Trim().ToLower())
+                .Where(x => !x.IsArchived && x.RoomId == destinationRooms[0] && x.Alias.Trim().ToLower() == draft.DestinationTransitionAliasText!.Trim().ToLower())
                 .Select(x => new { x.Id, x.FriendlyName, x.UpdatedUtc, x.DestinationRoomReferenceText, x.DestinationTransitionAliasText })
                 .ToListAsync();
             if (targets.Count != 1) return await SaveTransitionAsync(roomId, baseline, draft);
@@ -895,7 +895,7 @@ public sealed class RoomEditorV2CommandService(LogicCatalogService catalog, Requ
             stopwatch.Stop();
             if (sourceChanges.Contains(nameof(RoomTransition.Requirements))) await ValidateTransitionRequirementsAsync(db, source);
             await transaction.CommitAsync();
-            return new(V2TransitionCommandStatus.Committed, ResolverElapsed: stopwatch.Elapsed);
+            return new(V2TransitionCommandStatus.Committed, FreshBaseline: TransitionBaseline(source), ResolverElapsed: stopwatch.Elapsed);
         }
         catch (Exception ex) { return new(V2TransitionCommandStatus.Unexpected, ex.Message, null, proposal.SourceCurrent); }
     }
@@ -966,7 +966,7 @@ public sealed class RoomEditorV2CommandService(LogicCatalogService catalog, Requ
             stopwatch.Stop();
             await ValidateTransitionRequirementsAsync(db, source);
             await transaction.CommitAsync();
-            return new(V2TransitionCommandStatus.Committed, CreatedEntityId: source.Id, ResolverElapsed: stopwatch.Elapsed);
+            return new(V2TransitionCommandStatus.Committed, FreshBaseline: TransitionBaseline(source), CreatedEntityId: source.Id, ResolverElapsed: stopwatch.Elapsed);
         }
         catch (Exception ex) { return new(V2TransitionCommandStatus.Unexpected, ex.Message, null, proposal.SourceCurrent); }
     }
@@ -985,14 +985,14 @@ public sealed class RoomEditorV2CommandService(LogicCatalogService catalog, Requ
     public V2TransitionCommandOutcome RevertInverse(TransitionInverseProposal proposal)
         => new(V2TransitionCommandStatus.Unchanged, RetainedDraft: proposal.IsTargetOnlyStatusAction ? proposal.SourceCurrent : TransitionDraftFromBaseline(proposal.SourceBaseline, proposal.SourceCurrent.ClientDraftId));
 
-    private static TransitionDraft TransitionDraftFromBaseline(TransitionDurableBaseline x, Guid clientDraftId) => new(clientDraftId, x.Alias, x.FriendlyName, x.InGameId, x.InGamePositionX, x.InGamePositionY, x.InGamePositionZ, x.LocalPositionX, x.LocalPositionY, x.LocalPositionZ, x.AnnotationSceneUnitX, x.AnnotationSceneUnitY, x.SourceSubroomReferenceText, x.DestinationRoomReferenceText, x.DestinationTransitionAliasText, x.Requirements, x.Notes, x.IsTodo, x.IsVerified);
+    private static TransitionDraft TransitionDraftFromBaseline(TransitionDurableBaseline x, Guid clientDraftId) => new(clientDraftId, x.Alias, x.FriendlyName, x.InGameId, x.InGamePositionX, x.InGamePositionY, x.InGamePositionZ, x.LocalPositionX, x.LocalPositionY, x.LocalPositionZ, x.AnnotationSceneUnitX, x.AnnotationSceneUnitY, x.SourceSubroomReferenceText, x.DestinationRoomReferenceText, x.DestinationTransitionAliasText, x.Requirements, x.Notes, x.IsTodo, x.IsVerified, x.IsUnsafeArrival);
     private static TransitionDraft TransitionDraftWithMetadata(TransitionDurableBaseline x, TransitionInGameMetadataDraft d)
         => new(Guid.NewGuid(), x.Alias, x.FriendlyName, d.InGameId, d.InGamePositionX, d.InGamePositionY, d.InGamePositionZ,
             d.LocalPositionX, d.LocalPositionY, d.LocalPositionZ, d.AnnotationSceneUnitX, d.AnnotationSceneUnitY,
-            x.SourceSubroomReferenceText, x.DestinationRoomReferenceText, x.DestinationTransitionAliasText, x.Requirements, x.Notes, x.IsTodo, x.IsVerified);
+            x.SourceSubroomReferenceText, x.DestinationRoomReferenceText, x.DestinationTransitionAliasText, x.Requirements, x.Notes, x.IsTodo, x.IsVerified, x.IsUnsafeArrival);
     private async Task<(TransitionInverseTargetEvidence Target, string SourceRoomReferenceId, string TargetFriendlyName)?> FindInverseCandidateAsync(Guid roomId, TransitionDraft draft)
     {
-        if (contexts is null || string.IsNullOrWhiteSpace(draft.DestinationRoomReferenceText) || string.IsNullOrWhiteSpace(draft.DestinationTransitionAliasText) || string.IsNullOrWhiteSpace(draft.Alias)) return null;
+        if (contexts is null || !IsPotentialInversePreparation(null, draft)) return null;
         await using var db = await contexts.CreateDbContextAsync();
         var sourceRooms = await db.Rooms.AsNoTracking().Where(x => !x.IsArchived && x.Id == roomId).Select(x => new { x.Id, x.ReferenceId }).ToListAsync();
         if (sourceRooms.Count != 1 || string.IsNullOrWhiteSpace(sourceRooms[0].ReferenceId)) return null;
@@ -1000,16 +1000,16 @@ public sealed class RoomEditorV2CommandService(LogicCatalogService catalog, Requ
         if (sourceReferenceMatches != 1) return null;
         var sourceAliasMatches = await db.RoomTransitions.AsNoTracking().CountAsync(x => !x.IsArchived && x.RoomId == roomId && x.Alias.Trim().ToLower() == draft.Alias.Trim().ToLower());
         if (sourceAliasMatches != 0) return null;
-        var destinationRooms = await db.Rooms.AsNoTracking().Where(x => !x.IsArchived && x.ReferenceId.Trim().ToLower() == draft.DestinationRoomReferenceText.Trim().ToLower()).Select(x => x.Id).ToListAsync();
+        var destinationRooms = await db.Rooms.AsNoTracking().Where(x => !x.IsArchived && x.ReferenceId.Trim().ToLower() == draft.DestinationRoomReferenceText!.Trim().ToLower()).Select(x => x.Id).ToListAsync();
         if (destinationRooms.Count != 1) return null;
-        var targets = await db.RoomTransitions.AsNoTracking().Where(x => !x.IsArchived && x.RoomId == destinationRooms[0] && x.Alias.Trim().ToLower() == draft.DestinationTransitionAliasText.Trim().ToLower()).Select(x => new { x.Id, x.FriendlyName, x.UpdatedUtc, x.DestinationRoomReferenceText, x.DestinationTransitionAliasText }).ToListAsync();
+        var targets = await db.RoomTransitions.AsNoTracking().Where(x => !x.IsArchived && x.RoomId == destinationRooms[0] && x.Alias.Trim().ToLower() == draft.DestinationTransitionAliasText!.Trim().ToLower()).Select(x => new { x.Id, x.FriendlyName, x.UpdatedUtc, x.DestinationRoomReferenceText, x.DestinationTransitionAliasText }).ToListAsync();
         if (targets.Count != 1) return null;
         var target = targets[0]; var fillRoom = string.IsNullOrWhiteSpace(target.DestinationRoomReferenceText); var fillAlias = string.IsNullOrWhiteSpace(target.DestinationTransitionAliasText);
         return !fillRoom && !fillAlias ? null : (new(target.Id, target.UpdatedUtc, target.DestinationRoomReferenceText, target.DestinationTransitionAliasText, fillRoom, fillAlias), sourceRooms[0].ReferenceId, target.FriendlyName);
     }
-    public static TransitionDurableBaseline TransitionFromView(TransitionRowView x) => new(x.EntityId,x.UpdatedUtc,x.SortOrder,x.IsArchived,x.RequirementsParseSucceeded,x.Alias,x.FriendlyName,x.InGameId,x.InGamePositionX,x.InGamePositionY,x.InGamePositionZ,x.LocalPositionX,x.LocalPositionY,x.LocalPositionZ,x.AnnotationSceneUnitX,x.AnnotationSceneUnitY,x.SourceSubroomReferenceText,x.DestinationRoomReferenceText,x.DestinationTransitionAliasText,x.Requirements,x.Notes,x.IsTodo,x.IsVerified,x.EnableAnnotation);
-    private static TransitionDurableBaseline TransitionBaseline(RoomTransition x) => new(x.Id,x.UpdatedUtc,x.SortOrder,x.IsArchived,x.RequirementsParseSucceeded,x.Alias,x.FriendlyName,x.InGameId,x.InGamePositionX,x.InGamePositionY,x.InGamePositionZ,x.LocalPositionX,x.LocalPositionY,x.LocalPositionZ,x.AnnotationSceneUnitX,x.AnnotationSceneUnitY,x.SourceSubroomReferenceText,x.DestinationRoomReferenceText,x.DestinationTransitionAliasText,x.Requirements,x.Notes,x.IsTodo,x.IsVerified,x.EnableAnnotation);
-    private static RoomTransition TransitionEntity(TransitionDurableBaseline? x, TransitionDraft? d = null) => new() { Id=x?.EntityId ?? Guid.Empty, UpdatedUtc=x?.UpdatedUtc ?? default, SortOrder=x?.SortOrder ?? 0, IsArchived=x?.IsArchived ?? false, EnableAnnotation=x?.EnableAnnotation ?? false, Alias=d is null ? x?.Alias ?? "" : d.Alias, FriendlyName=d is null ? x?.FriendlyName ?? "" : d.FriendlyName, InGameId=d is null ? x?.InGameId : d.InGameId, InGamePositionX=d is null ? x?.InGamePositionX : d.InGamePositionX, InGamePositionY=d is null ? x?.InGamePositionY : d.InGamePositionY, InGamePositionZ=d is null ? x?.InGamePositionZ : d.InGamePositionZ, LocalPositionX=d is null ? x?.LocalPositionX : d.LocalPositionX, LocalPositionY=d is null ? x?.LocalPositionY : d.LocalPositionY, LocalPositionZ=d is null ? x?.LocalPositionZ : d.LocalPositionZ, AnnotationSceneUnitX=d is null ? x?.AnnotationSceneUnitX : d.AnnotationSceneUnitX, AnnotationSceneUnitY=d is null ? x?.AnnotationSceneUnitY : d.AnnotationSceneUnitY, SourceSubroomReferenceText=d is null ? x?.SourceSubroomReferenceText : d.SourceSubroomReferenceText, DestinationRoomReferenceText=d is null ? x?.DestinationRoomReferenceText : d.DestinationRoomReferenceText, DestinationTransitionAliasText=d is null ? x?.DestinationTransitionAliasText : d.DestinationTransitionAliasText, Requirements=d is null ? x?.Requirements ?? "" : d.Requirements, RequirementsParseSucceeded=x?.RequirementsParseSucceeded, Notes=d is null ? x?.Notes ?? "" : d.Notes, IsTodo=d is null ? x?.IsTodo ?? false : d.IsTodo, IsVerified=d is null ? x?.IsVerified : d.IsVerified };
+    public static TransitionDurableBaseline TransitionFromView(TransitionRowView x) => new(x.EntityId,x.UpdatedUtc,x.SortOrder,x.IsArchived,x.RequirementsParseSucceeded,x.Alias,x.FriendlyName,x.InGameId,x.InGamePositionX,x.InGamePositionY,x.InGamePositionZ,x.LocalPositionX,x.LocalPositionY,x.LocalPositionZ,x.AnnotationSceneUnitX,x.AnnotationSceneUnitY,x.SourceSubroomReferenceText,x.DestinationRoomReferenceText,x.DestinationTransitionAliasText,x.Requirements,x.Notes,x.IsTodo,x.IsVerified,x.IsUnsafeArrival,x.EnableAnnotation);
+    private static TransitionDurableBaseline TransitionBaseline(RoomTransition x) => new(x.Id,x.UpdatedUtc,x.SortOrder,x.IsArchived,x.RequirementsParseSucceeded,x.Alias,x.FriendlyName,x.InGameId,x.InGamePositionX,x.InGamePositionY,x.InGamePositionZ,x.LocalPositionX,x.LocalPositionY,x.LocalPositionZ,x.AnnotationSceneUnitX,x.AnnotationSceneUnitY,x.SourceSubroomReferenceText,x.DestinationRoomReferenceText,x.DestinationTransitionAliasText,x.Requirements,x.Notes,x.IsTodo,x.IsVerified,x.IsUnsafeArrival,x.EnableAnnotation);
+    private static RoomTransition TransitionEntity(TransitionDurableBaseline? x, TransitionDraft? d = null) => new() { Id=x?.EntityId ?? Guid.Empty, UpdatedUtc=x?.UpdatedUtc ?? default, SortOrder=x?.SortOrder ?? 0, IsArchived=x?.IsArchived ?? false, EnableAnnotation=x?.EnableAnnotation ?? false, IsUnsafeArrival=d is null ? x?.IsUnsafeArrival ?? false : d.IsUnsafeArrival, Alias=d is null ? x?.Alias ?? "" : d.Alias, FriendlyName=d is null ? x?.FriendlyName ?? "" : d.FriendlyName, InGameId=d is null ? x?.InGameId : d.InGameId, InGamePositionX=d is null ? x?.InGamePositionX : d.InGamePositionX, InGamePositionY=d is null ? x?.InGamePositionY : d.InGamePositionY, InGamePositionZ=d is null ? x?.InGamePositionZ : d.InGamePositionZ, LocalPositionX=d is null ? x?.LocalPositionX : d.LocalPositionX, LocalPositionY=d is null ? x?.LocalPositionY : d.LocalPositionY, LocalPositionZ=d is null ? x?.LocalPositionZ : d.LocalPositionZ, AnnotationSceneUnitX=d is null ? x?.AnnotationSceneUnitX : d.AnnotationSceneUnitX, AnnotationSceneUnitY=d is null ? x?.AnnotationSceneUnitY : d.AnnotationSceneUnitY, SourceSubroomReferenceText=d is null ? x?.SourceSubroomReferenceText : d.SourceSubroomReferenceText, DestinationRoomReferenceText=d is null ? x?.DestinationRoomReferenceText : d.DestinationRoomReferenceText, DestinationTransitionAliasText=d is null ? x?.DestinationTransitionAliasText : d.DestinationTransitionAliasText, Requirements=d is null ? x?.Requirements ?? "" : d.Requirements, RequirementsParseSucceeded=x?.RequirementsParseSucceeded, Notes=d is null ? x?.Notes ?? "" : d.Notes, IsTodo=d is null ? x?.IsTodo ?? false : d.IsTodo, IsVerified=d is null ? x?.IsVerified : d.IsVerified };
 
     public async Task<V2ConnectionCommandOutcome> SaveConnectionAsync(Guid roomId, ConnectionDurableBaseline baseline, ConnectionDraft draft)
     {
@@ -1020,8 +1020,8 @@ public sealed class RoomEditorV2CommandService(LogicCatalogService catalog, Requ
             var patch = await connections.SaveAsync(ConnectionEntity(baseline), ConnectionEntity(baseline, draft), roomId);
             return patch.Status switch
             {
-                ChildRowSaveStatus.Committed => new(V2ConnectionCommandStatus.Committed, ResolverElapsed: patch.Outcome.ResolverElapsed),
-                ChildRowSaveStatus.Unchanged => new(V2ConnectionCommandStatus.Unchanged, ResolverElapsed: patch.Outcome.ResolverElapsed),
+                ChildRowSaveStatus.Committed => new(V2ConnectionCommandStatus.Committed, FreshBaseline: ConnectionBaseline(patch.SavedRow!), ResolverElapsed: patch.Outcome.ResolverElapsed),
+                ChildRowSaveStatus.Unchanged => new(V2ConnectionCommandStatus.Unchanged, FreshBaseline: ConnectionBaseline(patch.SavedRow!), ResolverElapsed: patch.Outcome.ResolverElapsed),
                 ChildRowSaveStatus.Missing => new(V2ConnectionCommandStatus.Missing, "This connection no longer exists.", null, draft, ResolverElapsed: patch.Outcome.ResolverElapsed),
                 ChildRowSaveStatus.Conflict => new(V2ConnectionCommandStatus.Conflict, "This connection changed elsewhere.", ConnectionBaseline(patch.SavedRow!), draft, ResolverElapsed: patch.Outcome.ResolverElapsed),
                 _ => new(V2ConnectionCommandStatus.Unexpected)
@@ -1035,7 +1035,7 @@ public sealed class RoomEditorV2CommandService(LogicCatalogService catalog, Requ
         try
         {
             var created = await catalog.CreateConnectionWithOutcomeAsync(roomId, ConnectionEntity(null, draft));
-            return new(V2ConnectionCommandStatus.Committed, CreatedEntityId: created.Entity.Id, ResolverElapsed: created.ResolverElapsed);
+            return new(V2ConnectionCommandStatus.Committed, FreshBaseline: ConnectionBaseline(created.Entity), CreatedEntityId: created.Entity.Id, ResolverElapsed: created.ResolverElapsed);
         }
         catch (Exception ex) { return new(V2ConnectionCommandStatus.Unexpected, ex.Message, null, draft); }
     }
@@ -1052,8 +1052,8 @@ public sealed class RoomEditorV2CommandService(LogicCatalogService catalog, Requ
                 if (!await db.SubroomConnections.AsNoTracking().AnyAsync(x => x.Id == entityId && x.RoomId == roomId && !x.IsArchived))
                     return new(V2ConnectionCommandStatus.Missing, "This active connection no longer exists.");
             }
-            await catalog.MoveConnectionAsync(entityId, targetIndex);
-            return new(V2ConnectionCommandStatus.Committed);
+            var canonicalChanged = await catalog.MoveConnectionAsync(entityId, targetIndex);
+            return new(V2ConnectionCommandStatus.Committed, AnnotationRefreshImpact: canonicalChanged ? V2AnnotationRefreshImpact.CanvasAndViewport : V2AnnotationRefreshImpact.None);
         }
         catch (InvalidOperationException ex) { return new(V2ConnectionCommandStatus.ExpectedFailure, ex.Message); }
         catch (Exception ex) { return new(V2ConnectionCommandStatus.Unexpected, ex.Message); }
@@ -1094,7 +1094,7 @@ public sealed class RoomEditorV2CommandService(LogicCatalogService catalog, Requ
         catch (InvalidOperationException ex) { return new(V2ConnectionCommandStatus.ExpectedFailure, ex.Message); }
         catch (Exception ex) { return new(V2ConnectionCommandStatus.Unexpected, ex.Message); }
     }
-    public static ConnectionDurableBaseline ConnectionFromView(ConnectionRowView x) => new(x.EntityId, x.UpdatedUtc, x.SortOrder, x.IsArchived, x.RequirementsParseSucceeded, x.Alias, x.FriendlyName, x.SourceSubroomReferenceText, x.DestinationSubroomReferenceText, x.Requirements, x.Notes, x.EnableAnnotation, x.DurableSceneUnitX ?? x.SceneUnitX, x.DurableSceneUnitY ?? x.SceneUnitY, x.IsTodo, x.IsVerified);
+    public static ConnectionDurableBaseline ConnectionFromView(ConnectionRowView x) => new(x.EntityId, x.UpdatedUtc, x.SortOrder, x.IsArchived, x.RequirementsParseSucceeded, x.Alias, x.FriendlyName, x.SourceSubroomReferenceText, x.DestinationSubroomReferenceText, x.Requirements, x.Notes, x.EnableAnnotation, x.SceneUnitX, x.SceneUnitY, x.IsTodo, x.IsVerified);
     private static ConnectionDurableBaseline ConnectionBaseline(SubroomConnection x) => new(x.Id, x.UpdatedUtc, x.SortOrder, x.IsArchived, x.RequirementsParseSucceeded, x.Alias, x.FriendlyName, x.SourceSubroomReferenceText, x.DestinationSubroomReferenceText, x.Requirements, x.Notes, x.EnableAnnotation, x.SceneUnitX, x.SceneUnitY, x.IsTodo, x.IsVerified);
     private static SubroomConnection ConnectionEntity(ConnectionDurableBaseline? x, ConnectionDraft? d = null) => new()
     {

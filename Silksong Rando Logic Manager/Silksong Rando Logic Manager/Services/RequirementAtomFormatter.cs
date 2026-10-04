@@ -43,6 +43,8 @@ public static class RequirementAtomFormatter
         RequirementOutputPlaceholder.Item => Required(arguments.ItemOutputValue, "item output value"),
         RequirementOutputPlaceholder.Quantity => PositiveQuantity(arguments.Quantity),
         RequirementOutputPlaceholder.Check => Required(arguments.CheckGraphId, "check graph ID"),
+        RequirementOutputPlaceholder.Enemy => Required(arguments.EnemyOutputValue, "enemy output value"),
+        RequirementOutputPlaceholder.Countable => Required(arguments.CountableOutputValue, "countable output value"),
         _ => throw new ArgumentOutOfRangeException(nameof(placeholder))
     };
 

@@ -1,4 +1,5 @@
 @rendermode InteractiveServer
+@implements IAsyncDisposable
 @inject SceneDumpParser Parser
 @inject SceneClassificationService Classification
 @inject SceneImportService Importer
@@ -8,6 +9,7 @@
 @inject NavigationManager Navigation
 @inject IJSRuntime JS
 @inject DiagnosticState Diagnostics
+@inject ILogger<SceneReview> Logger
 
 <div class="scene-review-root">
     <InputFile id="scene-upload-input" class="scene-upload-input" OnChange="ParseSceneAsync" accept="application/json,.json" disabled="@UploadUnavailable" />
@@ -71,22 +73,31 @@
                 </div>
             </header>
 
-            <div class="scene-preview" aria-label="Read-only scene position preview">
+            <div @ref="previewElement" class="scene-preview" aria-label="Read-only scene position preview">
                 <svg viewBox="@PreviewViewBox" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Visible scene object positions">
                     @foreach (var point in SpatialPreview.Points)
                     {
-                        <circle class="scene-preview-point" cx="@point.X" cy="@point.Y" r="@PreviewPointRadius" />
+                        <circle class="scene-preview-point scene-preview-@ClassificationText(point.Classification)" cx="@point.X" cy="@point.Y" r="@PreviewPointRadius" />
                     }
                     @if (SpatialPreview.HoveredPoint is { } hovered)
                     {
                         <circle class="scene-preview-hover" cx="@hovered.X" cy="@hovered.Y" r="@PreviewHoverRadius" />
                     }
                 </svg>
+                <div class="scene-preview-resize-edge" data-scene-preview-resize-edge aria-hidden="true"></div>
             </div>
 
             <div class="scene-review-tools">
                 <input class="scene-search" placeholder="search object names" value="@search" @oninput="SetSearch" autocomplete="off" aria-label="Search scene object names" />
+                <div class="scene-review-filters" aria-label="Filter scene classifications">
+                    @foreach (var option in Enum.GetValues<SceneReviewFilter>())
+                    {
+                        <button type="button" class="@(filter == option ? "active" : null)" aria-pressed="@(filter == option)" @onclick="(() => SetFilter(option))">@option.ToString().ToLowerInvariant()</button>
+                    }
+                </div>
+                <label class="scene-show-filler"><input type="checkbox" checked="@showFiller" @onchange="SetShowFiller" /> show filler</label>
                 <div class="scene-review-actions">
+                    <button class="scene-enemies-import-button" type="button" disabled="@(!CanImportEnemiesOnly)" @onclick="ImportEnemiesOnlyAsync"><i class="fa-solid fa-skull" aria-hidden="true"></i> import enemies only</button>
                     <button class="scene-import-button" type="button" disabled="@(!CanImport)" @onclick="ImportAsync"><i class="fa-solid fa-file-import" aria-hidden="true"></i> import</button>
                     <button class="scene-cancel-button" type="button" @onclick="Cancel">cancel</button>
                 </div>
@@ -102,17 +113,17 @@
                     <tbody>
                         <Virtualize TItem="SceneDumpObject" Items="@VisibleRows" Context="node" SpacerElement="tr">
                             <tr @key="node.Id" class="@RowClass(node)" @onmouseenter="(() => SetHoveredObject(node.Id))" @onmouseleave="(() => SetHoveredObject(null))">
-                                <td><span class="scene-tree-name" style="padding-left: @(node.Depth * 1.15)rem"><button class="scene-expand" type="button" disabled="@(node.Children.Count == 0)" title="@(expanded.Contains(node.Id) ? "Collapse" : "Expand")" @onclick="(() => ToggleExpansion(node.Id))"><i class="fa-solid @(node.Children.Count == 0 ? "fa-minus" : expanded.Contains(node.Id) ? "fa-chevron-down" : "fa-chevron-right")" aria-hidden="true"></i></button>@node.Name</span></td>
+                                <td><span class="scene-tree-name" style="padding-left: @(node.Depth * 1.15)rem"><button class="scene-expand" type="button" disabled="@(node.Children.Count == 0)" title="@(expanded.Contains(node.Id) ? "Collapse" : "Expand")" @onclick="(() => ToggleExpansion(node.Id))"><i class="fa-solid @(node.Children.Count == 0 ? "fa-minus" : expanded.Contains(node.Id) ? "fa-chevron-down" : "fa-chevron-right")" aria-hidden="true"></i></button>@node.Name @if (node.ShowAct3Indication) { <span class="scene-act3">Act 3</span> }</span></td>
                                  <td>@Position(node.WorldPosition)</td>
                                  <td>@Position(node.LocalPosition)</td>
                                  <td>@Persistence(node)</td>
                                  <td class="scene-candidate-cell">@if (node.CandidateReasons.Count > 0) { <i class="fa-solid fa-circle-info" title="@string.Join("; ", node.CandidateReasons)" aria-label="Candidate evidence: @string.Join("; ", node.CandidateReasons)"></i> }</td>
                                    <td class="scene-classification">
-                                      @if (LockedClassification(node) is { } locked) { <i class="fa-solid fa-circle-check" title="Matches an existing @ClassificationText(locked) record" aria-hidden="true"></i> }
+                                      @if (MatchedClassification(node) is { } matched) { <i class="fa-solid fa-circle-check" title="Matches an existing @ClassificationText(matched) record" aria-hidden="true"></i> }
                                       @if (IsCrossTypeConflict(node)) { <i class="fa-solid fa-circle-exclamation danger" title="Matches existing transition and check records" aria-hidden="true"></i> }
-                                      <select value="@node.Classification" disabled="@(LockedClassification(node) is not null)" @onchange="(args => SetClassification(node, args.Value?.ToString()))"><option value="@SceneDumpClassification.Exit">exit</option><option value="@SceneDumpClassification.Check">check</option><option value="@SceneDumpClassification.Other">other</option></select>
+                                      <select value="@node.Classification" @onchange="(args => SetClassification(node, args.Value?.ToString()))"><option value="@SceneDumpClassification.Exit">exit</option><option value="@SceneDumpClassification.Check">check</option><option value="@SceneDumpClassification.Enemy">enemy</option><option value="@SceneDumpClassification.Other">other</option></select>
                                    </td>
-                                   @if (node.Classification is SceneDumpClassification.Exit or SceneDumpClassification.Check)
+                                   @if (SceneDumpIdentity.IsImportable(node.Classification))
                                    {
                                        var draft = Draft(node);
                                        <td><select value="@draft.ExistingRecordId" @onchange="(args => SetExistingRecord(node, args.Value?.ToString()))"><option value="">Create new</option>@foreach (var record in SelectableRecords(node)) { <option value="@record.Id">@record.FriendlyName (@(record.InGameId ?? "no ID"))</option> }</select></td>
@@ -138,6 +149,11 @@
     private SceneImportPreview? preview;
     private readonly HashSet<Guid> expanded = [];
     private string search = string.Empty;
+    private SceneReviewFilter filter;
+    private bool showFiller;
+    private ElementReference previewElement;
+    private IJSObjectReference? resizeOwner;
+    private bool mountingResizeOwner, disposed;
     private string? parseError;
     private string? importError;
     private Guid? targetRoomId;
@@ -153,8 +169,9 @@
 
     private bool UploadUnavailable => isParsing || review is not null;
     private bool CanImport => preview is not null && (preview.MatchingRooms.Count != 0 || !string.IsNullOrWhiteSpace(review?.SceneName)) && (preview.MatchingRooms.Count < 2 || targetRoomId is not null);
+    private bool CanImportEnemiesOnly => CanImport && review is not null && Flatten(review.RootObjects).Any(node => node.Classification == SceneDumpClassification.Enemy);
     private List<SceneDumpObject> VisibleRows => visibleRows;
-    private Room? EffectiveTargetRoom => targetRoomId is { } id ? preview?.MatchingRooms.SingleOrDefault(room => room.Id == id) : preview?.MatchingRooms.Count == 1 ? preview.MatchingRooms[0] : null;
+    private SceneImportRoom? EffectiveTargetRoom => targetRoomId is { } id ? preview?.MatchingRooms.SingleOrDefault(room => room.Id == id) : preview?.MatchingRooms.Count == 1 ? preview.MatchingRooms[0] : null;
     private SceneUnitSize? CurrentDimensions => EffectiveTargetRoom is { SceneUnitWidth: { } width, SceneUnitHeight: { } height } ? new SceneUnitSize(width, height) : null;
     private bool ShowReplacementDimensions => review?.SceneUnitSize is { } parsed && CurrentDimensions is { } current && (current.Width != parsed.Width || current.Height != parsed.Height);
     private SceneUnitSize? ReplacementDimensions => ShowReplacementDimensions && replacementWidth is { } width && replacementHeight is { } height ? new SceneUnitSize(width, height) : null;
@@ -168,6 +185,22 @@
         if (firstRender)
         {
             await JS.InvokeVoidAsync("registerSceneDropTarget", "scene-upload-input");
+        }
+        if (review is not null && resizeOwner is null && !mountingResizeOwner && !disposed)
+        {
+            var mountedReview = review;
+            mountingResizeOwner = true;
+            try
+            {
+                var owner = await JS.InvokeAsync<IJSObjectReference>("createSceneReviewPreviewResizeOwner", previewElement);
+                if (disposed || review != mountedReview) await DisposeResizeOwnerAsync(owner);
+                else resizeOwner = owner;
+            }
+            finally
+            {
+                mountingResizeOwner = false;
+                if (!disposed && review is not null && review != mountedReview && resizeOwner is null) await InvokeAsync(StateHasChanged);
+            }
         }
     }
 
@@ -188,9 +221,11 @@
             await using var stream = args.File.OpenReadStream(SceneDumpParser.MaximumBytes);
             var parsed = await Parser.ParseAsync(stream);
             Classification.Apply(parsed);
+            SceneFillerVisibility.Apply(parsed);
             var parsedPreview = await Importer.PreviewAsync(parsed);
-            LockMatchedClassifications(parsed, parsedPreview);
+            if (disposed) return;
             review = parsed;
+            showFiller = false;
             preview = parsedPreview;
             targetRoomId = parsedPreview.MatchingRooms.Count == 1 ? parsedPreview.MatchingRooms[0].Id : null;
             InitializeDrafts(parsed);
@@ -234,15 +269,6 @@
         }
     }
 
-    private static void LockMatchedClassifications(SceneDumpReview parsed, SceneImportPreview parsedPreview)
-    {
-        foreach (var node in Flatten(parsed.RootObjects))
-        {
-            var types = parsedPreview.ObjectMatches.First(x => x.ObjectId == node.Id).Matches.Select(x => x.Classification).Distinct().ToArray();
-            if (types.Length == 1) node.Classification = types[0];
-        }
-    }
-
     private SceneDumpObject? FindNode(Guid id) => review is null ? null : FindNode(review.RootObjects, id);
     private static SceneDumpObject? FindNode(IEnumerable<SceneDumpObject> nodes, Guid id) => nodes.SelectMany(node => new[] { node }.Concat(Flatten(node.Children))).FirstOrDefault(node => node.Id == id);
     private static IEnumerable<SceneDumpObject> Flatten(IEnumerable<SceneDumpObject> nodes) => nodes.SelectMany(node => new[] { node }.Concat(Flatten(node.Children)));
@@ -251,25 +277,39 @@
     {
         foreach (var node in nodes.OrderBy(SortPriority).ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase))
         {
-            if (!MatchesSearch(node)) continue;
+            if (!MatchesTree(node)) continue;
             yield return node;
-            if (string.IsNullOrWhiteSpace(search) ? expanded.Contains(node.Id) : true)
+            if (TreeFiltered || expanded.Contains(node.Id))
             {
                 foreach (var child in BuildVisibleRows(node.Children)) yield return child;
             }
         }
     }
 
-    private bool MatchesSearch(SceneDumpObject node) => string.IsNullOrWhiteSpace(search) || node.Name.Contains(search.Trim(), StringComparison.OrdinalIgnoreCase) || node.Children.Any(MatchesSearch);
+    private bool TreeFiltered => filter != SceneReviewFilter.All || !string.IsNullOrWhiteSpace(search);
+    private bool MatchesTree(SceneDumpObject node) =>
+        ((showFiller || !node.IsFiller) && (!TreeFiltered || MatchesFilter(node)) &&
+         (string.IsNullOrWhiteSpace(search) || node.Name.Contains(search.Trim(), StringComparison.OrdinalIgnoreCase))) ||
+        ((showFiller || node.HasKeptDescendant) && node.Children.Any(MatchesTree));
+    private bool MatchesFilter(SceneDumpObject node) => filter switch
+    {
+        SceneReviewFilter.Unclassified => node.Classification == SceneDumpClassification.Other,
+        SceneReviewFilter.Classified => SceneDumpIdentity.IsImportable(node.Classification),
+        SceneReviewFilter.Exits => node.Classification == SceneDumpClassification.Exit,
+        SceneReviewFilter.Checks => node.Classification == SceneDumpClassification.Check,
+        SceneReviewFilter.Enemies => node.Classification == SceneDumpClassification.Enemy,
+        _ => true
+    };
     private static int SortPriority(SceneDumpObject node) => Math.Min(
         node.Classification switch
         {
             SceneDumpClassification.Exit => 0,
             SceneDumpClassification.Check => 1,
-            _ when node.CandidateReasons.Count > 0 => 2,
-            _ => 3
+            SceneDumpClassification.Enemy => 2,
+            _ when node.CandidateReasons.Count > 0 => 3,
+            _ => 4
         },
-        node.Children.Select(SortPriority).DefaultIfEmpty(3).Min());
+        node.Children.Select(SortPriority).DefaultIfEmpty(4).Min());
 
     private static bool IsPromoted(SceneDumpObject node) =>
         node.Classification != SceneDumpClassification.Other || node.CandidateReasons.Count > 0;
@@ -280,18 +320,25 @@
     }
     private void SetClassification(SceneDumpObject node, string? value)
     {
-        if (Enum.TryParse<SceneDumpClassification>(value, out var classification))
+        if (Enum.TryParse<SceneDumpClassification>(value, out var classification) && Enum.IsDefined(classification))
         {
             node.Classification = classification;
-            InitializeDraft(node);
+            SceneFillerVisibility.Apply(review!);
+            preview = preview! with { ObjectMatches = preview!.ObjectMatches.Select(match => match.ObjectId == node.Id
+                ? SceneImportService.MatchObject(node, preview.Transitions, preview.Checks) : match).ToArray() };
+            ReconcileDrafts(node.Id);
+            AllocateNames();
             importError = null;
+            allPreviewPoints = ReviewProjection.CreatePoints(review!.RootObjects);
             RebuildVisibleRows();
+            RebuildSpatialPreview();
         }
     }
     private void SelectTargetRoom(Guid roomId)
     {
         targetRoomId = roomId;
-        InitializeDrafts(review!);
+        ReconcileDrafts();
+        AllocateNames();
         ResetReplacementDimensions();
         RebuildSpatialPreview();
     }
@@ -301,8 +348,8 @@
         replacementHeight = review?.SceneUnitSize?.Height;
     }
 
-    private SceneImportObjectMatch? Match(SceneDumpObject node) => preview?.ObjectMatches.FirstOrDefault(x => x.ObjectId == node.Id);
-    private SceneDumpClassification? LockedClassification(SceneDumpObject node)
+    private SceneImportObjectMatch? Match(SceneDumpObject node) => preview?.ObjectMatches.FirstOrDefault(match => match.ObjectId == node.Id);
+    private SceneDumpClassification? MatchedClassification(SceneDumpObject node)
     {
         var types = Match(node)?.Matches.Select(x => x.Classification).Distinct().ToArray() ?? [];
         return types.Length == 1 ? types[0] : null;
@@ -313,12 +360,13 @@
     private string ConflictSummary()
     {
         var target = EffectiveTargetRoomId;
-        var selected = preview!.ObjectMatches.Sum(x => x.Matches.Count(match => match.RoomId == target));
-        var elsewhere = preview.ObjectMatches.Sum(x => x.Matches.Count(match => match.RoomId != target));
+        var matches = preview!.ObjectMatches;
+        var selected = matches.Sum(x => x.Matches.Count(match => match.RoomId == target));
+        var elsewhere = matches.Sum(x => x.Matches.Count(match => match.RoomId != target));
         return $"matches: {selected} selected room, {elsewhere} other room";
     }
 
-    private static string ClassificationText(SceneDumpClassification classification) => classification switch { SceneDumpClassification.Exit => "exit", SceneDumpClassification.Check => "check", _ => "other" };
+    private static string ClassificationText(SceneDumpClassification classification) => classification switch { SceneDumpClassification.Exit => "exit", SceneDumpClassification.Check => "check", SceneDumpClassification.Enemy => "enemy", _ => "other" };
     private static string Position(ScenePosition? position) => position is null ? "-" : $"{Value(position.X)}, {Value(position.Y)}, {Value(position.Z)}";
     private static string Value(double? value) => value?.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) ?? "-";
     private static string Dimensions(SceneUnitSize? dimensions) => dimensions is { } value ? $"{Value(value.Width)} x {Value(value.Height)}" : "unavailable";
@@ -331,7 +379,7 @@
     private string RowClass(SceneDumpObject node) => string.Join(' ', new[]
     {
         IsCrossTypeConflict(node) ? "scene-conflict-row" : null,
-        !IsPromoted(node) ? "scene-muted-row" : null
+        node.IsFiller || !IsPromoted(node) ? "scene-muted-row" : null
     }.Where(x => x is not null));
 
     private void InitializeDrafts(SceneDumpReview parsed)
@@ -341,23 +389,28 @@
         foreach (var node in Flatten(parsed.RootObjects))
         {
             if (IsPromoted(node)) visibleObjectIds.Add(node.Id);
-            InitializeDraft(node);
         }
+        ReconcileDrafts();
+        AllocateNames();
     }
 
-    private void InitializeDraft(SceneDumpObject node)
+    private void ReconcileDrafts(Guid? reclassifiedObjectId = null)
     {
-        if (node.Classification is SceneDumpClassification.Exit or SceneDumpClassification.Check)
+        var nodes = Flatten(review!.RootObjects).ToArray();
+        var identityCounts = ReviewProjection.CountCheckIdentities(nodes);
+        foreach (var node in nodes.Where(node => SceneDumpIdentity.IsImportable(node.Classification)))
         {
-            drafts[node.Id] = ReviewProjection.CreateDraft(node, preview!, EffectiveTargetRoomId);
-        }
-        else
-        {
-            drafts.Remove(node.Id);
+            drafts.TryGetValue(node.Id, out var retained);
+            // Classification resets only that row; room changes reset every target.
+            // Automatic peer rematching must not replace a deliberate Create/Update.
+            if (reclassifiedObjectId is not null && node.Id != reclassifiedObjectId && retained?.HasDeliberateRecordSelection == true) continue;
+            drafts[node.Id] = ReviewProjection.CreateDraft(node, preview!, EffectiveTargetRoomId, identityCounts)
+                with { AuthoredName = retained?.AuthoredName };
         }
     }
+    private void AllocateNames() => ReviewProjection.AllocateNames(Flatten(review!.RootObjects).Where(node => SceneDumpIdentity.IsImportable(node.Classification)), preview!, EffectiveTargetRoomId, drafts);
 
-    private SceneReviewImportDraft Draft(SceneDumpObject node) => drafts.TryGetValue(node.Id, out var draft) ? draft : new SceneReviewImportDraft(node.Id, SceneImportMode.Create, null, node.Name);
+    private SceneReviewImportDraft Draft(SceneDumpObject node) => drafts[node.Id];
     private IReadOnlyList<SceneImportSelectableRecord> SelectableRecords(SceneDumpObject node) => ReviewProjection.SelectableRecords(preview!, node.Classification, EffectiveTargetRoomId);
     private void ToggleVisible(Guid id)
     {
@@ -375,27 +428,45 @@
         search = args.Value?.ToString() ?? string.Empty;
         RebuildVisibleRows();
     }
+    private void SetFilter(SceneReviewFilter value) { filter = value; RebuildVisibleRows(); }
+    private void SetShowFiller(ChangeEventArgs args) { showFiller = args.Value is true; RebuildVisibleRows(); }
     private void RebuildVisibleRows()
     {
         visibleRows = review is null ? [] : BuildVisibleRows(review.RootObjects).ToList();
+        if (hoveredObjectId is { } hovered && !visibleRows.Any(node => node.Id == hovered))
+        {
+            hoveredObjectId = null;
+            RebuildSpatialPreview();
+        }
     }
     private void RebuildSpatialPreview() => spatialPreview = ReviewProjection.Project(allPreviewPoints, visibleObjectIds, hoveredObjectId);
     private void SetExistingRecord(SceneDumpObject node, string? value)
     {
         var draft = Draft(node);
-        drafts[node.Id] = Guid.TryParse(value, out var id)
-            ? draft with { Mode = SceneImportMode.Update, ExistingRecordId = id }
-            : draft with { Mode = SceneImportMode.Create, ExistingRecordId = null };
+        drafts[node.Id] = Guid.TryParse(value, out var id) && SelectableRecords(node).Any(record => record.Id == id)
+            ? draft with { Mode = SceneImportMode.Update, ExistingRecordId = id, FriendlyName = SelectableRecords(node).Single(record => record.Id == id).FriendlyName, HasDeliberateRecordSelection = true }
+            : draft with { Mode = SceneImportMode.Create, ExistingRecordId = null, HasDeliberateRecordSelection = true };
+        AllocateNames();
     }
-    private void SetFriendlyName(SceneDumpObject node, string? value) => drafts[node.Id] = Draft(node) with { FriendlyName = value ?? string.Empty };
-
-    private async Task ImportAsync()
+    private void SetFriendlyName(SceneDumpObject node, string? value)
     {
+        drafts[node.Id] = Draft(node) with { FriendlyName = value ?? string.Empty, AuthoredName = value ?? string.Empty };
+        AllocateNames();
+    }
+
+    private Task ImportAsync() => ImportAsync(false);
+    private Task ImportEnemiesOnlyAsync() => ImportAsync(true);
+
+    private async Task ImportAsync(bool enemiesOnly)
+    {
+        if (enemiesOnly && !CanImportEnemiesOnly) return;
         try
         {
-            var instructions = Flatten(review!.RootObjects).Where(x => x.Classification is SceneDumpClassification.Exit or SceneDumpClassification.Check).Select(Draft).Select(draft => new SceneImportInstruction(draft.ObjectId, draft.Mode, draft.ExistingRecordId, draft.FriendlyName)).ToArray();
+            var instructions = Flatten(review!.RootObjects).Where(node => enemiesOnly
+                ? node.Classification == SceneDumpClassification.Enemy
+                : SceneDumpIdentity.IsImportable(node.Classification)).Select(Draft).Select(draft => new SceneImportInstruction(draft.ObjectId, draft.Mode, draft.ExistingRecordId, draft.FriendlyName)).ToArray();
             var result = await Importer.ImportAsync(review, targetRoomId, instructions, ReplacementDimensions);
-            Cancel();
+            await Cancel();
             WorkspaceChanges.NotifyChanged();
             Navigation.NavigateTo($"rooms/{result.RoomId}");
             InverseSetupState.Enqueue(result.TransitionIds);
@@ -407,12 +478,16 @@
         }
     }
 
-    private void Cancel()
+    private async Task Cancel()
     {
+        var owner = resizeOwner;
+        resizeOwner = null;
         review = null;
         preview = null;
         expanded.Clear();
         search = string.Empty;
+        filter = SceneReviewFilter.All;
+        showFiller = false;
         importError = null;
         targetRoomId = null;
         replacementWidth = null;
@@ -423,5 +498,37 @@
         visibleRows = [];
         allPreviewPoints = [];
         spatialPreview = new([], null, new SceneReviewBounds(-1, -1, 2, 2));
+        if (owner is not null) await DisposeResizeOwnerAsync(owner);
     }
+    private async Task DisposeResizeOwnerAsync(IJSObjectReference owner)
+    {
+        Exception? cleanupError = null;
+        try { await owner.InvokeVoidAsync("dispose"); }
+        catch (JSDisconnectedException) { }
+        catch (Exception exception) { cleanupError = exception; }
+
+        // Reference release is independent of the optional browser-owner invocation.
+        try { await owner.DisposeAsync(); }
+        catch (JSDisconnectedException) { }
+        catch (Exception exception)
+        {
+            cleanupError = cleanupError is null ? exception : new AggregateException(cleanupError, exception);
+        }
+
+        if (cleanupError is null) return;
+        // Neither cleanup nor diagnostic delivery may turn a committed import into
+        // a failure or interrupt close/stale-mount/component disposal.
+        try
+        {
+            Logger.LogError(cleanupError, "Unexpected Scene Review preview resize cleanup failure.");
+            Diagnostics.Show(cleanupError.ToString());
+        }
+        catch (Exception diagnosticException)
+        {
+            try { Logger.LogError(diagnosticException, "Scene Review resize cleanup diagnostics could not be delivered."); }
+            catch (Exception) { /* Best-effort diagnostics remain inside this cleanup boundary. */ }
+        }
+    }
+    public async ValueTask DisposeAsync() { disposed = true; await Cancel(); }
+    private enum SceneReviewFilter { All, Unclassified, Classified, Exits, Checks, Enemies }
 }

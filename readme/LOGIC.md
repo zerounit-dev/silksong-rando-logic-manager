@@ -13,6 +13,14 @@ Freeform text with thoughts/challenges/concerns about the room
 **Room Exits**
 A room exit is any loading zone that causes the current game scene to transition into another room. Each exit must identify a simple identifier, the destination room, the corresponding destination exit, the subroom containing the exit (if applicable).
 
+Use **unsafe arrival** when entering this exit's own room through this endpoint
+would be undesirable, for example because the arrival collides with a blockade.
+It describes arrival here, not leaving here or arriving at the selected destination.
+It defaults unchecked and is independent of the inverse endpoint; setting up an
+inverse does not copy it. Manager tracks and exports this authored information;
+the external randomizer decides how it affects candidate selection. The checkbox
+saves immediately on change. Requirements continue to describe traversal separately.
+
 **Subrooms**
 Subrooms are optional logical divisions within a room. Use them when different parts of a room are separated by a platforming requirement (movement tech) or unlock requirement (gates controlled by switches, breakable walls, etc.)
 

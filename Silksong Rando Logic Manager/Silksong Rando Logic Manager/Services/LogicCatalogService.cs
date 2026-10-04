@@ -34,6 +34,38 @@ public sealed class LogicCatalogService(IDbContextFactory<LogicDbContext> dbCont
         return new SidebarWorkspaceSnapshot(groups, rooms.Select(x => new SidebarRoom(x.Id, x.RoomGroupId, x.FriendlyName, x.SortOrder, x.IsArchived, statuses.GetValueOrDefault(x.Id))).ToList());
     }
 
+    public async Task<IReadOnlyList<SidebarLocationSearchEntry>> GetSidebarLocationSearchAsync(CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
+        return await db.CheckLocations
+            .AsNoTracking()
+            .Where(x => !x.IsArchived)
+            .Select(x => new SidebarLocationSearchEntry(x.RoomId, x.FriendlyName))
+            .ToListAsync(cancellationToken);
+    }
+
+    public async Task<SidebarRequirementsSearchSnapshot> GetSidebarRequirementsSearchAsync(CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
+        var transitions = await db.RoomTransitions
+            .AsNoTracking()
+            .Where(x => !x.IsArchived)
+            .Select(x => new SidebarRequirementSearchEntry(x.RoomId, x.Requirements))
+            .ToListAsync(cancellationToken);
+        var connections = await db.SubroomConnections
+            .AsNoTracking()
+            .Where(x => !x.IsArchived)
+            .Select(x => new SidebarRequirementSearchEntry(x.RoomId, x.Requirements))
+            .ToListAsync(cancellationToken);
+        var checks = await db.CheckLocations
+            .AsNoTracking()
+            .Where(x => !x.IsArchived)
+            .Select(x => new SidebarRequirementSearchEntry(x.RoomId, x.Requirements))
+            .ToListAsync(cancellationToken);
+
+        return new SidebarRequirementsSearchSnapshot(transitions, connections, checks);
+    }
+
     public async Task<GroupEditorData?> GetGroupEditorDataAsync(Guid groupId, CancellationToken cancellationToken = default)
     {
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
@@ -287,11 +319,12 @@ public sealed class LogicCatalogService(IDbContextFactory<LogicDbContext> dbCont
 
     public async Task<CatalogCreateOutcome<RoomTransition>> CreateTransitionWithOutcomeAsync(Guid roomId, RoomTransition draft, CancellationToken cancellationToken = default)
     {
-        draft = new RoomTransition { Alias = draft.Alias, FriendlyName = draft.FriendlyName, InGameId = draft.InGameId, InGamePositionX = draft.InGamePositionX, InGamePositionY = draft.InGamePositionY, InGamePositionZ = draft.InGamePositionZ, LocalPositionX = draft.LocalPositionX, LocalPositionY = draft.LocalPositionY, LocalPositionZ = draft.LocalPositionZ, AnnotationSceneUnitX = draft.AnnotationSceneUnitX, AnnotationSceneUnitY = draft.AnnotationSceneUnitY, SourceSubroomReferenceText = draft.SourceSubroomReferenceText, DestinationRoomReferenceText = draft.DestinationRoomReferenceText, DestinationTransitionAliasText = draft.DestinationTransitionAliasText, Requirements = draft.Requirements, Notes = draft.Notes, IsTodo = draft.IsTodo, IsVerified = draft.IsVerified };
+        draft = new RoomTransition { Alias = draft.Alias, FriendlyName = draft.FriendlyName, InGameId = draft.InGameId, InGamePositionX = draft.InGamePositionX, InGamePositionY = draft.InGamePositionY, InGamePositionZ = draft.InGamePositionZ, LocalPositionX = draft.LocalPositionX, LocalPositionY = draft.LocalPositionY, LocalPositionZ = draft.LocalPositionZ, AnnotationSceneUnitX = draft.AnnotationSceneUnitX, AnnotationSceneUnitY = draft.AnnotationSceneUnitY, SourceSubroomReferenceText = draft.SourceSubroomReferenceText, DestinationRoomReferenceText = draft.DestinationRoomReferenceText, DestinationTransitionAliasText = draft.DestinationTransitionAliasText, Requirements = draft.Requirements, Notes = draft.Notes, IsTodo = draft.IsTodo, IsVerified = draft.IsVerified, IsUnsafeArrival = draft.IsUnsafeArrival };
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         var transition = new RoomTransition
         {
+            IsUnsafeArrival = draft.IsUnsafeArrival,
             RoomId = roomId,
             FriendlyName = draft.FriendlyName,
             Alias = draft.Alias,
@@ -364,6 +397,7 @@ public sealed class LogicCatalogService(IDbContextFactory<LogicDbContext> dbCont
         draft = new CheckLocation { FriendlyName = draft.FriendlyName, SubroomReferenceText = draft.SubroomReferenceText, Requirements = draft.Requirements, Notes = draft.Notes, LocationType = draft.LocationType, IsTodo = draft.IsTodo, IsVerified = draft.IsVerified };
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        var orderedChecks = await OrderedActiveChecksAsync(db, roomId, cancellationToken);
         var check = new CheckLocation
         {
             RoomId = roomId,
@@ -373,10 +407,11 @@ public sealed class LogicCatalogService(IDbContextFactory<LogicDbContext> dbCont
             Notes = draft.Notes,
             LocationType = draft.LocationType,
             IsTodo = draft.IsTodo,
-            IsVerified = draft.IsVerified,
-            SortOrder = await NextSortOrderAsync(db.CheckLocations.Where(x => x.RoomId == roomId && !x.IsArchived), cancellationToken)
+            IsVerified = draft.IsVerified
         };
         db.CheckLocations.Add(check);
+        orderedChecks.Add(check);
+        NormalizeCheckOrder(orderedChecks, check.Id);
         await db.SaveChangesAsync(cancellationToken);
         var resolverStopwatch = Stopwatch.StartNew();
         await new LogicReferenceResolver(db, scopedResolverTrace).ResolveCreatedAsync(check, cancellationToken);
@@ -431,7 +466,9 @@ public sealed class LogicCatalogService(IDbContextFactory<LogicDbContext> dbCont
         var connections = await db.SubroomConnections.Where(item => item.RoomId == connection.RoomId && !item.IsArchived).ToListAsync(cancellationToken);
         var subrooms = await db.Subrooms.Where(item => item.RoomId == connection.RoomId && !item.IsArchived).ToListAsync(cancellationToken);
         var group = ConnectionAnnotations.FindEligibleGroup(connection, connections, subrooms) ?? throw new InvalidOperationException("This connection is not eligible for a scene annotation.");
-        foreach (var row in group.Rows) row.EnableAnnotation = true;
+        var canonical = group.Rows[0];
+        var x = canonical.SceneUnitX; var y = canonical.SceneUnitY;
+        foreach (var row in group.Rows) { row.EnableAnnotation = true; row.SceneUnitX = x; row.SceneUnitY = y; }
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return group.Rows.Select(CloneConnection).ToList();
@@ -446,10 +483,10 @@ public sealed class LogicCatalogService(IDbContextFactory<LogicDbContext> dbCont
         var connections = await db.SubroomConnections.Where(item => item.RoomId == connection.RoomId && !item.IsArchived).ToListAsync(cancellationToken);
         var subrooms = await db.Subrooms.Where(item => item.RoomId == connection.RoomId && !item.IsArchived).ToListAsync(cancellationToken);
         var group = ConnectionAnnotations.FindEligibleGroup(connection, connections, subrooms) ?? throw new InvalidOperationException("This connection is not eligible for a scene annotation.");
-        if (group.Rows.All(row => row.EnableAnnotation)) throw new InvalidOperationException("This connection annotation is already enabled.");
-        if (group.Rows.Any(row => row.EnableAnnotation) || !group.Rows.All(row => row.SceneUnitX is double x && double.IsFinite(x) && row.SceneUnitY is double y && double.IsFinite(y)))
+        var canonical = group.Rows[0];
+        if (canonical.SceneUnitX is not double x || !double.IsFinite(x) || canonical.SceneUnitY is not double y || !double.IsFinite(y))
             throw new InvalidOperationException("This connection annotation has no complete retained position.");
-        foreach (var row in group.Rows) row.EnableAnnotation = true;
+        foreach (var row in group.Rows) { row.EnableAnnotation = true; row.SceneUnitX = x; row.SceneUnitY = y; }
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return group.Rows.Select(CloneConnection).ToList();
@@ -463,8 +500,8 @@ public sealed class LogicCatalogService(IDbContextFactory<LogicDbContext> dbCont
         var connections = await db.SubroomConnections.Where(item => item.RoomId == connection.RoomId && !item.IsArchived).ToListAsync(cancellationToken);
         var subrooms = await db.Subrooms.Where(item => item.RoomId == connection.RoomId && !item.IsArchived).ToListAsync(cancellationToken);
         var group = ConnectionAnnotations.FindEligibleGroup(connection, connections, subrooms) ?? throw new InvalidOperationException("This connection is not eligible for a scene annotation.");
-        if (!group.Rows.All(row => row.EnableAnnotation)) throw new InvalidOperationException("This connection annotation is already disabled.");
-        foreach (var row in group.Rows) row.EnableAnnotation = false;
+        var x = group.Rows[0].SceneUnitX; var y = group.Rows[0].SceneUnitY;
+        foreach (var row in group.Rows) { row.EnableAnnotation = false; row.SceneUnitX = x; row.SceneUnitY = y; }
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return group.Rows.Select(CloneConnection).ToList();
@@ -487,20 +524,20 @@ public sealed class LogicCatalogService(IDbContextFactory<LogicDbContext> dbCont
         var connections = await db.SubroomConnections.Where(item => item.RoomId == connection.RoomId && !item.IsArchived).ToListAsync(cancellationToken);
         var subrooms = await db.Subrooms.Where(item => item.RoomId == connection.RoomId && !item.IsArchived).ToListAsync(cancellationToken);
         var group = ConnectionAnnotations.FindEligibleGroup(connection, connections, subrooms) ?? throw new InvalidOperationException("This connection is not eligible for a scene annotation.");
-        if (!group.Rows.All(row => row.EnableAnnotation)) throw new InvalidOperationException("This connection annotation is no longer enabled.");
-        // A visible group has one complete, finite shared anchor.  Do not use a
-        // move request to repair a stale/partial group: it was not rendered and
-        // therefore cannot be the source of a direct scene gesture.
-        if (!group.Rows.All(row => row.SceneUnitX is double currentX && double.IsFinite(currentX)
-            && row.SceneUnitY is double currentY && double.IsFinite(currentY)))
+        var canonical = group.Rows[0];
+        if (!canonical.EnableAnnotation) throw new InvalidOperationException("This connection annotation is no longer enabled.");
+        // Only canonical renderability admits a direct gesture; sibling state
+        // disagreement is reconciled by this explicit mutation, not by a read.
+        if (canonical.SceneUnitX is not double currentX || !double.IsFinite(currentX)
+            || canonical.SceneUnitY is not double currentY || !double.IsFinite(currentY))
             throw new InvalidOperationException("This connection annotation no longer has a complete rendered position.");
-        foreach (var row in group.Rows) { row.SceneUnitX = x; row.SceneUnitY = y; }
+        foreach (var row in group.Rows) { row.EnableAnnotation = true; row.SceneUnitX = x; row.SceneUnitY = y; }
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return group.Rows.Select(CloneConnection).ToList();
     }
 
-    /// <summary>Commits initial placement only; an already enabled group is never moved by a stale arm.</summary>
+    /// <summary>Commits initial or explicitly armed replacement placement atomically.</summary>
     public async Task<IReadOnlyList<SubroomConnection>> PlaceConnectionAnnotationAsync(Guid connectionId, double x, double y, CancellationToken cancellationToken = default)
     {
         if (!double.IsFinite(x) || !double.IsFinite(y)) throw new InvalidOperationException("Scene annotation coordinates must be finite.");
@@ -510,11 +547,6 @@ public sealed class LogicCatalogService(IDbContextFactory<LogicDbContext> dbCont
         var connections = await db.SubroomConnections.Where(item => item.RoomId == connection.RoomId && !item.IsArchived).ToListAsync(cancellationToken);
         var subrooms = await db.Subrooms.Where(item => item.RoomId == connection.RoomId && !item.IsArchived).ToListAsync(cancellationToken);
         var group = ConnectionAnnotations.FindEligibleGroup(connection, connections, subrooms) ?? throw new InvalidOperationException("This connection is not eligible for a scene annotation.");
-        if (group.Rows.All(row => row.EnableAnnotation) && group.Rows.All(row => row.SceneUnitX is double currentX && double.IsFinite(currentX)
-            && row.SceneUnitY is double currentY && double.IsFinite(currentY)))
-            throw new InvalidOperationException("This connection annotation is already enabled.");
-        if (group.Rows.Any(row => row.EnableAnnotation) && !group.Rows.All(row => row.EnableAnnotation))
-            throw new InvalidOperationException("This connection annotation has inconsistent visibility.");
         foreach (var row in group.Rows) { row.EnableAnnotation = true; row.SceneUnitX = x; row.SceneUnitY = y; }
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
@@ -530,7 +562,8 @@ public sealed class LogicCatalogService(IDbContextFactory<LogicDbContext> dbCont
         var rows = await db.SubroomConnections.Where(item => item.RoomId == connection.RoomId && !item.IsArchived).ToListAsync(cancellationToken);
         var subrooms = await db.Subrooms.Where(item => item.RoomId == connection.RoomId && !item.IsArchived).ToListAsync(cancellationToken);
         var group = ConnectionAnnotations.FindEligibleGroup(connection, rows, subrooms) ?? throw new InvalidOperationException("This connection is not eligible for a scene annotation.");
-        foreach (var row in group.Rows) { row.SceneUnitX = null; row.SceneUnitY = null; }
+        var enabled = group.Rows[0].EnableAnnotation;
+        foreach (var row in group.Rows) { row.EnableAnnotation = enabled; row.SceneUnitX = null; row.SceneUnitY = null; }
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return group.Rows.Select(CloneConnection).ToList();
@@ -650,16 +683,20 @@ public sealed class LogicCatalogService(IDbContextFactory<LogicDbContext> dbCont
         await db.SaveChangesAsync(cancellationToken);
     }
 
-    public async Task MoveConnectionAsync(Guid connectionId, int targetIndex, CancellationToken cancellationToken = default)
+    public async Task<bool> MoveConnectionAsync(Guid connectionId, int targetIndex, CancellationToken cancellationToken = default)
     {
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         var connection = await db.SubroomConnections.SingleAsync(x => x.Id == connectionId, cancellationToken);
-        var originalIndex = await db.SubroomConnections.Where(x => x.RoomId == connection.RoomId && x.IsArchived == connection.IsArchived).OrderBy(x => x.SortOrder).Select(x => x.Id).ToListAsync(cancellationToken);
+        var ordered = await db.SubroomConnections.Where(x => x.RoomId == connection.RoomId && x.IsArchived == connection.IsArchived).OrderBy(x => x.SortOrder).ThenBy(x => x.Id).ToListAsync(cancellationToken);
+        var canonicalBefore = ordered.First(x => string.Equals(x.Alias.Trim(), connection.Alias.Trim(), StringComparison.OrdinalIgnoreCase)).Id;
+        var originalIndex = ordered.Select(x => x.Id).ToList();
         if (originalIndex.IndexOf(connectionId) < targetIndex) targetIndex--;
-        var connections = await db.SubroomConnections.Where(x => x.RoomId == connection.RoomId && x.IsArchived == connection.IsArchived && x.Id != connectionId).OrderBy(x => x.SortOrder).ToListAsync(cancellationToken);
+        var connections = ordered.Where(x => x.Id != connectionId).ToList();
         connections.Insert(Math.Clamp(targetIndex, 0, connections.Count), connection);
         for (var index = 0; index < connections.Count; index++) connections[index].SortOrder = index;
         await db.SaveChangesAsync(cancellationToken);
+        return !connection.IsArchived && !string.IsNullOrWhiteSpace(connection.Alias) &&
+            canonicalBefore != connections.First(x => string.Equals(x.Alias.Trim(), connection.Alias.Trim(), StringComparison.OrdinalIgnoreCase)).Id;
     }
 
     public async Task MoveCheckAsync(Guid checkId, int targetIndex, CancellationToken cancellationToken = default)
@@ -672,6 +709,42 @@ public sealed class LogicCatalogService(IDbContextFactory<LogicDbContext> dbCont
         checks.Insert(Math.Clamp(targetIndex, 0, checks.Count), check);
         for (var index = 0; index < checks.Count; index++) checks[index].SortOrder = index;
         await db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task MoveCheckSectionAsync(Guid roomId, Guid checkId, bool enemies, int targetIndex, CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        var rows = await OrderedActiveChecksAsync(db, roomId, cancellationToken);
+        var section = rows.Where(x => CheckLocationTypeCatalogue.IsEnemy(x.LocationType) == enemies).ToList();
+        var sourceIndex = section.FindIndex(x => x.Id == checkId);
+        if (sourceIndex < 0) throw new InvalidOperationException("This check is no longer active in this room and section. Reload the room before reordering.");
+        if (targetIndex < 0 || targetIndex > section.Count) throw new InvalidOperationException("This reorder position is no longer available. Reload the room before reordering.");
+        var moving = section[sourceIndex];
+        section.RemoveAt(sourceIndex);
+        if (sourceIndex < targetIndex) targetIndex--;
+        section.Insert(targetIndex, moving);
+        var opposite = rows.Where(x => CheckLocationTypeCatalogue.IsEnemy(x.LocationType) != enemies);
+        NormalizeCheckOrder(enemies ? opposite.Concat(section).ToList() : section.Concat(opposite).ToList());
+        await db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    private static Task<List<CheckLocation>> OrderedActiveChecksAsync(LogicDbContext db, Guid roomId, CancellationToken token) =>
+        db.CheckLocations.Where(x => x.RoomId == roomId && !x.IsArchived)
+            .OrderBy(x => x.SortOrder).ThenBy(x => x.Id).ToListAsync(token);
+
+    // The supplied list is the prior stable sequence (or the requested section
+    // permutation). Only an actual cross-section move/new row appends to target.
+    private static void NormalizeCheckOrder(IReadOnlyList<CheckLocation> rows, Guid? appendId = null)
+    {
+        var index = 0;
+        foreach (var enemies in new[] { false, true })
+        {
+            var section = rows.Where(x => CheckLocationTypeCatalogue.IsEnemy(x.LocationType) == enemies);
+            foreach (var row in section.Where(x => x.Id != appendId).Concat(section.Where(x => x.Id == appendId)))
+                row.SortOrder = index++;
+        }
     }
 
     public async Task SetArchivedAsync<TEntity>(TEntity entity, bool isArchived, CancellationToken cancellationToken = default) where TEntity : ArchivableEntity
@@ -1105,9 +1178,9 @@ public sealed class LogicCatalogService(IDbContextFactory<LogicDbContext> dbCont
 
     /// <summary>Commits only explicit check fields from a complete immutable row draft.</summary>
     public Task<ChildRowSavePatch<CheckLocation>> SaveCheckWithPatchAsync(CheckLocation baseline, CheckLocation draft, Guid displayedRoomId, CancellationToken cancellationToken = default) =>
-        SaveChildWithPatchAsync(db => db.CheckLocations, new CheckFieldDiffMapper(), baseline, draft, displayedRoomId, cancellationToken);
+        SaveChildWithPatchAsync(db => db.CheckLocations, new CheckFieldDiffMapper(), baseline, draft, displayedRoomId, cancellationToken, requireActiveDisplayedOwner: true);
 
-    /// <summary>Direct marker routes alone require an active row owned by the displayed room.</summary>
+    /// <summary>Direct marker routes share active/current-room check admission.</summary>
     public Task<ChildRowSavePatch<CheckLocation>> SaveActiveCheckAnnotationWithPatchAsync(CheckLocation baseline, CheckLocation draft, Guid displayedRoomId, CancellationToken cancellationToken = default) =>
         SaveChildWithPatchAsync(db => db.CheckLocations, new CheckFieldDiffMapper(), baseline, draft, displayedRoomId, cancellationToken, requireActiveDisplayedOwner: true);
 
@@ -1139,6 +1212,8 @@ public sealed class LogicCatalogService(IDbContextFactory<LogicDbContext> dbCont
             !ValidRectangle(subroomDraft.SceneUnitX, subroomDraft.SceneUnitY, subroomDraft.SceneUnitWidth, subroomDraft.SceneUnitHeight))
             throw new InvalidOperationException("Subroom geometry must be complete, finite, and positive.");
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
+        var ordersChecks = draft is CheckLocation && fields.Contains(nameof(CheckLocation.LocationType));
+        await using var orderingTransaction = ordersChecks ? await db.Database.BeginTransactionAsync(cancellationToken) : null;
         var durable = await set(db).SingleOrDefaultAsync(item => item.Id == baseline.Id, cancellationToken);
         if (durable is null || (requireActiveDisplayedOwner && (durable.IsArchived || ChildRoomId(durable) != displayedRoomId))) return new(ChildRowSaveStatus.Missing, null, [], [], [], CatalogSaveOutcome.Unchanged);
         if (durable.UpdatedUtc != baseline.UpdatedUtc && mapper.Differences(baseline, durable).Intersect(fields, StringComparer.Ordinal).Any())
@@ -1148,12 +1223,16 @@ public sealed class LogicCatalogService(IDbContextFactory<LogicDbContext> dbCont
 
         var entry = db.Entry(durable);
         var originalTextValues = entry.Properties.ToDictionary(item => item.Metadata.Name, item => item.OriginalValue as string, StringComparer.Ordinal);
+        var priorEnemy = durable is CheckLocation priorCheck && CheckLocationTypeCatalogue.IsEnemy(priorCheck.LocationType);
+        var orderedChecks = ordersChecks ? await OrderedActiveChecksAsync(db, displayedRoomId, cancellationToken) : null;
         mapper.Apply(durable, draft, fields);
+        if (orderedChecks is not null && durable is CheckLocation changedCheck)
+            NormalizeCheckOrder(orderedChecks, priorEnemy != CheckLocationTypeCatalogue.IsEnemy(changedCheck.LocationType) ? changedCheck.Id : null);
         await ValidateResolvedOwnershipAsync(db, durable, cancellationToken);
         var changed = fields.ToHashSet(StringComparer.Ordinal);
         var requiresResolution = RequiresResolution(durable, changed);
         var validatesRequirements = durable is CheckLocation && changed.Contains(nameof(CheckLocation.Requirements));
-        await using var transaction = requiresResolution || validatesRequirements ? await db.Database.BeginTransactionAsync(cancellationToken) : null;
+        await using var transaction = !ordersChecks && (requiresResolution || validatesRequirements) ? await db.Database.BeginTransactionAsync(cancellationToken) : null;
         await db.SaveChangesAsync(cancellationToken);
         var resolverElapsed = TimeSpan.Zero;
         if (requiresResolution)
@@ -1164,6 +1243,7 @@ public sealed class LogicCatalogService(IDbContextFactory<LogicDbContext> dbCont
         }
         if (validatesRequirements) await ValidateRequirementsAsync(db, (CheckLocation)(object)durable, RequirementBearingRowKind.Check, cancellationToken);
         if (transaction is not null) await transaction.CommitAsync(cancellationToken);
+        if (orderingTransaction is not null) await orderingTransaction.CommitAsync(cancellationToken);
 
         var saved = await set(db).AsNoTracking().SingleAsync(item => item.Id == durable.Id, cancellationToken);
         var rows = ChildRoomId(saved) == displayedRoomId ? new[] { saved } : Array.Empty<T>();
@@ -1376,6 +1456,12 @@ public sealed record SidebarWorkspaceSnapshot(
 
 public sealed record SidebarRoomGroup(Guid Id, string FriendlyName, int SortOrder);
 public sealed record SidebarRoom(Guid Id, Guid? RoomGroupId, string FriendlyName, int SortOrder, bool IsArchived, AppliedRoomStatus Status);
+public sealed record SidebarLocationSearchEntry(Guid RoomId, string FriendlyName);
+public sealed record SidebarRequirementSearchEntry(Guid RoomId, string Requirements);
+public sealed record SidebarRequirementsSearchSnapshot(
+    IReadOnlyList<SidebarRequirementSearchEntry> Transitions,
+    IReadOnlyList<SidebarRequirementSearchEntry> Connections,
+    IReadOnlyList<SidebarRequirementSearchEntry> Checks);
 public sealed record GroupEditorView(Guid Id, string FriendlyName, string? ZoneReferenceText, bool IsVirtual, DateTime UpdatedUtc);
 public sealed record RoomGroupEditorBaseline(Guid Id, string FriendlyName, string? ZoneReferenceText, bool IsVirtual, DateTime UpdatedUtc);
 public sealed class RoomGroupEditorDraft(Guid id, string friendlyName, string? zoneReferenceText, bool isVirtual)

@@ -24,6 +24,10 @@ public static class CheckLocationTypeCatalogue
 
     public static IReadOnlyList<CheckLocationTypeDefinition> Definitions => definitions;
 
+    public static bool IsEnemy(string? outputValue) => definitions.Any(definition =>
+        string.Equals(definition.OutputValue, outputValue, StringComparison.Ordinal) &&
+        string.Equals(definition.Group, "enemies", StringComparison.Ordinal));
+
     public static bool IsRecognized(string? outputValue) => outputValue is not null &&
         definitions.Any(definition => string.Equals(definition.OutputValue, outputValue, StringComparison.Ordinal));
 }

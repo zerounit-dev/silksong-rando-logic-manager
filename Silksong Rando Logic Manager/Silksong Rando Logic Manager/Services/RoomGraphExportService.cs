@@ -29,7 +29,7 @@ public sealed class RoomGraphExportService(IDbContextFactory<LogicDbContext> con
         var transitions = await db.RoomTransitions.AsNoTracking().Where(x => !x.IsArchived && roomIds.Contains(x.RoomId))
             .Select(x => new TransitionRow(x.Id, x.RoomId, x.Alias, x.FriendlyName, x.InGameId, x.SourceSubroomReferenceText,
                 x.DestinationRoomReferenceText, x.DestinationTransitionAliasText, x.Requirements, x.Notes, x.ResolvedSourceSubroomId,
-                x.ResolvedDestinationRoomId, x.ResolvedDestinationTransitionId, x.SortOrder, x.IsTodo, x.IsVerified)).ToListAsync(token);
+                x.ResolvedDestinationRoomId, x.ResolvedDestinationTransitionId, x.SortOrder, x.IsTodo, x.IsVerified, x.IsUnsafeArrival)).ToListAsync(token);
         var connections = await db.SubroomConnections.AsNoTracking().Where(x => !x.IsArchived && roomIds.Contains(x.RoomId))
             .Select(x => new ConnectionRow(x.Id, x.RoomId, x.Alias, x.FriendlyName, x.SourceSubroomReferenceText,
                 x.DestinationSubroomReferenceText, x.Requirements, x.Notes, x.ResolvedSourceSubroomId,
@@ -41,9 +41,13 @@ public sealed class RoomGraphExportService(IDbContextFactory<LogicDbContext> con
             .Select(x => new PredicateRow(x.Id, x.Name, x.Category, x.InputSyntax, x.OutputSyntax, x.Aliases, x.Notes, x.SortOrder)).ToListAsync(token);
         var items = await db.RequirementItems.AsNoTracking().OrderBy(x => x.SortOrder).ThenBy(x => x.Id)
             .Select(x => new ItemRow(x.Id, x.Name, x.Category, x.OutputValue, x.Aliases, x.Notes, x.SortOrder)).ToListAsync(token);
+        var countables = await db.RequirementCountables.AsNoTracking().OrderBy(x => x.SortOrder).ThenBy(x => x.Id)
+            .Select(x => new ItemRow(x.Id, x.Name, x.Category, x.OutputValue, x.Aliases, x.Notes, x.SortOrder)).ToListAsync(token);
+        var enemies = await db.RequirementEnemyTypes.AsNoTracking().OrderBy(x => x.SortOrder).ThenBy(x => x.Id)
+            .Select(x => new ItemRow(x.Id, x.Name, x.Category, x.OutputValue, x.Aliases, x.Notes, x.SortOrder)).ToListAsync(token);
 
         await transaction.CommitAsync(token);
-        return new(groups, rooms, subrooms, transitions, connections, checks, predicates, items);
+        return new(groups, rooms, subrooms, transitions, connections, checks, predicates, items, countables, enemies);
     }
 
     private static RoomGraphExportResult Project(Snapshot snapshot)
@@ -132,7 +136,8 @@ public sealed class RoomGraphExportService(IDbContextFactory<LogicDbContext> con
             catalogue.Predicates,
             catalogue.Items,
             roomStates.Select(x => new RoomGraphRequirementRoom(x.Row.Id, x.Row.ReferenceId)).ToArray(),
-            locationStates.Values.Select(x => new RoomGraphRequirementCheck(x.Row.Id, x.Row.RoomId, x.Row.Name, x.Id)).ToArray());
+            locationStates.Values.Select(x => new RoomGraphRequirementCheck(x.Row.Id, x.Row.RoomId, x.Row.Name, x.Id)).ToArray(),
+            catalogue.Countables, catalogue.Enemies);
 
         var projectedRooms = new List<RoomGraphRoom>();
         foreach (var room in roomStates)
@@ -173,7 +178,7 @@ public sealed class RoomGraphExportService(IDbContextFactory<LogicDbContext> con
                 var requirement = Translate(transition.Row.Requirements, room.Row.Id, translationContext);
                 if (requirement.Mode == "unresolved") rowReasons.Add("requirement is unresolved");
                 projectedTransitions.Add(new(transition.Id ?? "", transition.Row.Alias, transition.Row.Name, transition.Row.InGameId,
-                    sourceNode ?? "", target, requirement, transition.Row.Notes, transition.Row.IsTodo, transition.Row.IsVerified,
+                    transition.Row.IsUnsafeArrival, sourceNode ?? "", target, requirement, transition.Row.Notes, transition.Row.IsTodo, transition.Row.IsVerified,
                     rowReasons.Count == 0 ? "active" : "unresolved", rowReasons));
             }
 
@@ -269,7 +274,24 @@ public sealed class RoomGraphExportService(IDbContextFactory<LogicDbContext> con
         }).Select(x => x.Name).ToArray();
         if (invalidCheckOutputs.Length != 0)
             failures.Add(new($"check-consuming requirement predicate output must emit exactly 'dependency:{{check}}'; correct: {string.Join(", ", invalidCheckOutputs)}"));
-        return failures.Count == initialFailureCount ? new(predicates, items) : null;
+        var countables = BuildTypedValues(snapshot.Countables, "countable", failures);
+        var enemies = BuildTypedValues(snapshot.Enemies, "enemy type", failures);
+        return failures.Count == initialFailureCount ? new(predicates, items, countables, enemies) : null;
+    }
+
+    private static IReadOnlyList<RoomGraphItemDefinition> BuildTypedValues(IReadOnlyList<ItemRow> rows, string kind, List<RoomGraphExportFailure> failures)
+    {
+        foreach (var issue in RequirementCatalogueValidator.ValidateReferenceValues(rows.Select(row =>
+            new RequirementCatalogueItemValidation(row.Id, row.Name, row.Category, row.OutputValue, row.Notes, row.Aliases))))
+            failures.Add(new($"requirement {kind} '{issue.DefinitionName ?? issue.DefinitionId.ToString()}' is invalid: {issue.Message}"));
+        var result = new List<RoomGraphItemDefinition>();
+        foreach (var row in rows)
+        {
+            if (!RequirementCatalogueLanguage.TryCanonicalizeAliases(row.Aliases, out var canonical, out var aliases, out _)) continue;
+            if (canonical != row.Aliases) failures.Add(new($"requirement {kind} '{row.Name}' has noncanonical aliases; apply the definition again before export"));
+            else result.Add(new(row.Id, row.Name, row.OutputValue, aliases));
+        }
+        return result;
     }
 
     private static Dictionary<string, RoomGraphLocationType> BuildTypeLegend(List<RoomGraphExportFailure> failures)
@@ -389,12 +411,12 @@ public sealed class RoomGraphExportService(IDbContextFactory<LogicDbContext> con
         return new UTF8Encoding(false).GetBytes(json);
     }
 
-    private sealed record Catalogue(IReadOnlyList<RoomGraphPredicateDefinition> Predicates, IReadOnlyList<RoomGraphItemDefinition> Items);
-    private sealed record Snapshot(IReadOnlyList<GroupRow> Groups, IReadOnlyList<RoomRow> Rooms, IReadOnlyList<SubroomRow> Subrooms, IReadOnlyList<TransitionRow> Transitions, IReadOnlyList<ConnectionRow> Connections, IReadOnlyList<CheckRow> Checks, IReadOnlyList<PredicateRow> Predicates, IReadOnlyList<ItemRow> Items);
+    private sealed record Catalogue(IReadOnlyList<RoomGraphPredicateDefinition> Predicates, IReadOnlyList<RoomGraphItemDefinition> Items, IReadOnlyList<RoomGraphItemDefinition> Countables, IReadOnlyList<RoomGraphItemDefinition> Enemies);
+    private sealed record Snapshot(IReadOnlyList<GroupRow> Groups, IReadOnlyList<RoomRow> Rooms, IReadOnlyList<SubroomRow> Subrooms, IReadOnlyList<TransitionRow> Transitions, IReadOnlyList<ConnectionRow> Connections, IReadOnlyList<CheckRow> Checks, IReadOnlyList<PredicateRow> Predicates, IReadOnlyList<ItemRow> Items, IReadOnlyList<ItemRow> Countables, IReadOnlyList<ItemRow> Enemies);
     private sealed record GroupRow(Guid Id, string Name, bool IsVirtual, int SortOrder);
     private sealed record RoomRow(Guid Id, Guid? GroupId, string ReferenceId, string Name, string? InGameId, string? Contributors, string? Comments, int SortOrder);
     private sealed record SubroomRow(Guid Id, Guid RoomId, string ReferenceId, string Name, string? Notes, int SortOrder);
-    private sealed record TransitionRow(Guid Id, Guid RoomId, string Alias, string Name, string? InGameId, string? SourceText, string? DestinationRoomText, string? DestinationAliasText, string Requirements, string Notes, Guid? ResolvedSourceId, Guid? ResolvedDestinationRoomId, Guid? ResolvedDestinationTransitionId, int SortOrder, bool IsTodo, bool? IsVerified);
+    private sealed record TransitionRow(Guid Id, Guid RoomId, string Alias, string Name, string? InGameId, string? SourceText, string? DestinationRoomText, string? DestinationAliasText, string Requirements, string Notes, Guid? ResolvedSourceId, Guid? ResolvedDestinationRoomId, Guid? ResolvedDestinationTransitionId, int SortOrder, bool IsTodo, bool? IsVerified, bool IsUnsafeArrival);
     private sealed record ConnectionRow(Guid Id, Guid RoomId, string Alias, string Name, string SourceText, string DestinationText, string Requirements, string Notes, Guid? ResolvedSourceId, Guid? ResolvedDestinationId, int SortOrder, bool IsTodo, bool? IsVerified);
     private sealed record CheckRow(Guid Id, Guid RoomId, string Name, string? InGameId, string? SubroomText, string Requirements, string Notes, string? LocationType, Guid? ResolvedSubroomId, int SortOrder, bool IsTodo, bool? IsVerified);
     private sealed record PredicateRow(Guid Id, string Name, string? Category, string InputSyntax, string OutputSyntax, string Aliases, string Notes, int SortOrder);

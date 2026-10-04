@@ -5,7 +5,7 @@ using Silksong_Rando_Logic_Manager.Data;
 namespace Silksong_Rando_Logic_Manager.Services;
 
 /// <summary>Flat-parent catalogue queries and serialized transactional commands.</summary>
-public sealed class RequirementCatalogueService(IDbContextFactory<LogicDbContext> dbContextFactory, RequirementCatalogueWriteCoordinator writes, ILogger<RequirementCatalogueService> logger)
+public sealed partial class RequirementCatalogueService(IDbContextFactory<LogicDbContext> dbContextFactory, RequirementCatalogueWriteCoordinator writes, ILogger<RequirementCatalogueService> logger)
 {
     public async Task<RequirementCatalogueManagerView> LoadManagerAsync(CancellationToken cancellationToken = default)
     {
@@ -14,7 +14,11 @@ public sealed class RequirementCatalogueService(IDbContextFactory<LogicDbContext
             .Select(x => new RequirementPredicateView(x.Id, x.Name, x.Category, x.InputSyntax, x.OutputSyntax, x.Notes, x.SortOrder, x.Aliases, RequirementCatalogueLanguage.ParseAliases(x.Aliases))).ToArray();
         var items = (await db.RequirementItems.AsNoTracking().OrderBy(x => x.SortOrder).ThenBy(x => x.Id).Select(x => new { x.Id, x.Name, x.Category, x.OutputValue, x.Notes, x.SortOrder, x.Aliases }).ToArrayAsync(cancellationToken))
             .Select(x => new RequirementItemView(x.Id, x.Name, x.Category, x.OutputValue, x.Notes, x.SortOrder, x.Aliases, RequirementCatalogueLanguage.ParseAliases(x.Aliases))).ToArray();
-        return new(predicates, items);
+        var countables = (await db.RequirementCountables.AsNoTracking().OrderBy(x => x.SortOrder).ThenBy(x => x.Id).Select(x => new { x.Id, x.Name, x.Category, x.OutputValue, x.Notes, x.SortOrder, x.Aliases }).ToArrayAsync(cancellationToken))
+            .Select(x => new RequirementCountableView(x.Id, x.Name, x.Category, x.OutputValue, x.Notes, x.SortOrder, x.Aliases, RequirementCatalogueLanguage.ParseAliases(x.Aliases))).ToArray();
+        var enemyTypes = (await db.RequirementEnemyTypes.AsNoTracking().OrderBy(x => x.SortOrder).ThenBy(x => x.Id).Select(x => new { x.Id, x.Name, x.Category, x.OutputValue, x.Notes, x.SortOrder, x.Aliases }).ToArrayAsync(cancellationToken))
+            .Select(x => new RequirementEnemyTypeView(x.Id, x.Name, x.Category, x.OutputValue, x.Notes, x.SortOrder, x.Aliases, RequirementCatalogueLanguage.ParseAliases(x.Aliases))).ToArray();
+        return new(predicates, items, countables, enemyTypes);
     }
 
     public async Task<RequirementCatalogueReferenceView> LoadReferenceAsync(CancellationToken cancellationToken = default)
@@ -24,14 +28,20 @@ public sealed class RequirementCatalogueService(IDbContextFactory<LogicDbContext
             .Select(x => new RequirementPredicateReferenceView(x.Id, x.Name, x.Category, x.InputSyntax, x.Notes, x.Aliases, RequirementCatalogueLanguage.ParseAliases(x.Aliases))).ToArray();
         var items = (await db.RequirementItems.AsNoTracking().OrderBy(x => x.SortOrder).ThenBy(x => x.Id).Select(x => new { x.Id, x.Name, x.Category, x.Notes, x.Aliases }).ToArrayAsync(cancellationToken))
             .Select(x => new RequirementItemReferenceView(x.Id, x.Name, x.Category, x.Notes, x.Aliases, RequirementCatalogueLanguage.ParseAliases(x.Aliases))).ToArray();
-        return new(predicates, items, CheckLocationTypeCatalogue.Definitions);
+        var countables = (await db.RequirementCountables.AsNoTracking().OrderBy(x => x.SortOrder).ThenBy(x => x.Id).Select(x => new { x.Id, x.Name, x.Category, x.Notes, x.Aliases }).ToArrayAsync(cancellationToken))
+            .Select(x => new RequirementCountableReferenceView(x.Id, x.Name, x.Category, x.Notes, x.Aliases, RequirementCatalogueLanguage.ParseAliases(x.Aliases))).ToArray();
+        var enemyTypes = (await db.RequirementEnemyTypes.AsNoTracking().OrderBy(x => x.SortOrder).ThenBy(x => x.Id).Select(x => new { x.Id, x.Name, x.Category, x.Notes, x.Aliases }).ToArrayAsync(cancellationToken))
+            .Select(x => new RequirementEnemyTypeReferenceView(x.Id, x.Name, x.Category, x.Notes, x.Aliases, RequirementCatalogueLanguage.ParseAliases(x.Aliases))).ToArray();
+        return new(predicates, items, CheckLocationTypeCatalogue.Definitions, countables, enemyTypes);
     }
 
     public async Task<RequirementCategorySuggestionsView> LoadCategorySuggestionsAsync(CancellationToken cancellationToken = default)
     {
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         return new(await db.RequirementPredicates.AsNoTracking().Where(x => x.Category != null && x.Category != "").Select(x => x.Category!).Distinct().OrderBy(x => x).ToArrayAsync(cancellationToken),
-            await db.RequirementItems.AsNoTracking().Where(x => x.Category != null && x.Category != "").Select(x => x.Category!).Distinct().OrderBy(x => x).ToArrayAsync(cancellationToken));
+            await db.RequirementItems.AsNoTracking().Where(x => x.Category != null && x.Category != "").Select(x => x.Category!).Distinct().OrderBy(x => x).ToArrayAsync(cancellationToken),
+            await db.RequirementCountables.AsNoTracking().Where(x => x.Category != null && x.Category != "").Select(x => x.Category!).Distinct().OrderBy(x => x).ToArrayAsync(cancellationToken),
+            await db.RequirementEnemyTypes.AsNoTracking().Where(x => x.Category != null && x.Category != "").Select(x => x.Category!).Distinct().OrderBy(x => x).ToArrayAsync(cancellationToken));
     }
 
     public Task<RequirementCatalogueCommandOutcome> ApplyAsync(ApplyRequirementPredicate command, CancellationToken token = default) => ExecuteAsync((db, ct) => ApplyPredicateAsync(db, command, ct), token);

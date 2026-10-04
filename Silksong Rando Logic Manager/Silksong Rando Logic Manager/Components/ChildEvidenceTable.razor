@@ -1,11 +1,28 @@
 @typeparam T
 <table class="distributed-import-child-table">
-    <thead><tr>@foreach (var field in Fields) { <th>@field</th> }</tr></thead>
+    <thead><tr>@if (Choices is not null) { <th class="distributed-import-choice-column"><span class="visually-hidden">choice</span></th> }@foreach (var field in Fields) { <th>@field</th> }</tr></thead>
     <tbody>
         @foreach (var item in Rows)
         {
             var changed = item.Evidence == DistributedComparisonEvidence.Changed;
             <tr class="@(changed ? "distributed-import-changed-current" : null)">
+                @if (Choices is not null)
+                {
+                    <td class="distributed-import-choice-cell">
+                        @if (changed)
+                        {
+                            <input type="radio" class="distributed-import-choice-current" name="@ChoiceGroup(item.EntityId)" checked="@(Choice(item.EntityId) == DistributedChildChoice.Current)" disabled="@ChoicesDisabled" aria-label="@($"keep current {CategoryName} {item.EntityId}")" title="@($"Keep current {CategoryName}")" @onchange="(() => ChangeAsync(item.EntityId, DistributedChildChoice.Current))" />
+                        }
+                        else if (item.Evidence == DistributedComparisonEvidence.Current)
+                        {
+                            <input type="checkbox" class="distributed-import-choice-archive" checked="@(Choice(item.EntityId) == DistributedChildChoice.Incoming)" disabled="@ChoicesDisabled" aria-label="@($"archive current {CategoryName} {item.EntityId}")" title="@($"Archive current {CategoryName}")" @onchange="(args => ChangeAsync(item.EntityId, (bool)args.Value! ? DistributedChildChoice.Incoming : DistributedChildChoice.Current))" />
+                        }
+                        else if (item.Evidence == DistributedComparisonEvidence.Incoming)
+                        {
+                            <input type="checkbox" class="distributed-import-choice-create" checked="@(Choice(item.EntityId) == DistributedChildChoice.Incoming)" disabled="@ChoicesDisabled" aria-label="@($"create incoming {CategoryName} {item.EntityId}")" title="@($"Create incoming {CategoryName}")" @onchange="(args => ChangeAsync(item.EntityId, (bool)args.Value! ? DistributedChildChoice.Incoming : DistributedChildChoice.Current))" />
+                        }
+                    </td>
+                }
                 @foreach (var field in item.Fields)
                 {
                     <td><span class="@(field.Evidence == DistributedComparisonEvidence.Changed || field.Evidence == DistributedComparisonEvidence.Current ? "distributed-import-current" : field.Evidence == DistributedComparisonEvidence.Incoming ? "distributed-import-incoming" : null)">@(field.Evidence == DistributedComparisonEvidence.Incoming ? field.IncomingValue : field.CurrentValue)</span></td>
@@ -14,6 +31,10 @@
             @if (changed)
             {
                 <tr class="distributed-import-changed-incoming">
+                    @if (Choices is not null)
+                    {
+                        <td class="distributed-import-choice-cell"><input type="radio" class="distributed-import-choice-incoming" name="@ChoiceGroup(item.EntityId)" checked="@(Choice(item.EntityId) == DistributedChildChoice.Incoming)" disabled="@ChoicesDisabled" aria-label="@($"use incoming {CategoryName} {item.EntityId}")" title="@($"Use incoming {CategoryName}")" @onchange="(() => ChangeAsync(item.EntityId, DistributedChildChoice.Incoming))" /></td>
+                    }
                     @foreach (var field in item.Fields)
                     {
                         <td><span class="@(field.Evidence == DistributedComparisonEvidence.Changed ? "distributed-import-incoming" : null)">@(field.Evidence == DistributedComparisonEvidence.Changed ? field.IncomingValue : null)</span></td>
@@ -27,4 +48,13 @@
 @code {
     [Parameter, EditorRequired] public IReadOnlyList<string> Fields { get; set; } = [];
     [Parameter, EditorRequired] public IReadOnlyList<DistributedChildComparison<T>> Rows { get; set; } = [];
+    [Parameter] public DistributedChildCategory Category { get; set; }
+    [Parameter] public IReadOnlyDictionary<DistributedChildDecisionKey, DistributedChildChoice>? Choices { get; set; }
+    [Parameter] public bool ChoicesDisabled { get; set; }
+    [Parameter] public EventCallback<DistributedChildChoiceChanged> ChoiceChanged { get; set; }
+
+    private string CategoryName => Category.ToString().ToLowerInvariant();
+    private string ChoiceGroup(Guid entityId) => $"distributed-{CategoryName}-{entityId:N}";
+    private DistributedChildChoice Choice(Guid entityId) => Choices![new(Category, entityId)];
+    private Task ChangeAsync(Guid entityId, DistributedChildChoice choice) => ChoiceChanged.InvokeAsync(new DistributedChildChoiceChanged(new(Category, entityId), choice));
 }

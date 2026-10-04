@@ -32,7 +32,7 @@ public sealed class SceneLayoutLoader(IDbContextFactory<LogicDbContext> contexts
         var transitions = await db.RoomTransitions.AsNoTracking().Where(x => x.RoomId == roomId && !x.IsArchived && x.EnableAnnotation)
             .Select(x => new SceneTransitionLoad(x.Id, x.Alias, x.FriendlyName, x.AnnotationSceneUnitX, x.AnnotationSceneUnitY, x.ResolvedSourceSubroomId)).ToListAsync(cancellationToken);
         var checks = await db.CheckLocations.AsNoTracking().Where(x => x.RoomId == roomId && !x.IsArchived && x.EnableAnnotation)
-            .Select(x => new SceneCheckLoad(x.Id, x.FriendlyName, x.AnnotationSceneUnitX, x.AnnotationSceneUnitY, x.ResolvedSubroomId)).ToListAsync(cancellationToken);
+            .Select(x => new SceneCheckLoad(x.Id, x.FriendlyName, x.AnnotationSceneUnitX, x.AnnotationSceneUnitY, x.ResolvedSubroomId, x.LocationType)).ToListAsync(cancellationToken);
         var connections = await db.SubroomConnections.AsNoTracking().Where(x => x.RoomId == roomId && !x.IsArchived)
             .OrderBy(x => x.SortOrder).ThenBy(x => x.Id)
             .Select(x => new SceneConnectionLoad(x.Id, x.Alias, x.FriendlyName, x.SourceSubroomReferenceText, x.DestinationSubroomReferenceText, x.ResolvedSourceSubroomId, x.ResolvedDestinationSubroomId, x.EnableAnnotation, x.SceneUnitX, x.SceneUnitY)).ToListAsync(cancellationToken);
@@ -43,7 +43,7 @@ public sealed class SceneLayoutLoader(IDbContextFactory<LogicDbContext> contexts
 internal sealed record SceneRoomLoad(Guid Id, bool Archived, double? Width, double? Height, double? ScaleX, double? ScaleY, double? PanX, double? PanY, bool IsStale, DateTime UpdatedUtc);
 internal sealed record SceneSubroomLoad(Guid Id, string FriendlyName, double? X, double? Y, double? Width, double? Height, bool Enabled);
 internal sealed record SceneTransitionLoad(Guid Id, string Alias, string FriendlyName, double? OverrideX, double? OverrideY, Guid? SourceSubroomId);
-internal sealed record SceneCheckLoad(Guid Id, string FriendlyName, double? OverrideX, double? OverrideY, Guid? SubroomId);
+internal sealed record SceneCheckLoad(Guid Id, string FriendlyName, double? OverrideX, double? OverrideY, Guid? SubroomId, string? LocationType);
 internal sealed record SceneConnectionLoad(Guid Id, string Alias, string FriendlyName, string Source, string Destination, Guid? SourceId, Guid? DestinationId, bool Enabled, double? X, double? Y);
 
 internal static class SceneLayoutMapper
@@ -64,14 +64,14 @@ internal static class SceneLayoutMapper
         }
         foreach (var check in checks)
         {
-            var marker = AddAnnotation(markers, check.Id, "check", check.FriendlyName, check.FriendlyName, check.OverrideX, check.OverrideY);
+            var marker = AddAnnotation(markers, check.Id, "check", check.FriendlyName, check.FriendlyName, check.OverrideX, check.OverrideY, CheckLocationTypeCatalogue.IsEnemy(check.LocationType));
             AddThread(threads, marker, check.SubroomId, framesById);
         }
         if (subrooms.Count > 0)
             foreach (var group in connections.GroupBy(x => Key(x.Alias)).Where(x => ValidConnectionGroup(x.ToArray(), connections)))
             {
                 var rows = group.ToArray(); var first = rows[0];
-                if (!rows.All(x => x.Enabled) || !SynchronizedPair(rows.Select(x => (x.X, x.Y)).ToArray())) continue;
+                if (!first.Enabled) continue;
                 if (!CompletePair(first.X, first.Y)) continue;
                 var marker = new SceneMarkerView(first.Id, "connection", first.Alias, Title(first.FriendlyName), first.X!.Value, first.Y!.Value);
                 markers.Add(marker);
@@ -82,10 +82,10 @@ internal static class SceneLayoutMapper
         return new(validBounds, room.Width, room.Height, frames, markers.OrderBy(x => x.Kind).ThenBy(x => x.Label, StringComparer.OrdinalIgnoreCase).ToArray(), new(hasTransform, room.IsStale, imageExists, room.UpdatedUtc.Ticks), threads);
     }
 
-    private static SceneMarkerView? AddAnnotation(List<SceneMarkerView> markers, Guid id, string kind, string label, string friendly, double? overrideX, double? overrideY)
+    private static SceneMarkerView? AddAnnotation(List<SceneMarkerView> markers, Guid id, string kind, string label, string friendly, double? overrideX, double? overrideY, bool isEnemy = false)
     {
         if (!CompletePair(overrideX, overrideY)) return null;
-        var marker = new SceneMarkerView(id, kind, label, Title(friendly), overrideX!.Value, overrideY!.Value);
+        var marker = new SceneMarkerView(id, kind, label, Title(friendly), overrideX!.Value, overrideY!.Value) { IsEnemy = isEnemy };
         markers.Add(marker);
         return marker;
     }
@@ -102,12 +102,10 @@ internal static class SceneLayoutMapper
     private static bool SamePair(SceneConnectionLoad a, SceneConnectionLoad b) => SameDirection(a, b) || (SameEndpoint(a.Source, a.SourceId, b.Destination, b.DestinationId) && SameEndpoint(a.Destination, a.DestinationId, b.Source, b.SourceId));
     private static bool SameDirection(SceneConnectionLoad a, SceneConnectionLoad b) => SameEndpoint(a.Source, a.SourceId, b.Source, b.SourceId) && SameEndpoint(a.Destination, a.DestinationId, b.Destination, b.DestinationId);
     private static bool SameEndpoint(string a, Guid? aId, string b, Guid? bId) => aId is not null && bId is not null ? aId == bId : Same(a, b);
-    private static bool SynchronizedPair((double? X, double? Y)[] pairs) => pairs.All(x => AbsentPair(x.X, x.Y)) || pairs.All(x => CompletePair(x.X, x.Y) && x.X == pairs[0].X && x.Y == pairs[0].Y);
     private static bool PositivePair(double? x, double? y) => x is double a && y is double b && double.IsFinite(a) && double.IsFinite(b) && a > 0 && b > 0;
     internal static bool HasPositiveBounds(double? x, double? y) => PositivePair(x, y);
     private static bool Rectangle(double? x, double? y, double? width, double? height) => x is double a && y is double b && PositivePair(width, height) && double.IsFinite(a) && double.IsFinite(b);
     private static bool CompletePair(double? x, double? y) => x is double a && y is double b && double.IsFinite(a) && double.IsFinite(b);
-    private static bool AbsentPair(double? x, double? y) => x is null && y is null;
     private static string? Title(string value) => string.IsNullOrWhiteSpace(value) ? null : value;
     private static string Key(string value) => value.Trim().ToUpperInvariant();
     private static bool Same(string? a, string? b) => !string.IsNullOrWhiteSpace(a) && !string.IsNullOrWhiteSpace(b) && string.Equals(a.Trim(), b.Trim(), StringComparison.OrdinalIgnoreCase);
