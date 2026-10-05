@@ -11,6 +11,12 @@ public sealed class SceneImportService(IDbContextFactory<LogicDbContext> dbConte
     public async Task<SceneImportPreview> PreviewAsync(SceneDumpReview review, CancellationToken cancellationToken = default)
     {
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
+        return await PreviewAsync(db, review, cancellationToken);
+    }
+
+    // BI1 keeps preview reads in the same logical snapshot as its database fingerprint.
+    internal static async Task<SceneImportPreview> PreviewAsync(LogicDbContext db, SceneDumpReview review, CancellationToken cancellationToken)
+    {
         var rooms = await db.Rooms.AsNoTracking().Where(x => !x.IsArchived)
             .Select(x => new SceneImportRoom(x.Id, x.FriendlyName, x.ReferenceId, x.InGameId, x.SceneUnitWidth, x.SceneUnitHeight)).ToListAsync(cancellationToken);
         var transitions = await db.RoomTransitions.AsNoTracking().Where(x => !x.IsArchived && !x.Room.IsArchived)
@@ -41,7 +47,17 @@ public sealed class SceneImportService(IDbContextFactory<LogicDbContext> dbConte
             .Select(draft => new SceneImportInstruction(draft.ObjectId, draft.Mode, draft.ExistingRecordId, draft.FriendlyName)).ToArray(), replacementDimensions, cancellationToken);
     }
 
-    public async Task<SceneImportResult> ImportAsync(SceneDumpReview review, Guid? targetRoomId, IReadOnlyList<SceneImportInstruction> instructions, SceneUnitSize? replacementDimensions = null, CancellationToken cancellationToken = default)
+    public Task<SceneImportResult> ImportAsync(SceneDumpReview review, Guid? targetRoomId, IReadOnlyList<SceneImportInstruction> instructions, SceneUnitSize? replacementDimensions = null, CancellationToken cancellationToken = default) =>
+        ImportCoreAsync(review, targetRoomId, instructions, replacementDimensions, false, cancellationToken);
+
+    /// <summary>BI1 admission: one existing active room, Enemy instructions only, no dimension/group changes.</summary>
+    public Task<SceneImportResult> ImportEnemiesIntoExistingRoomAsync(SceneDumpReview review, Guid targetRoomId,
+        IReadOnlyList<SceneImportInstruction> instructions, CancellationToken cancellationToken = default) =>
+        ImportCoreAsync(review, targetRoomId, instructions, null, true, cancellationToken);
+
+    private async Task<SceneImportResult> ImportCoreAsync(SceneDumpReview review, Guid? targetRoomId,
+        IReadOnlyList<SceneImportInstruction> instructions, SceneUnitSize? replacementDimensions,
+        bool existingRoomEnemiesOnly, CancellationToken cancellationToken)
     {
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
@@ -49,6 +65,8 @@ public sealed class SceneImportService(IDbContextFactory<LogicDbContext> dbConte
         var transitions = await db.RoomTransitions.Where(x => !x.IsArchived).ToListAsync(cancellationToken);
         var checks = await db.CheckLocations.Where(x => !x.IsArchived).ToListAsync(cancellationToken);
         var matchingRooms = rooms.Where(x => Matches(x.InGameId, review.SceneName)).ToArray();
+        if (existingRoomEnemiesOnly && (matchingRooms.Length != 1 || matchingRooms[0].Id != targetRoomId || instructions.Count == 0))
+            throw new InvalidOperationException("BI1 requires a unique existing active scene-name match and nonempty Enemy selection.");
         Room targetRoom;
 
         if (targetRoomId is { } selectedRoomId)
@@ -77,7 +95,7 @@ public sealed class SceneImportService(IDbContextFactory<LogicDbContext> dbConte
             throw new InvalidOperationException("Select one of the matching active rooms before importing.");
         }
 
-        ApplySceneDimensions(targetRoom, review.SceneUnitSize, replacementDimensions);
+        if (!existingRoomEnemiesOnly) ApplySceneDimensions(targetRoom, review.SceneUnitSize, replacementDimensions);
 
         var importedTransitions = new List<RoomTransition>();
         var importedChecks = new List<CheckLocation>();
@@ -86,6 +104,8 @@ public sealed class SceneImportService(IDbContextFactory<LogicDbContext> dbConte
         foreach (var instruction in instructions)
         {
             if (!nodes.TryGetValue(instruction.ObjectId, out var node) || !SceneDumpIdentity.IsImportable(node.Classification)) throw new InvalidOperationException("Import instructions must select an exit, check or enemy scene object.");
+            if (existingRoomEnemiesOnly && node.Classification != SceneDumpClassification.Enemy)
+                throw new InvalidOperationException("BI1 instructions may select only Enemy scene objects.");
             if (instruction.Mode == SceneImportMode.Update)
             {
                 if (node.Classification == SceneDumpClassification.Exit)
@@ -174,7 +194,7 @@ public sealed class SceneImportService(IDbContextFactory<LogicDbContext> dbConte
             check.RequirementsParseSucceeded = requirementStatus.ValidateSafely(requirementContext, check.RoomId,
                 check.Id, RequirementBearingRowKind.Check, check.Requirements);
         using (db.SuppressAuditMetadata()) await db.SaveChangesAsync(cancellationToken);
-        if (await LogicCatalogService.TryAutoAssignRoomGroupFromMapZoneAsync(db, targetRoom, cancellationToken))
+        if (!existingRoomEnemiesOnly && await LogicCatalogService.TryAutoAssignRoomGroupFromMapZoneAsync(db, targetRoom, cancellationToken))
         {
             await db.SaveChangesAsync(cancellationToken);
         }
