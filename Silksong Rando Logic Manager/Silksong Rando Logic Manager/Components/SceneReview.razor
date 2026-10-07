@@ -120,7 +120,7 @@
                                  <td class="scene-candidate-cell">@if (node.CandidateReasons.Count > 0) { <i class="fa-solid fa-circle-info" title="@string.Join("; ", node.CandidateReasons)" aria-label="Candidate evidence: @string.Join("; ", node.CandidateReasons)"></i> }</td>
                                    <td class="scene-classification">
                                       @if (MatchedClassification(node) is { } matched) { <i class="fa-solid fa-circle-check" title="Matches an existing @ClassificationText(matched) record" aria-hidden="true"></i> }
-                                      @if (IsCrossTypeConflict(node)) { <i class="fa-solid fa-circle-exclamation danger" title="Matches existing transition and check records" aria-hidden="true"></i> }
+                                      @if (HasCrossTypeMatches(node)) { <i class="fa-solid fa-circle-info" title="Matches existing transition and check records" aria-hidden="true"></i> }
                                       <select value="@node.Classification" @onchange="(args => SetClassification(node, args.Value?.ToString()))"><option value="@SceneDumpClassification.Exit">exit</option><option value="@SceneDumpClassification.Check">check</option><option value="@SceneDumpClassification.Enemy">enemy</option><option value="@SceneDumpClassification.Other">other</option></select>
                                    </td>
                                    @if (SceneDumpIdentity.IsImportable(node.Classification))
@@ -355,7 +355,7 @@
         return types.Length == 1 ? types[0] : null;
     }
 
-    private bool IsCrossTypeConflict(SceneDumpObject node) => (Match(node)?.Matches.Select(x => x.Classification).Distinct().Count() ?? 0) > 1;
+    private bool HasCrossTypeMatches(SceneDumpObject node) => (Match(node)?.Matches.Select(x => x.Classification).Distinct().Count() ?? 0) > 1;
     private Guid? EffectiveTargetRoomId => targetRoomId ?? (preview?.MatchingRooms.Count == 1 ? preview.MatchingRooms[0].Id : null);
     private string ConflictSummary()
     {
@@ -378,7 +378,6 @@
 
     private string RowClass(SceneDumpObject node) => string.Join(' ', new[]
     {
-        IsCrossTypeConflict(node) ? "scene-conflict-row" : null,
         node.IsFiller || !IsPromoted(node) ? "scene-muted-row" : null
     }.Where(x => x is not null));
 

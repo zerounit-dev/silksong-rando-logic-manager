@@ -8,15 +8,24 @@ public sealed record RoomGraphExportFailure(
     string? ChildName = null,
     Guid? RoomRecordId = null);
 
+public sealed record RoomGraphExportWarning(
+    string Cause,
+    string? RoomId = null,
+    string? RoomName = null,
+    string? ChildKind = null,
+    string? ChildName = null,
+    Guid? RoomRecordId = null);
+
 public sealed record RoomGraphExportResult(
     byte[]? Content,
-    IReadOnlyList<RoomGraphExportFailure> Failures)
+    IReadOnlyList<RoomGraphExportFailure> Failures,
+    IReadOnlyList<RoomGraphExportWarning> Warnings)
 {
     public const string FileName = "room_graph_data.json";
     public bool Succeeded => Content is not null && Failures.Count == 0;
 
-    public static RoomGraphExportResult Success(byte[] content) => new(content, []);
-    public static RoomGraphExportResult Failed(IReadOnlyList<RoomGraphExportFailure> failures) => new(null, failures);
+    public static RoomGraphExportResult Success(byte[] content, IReadOnlyList<RoomGraphExportWarning> warnings) => new(content, [], warnings);
+    public static RoomGraphExportResult Failed(IReadOnlyList<RoomGraphExportFailure> failures, IReadOnlyList<RoomGraphExportWarning> warnings) => new(null, failures, warnings);
 }
 
 public interface IRoomGraphExportService

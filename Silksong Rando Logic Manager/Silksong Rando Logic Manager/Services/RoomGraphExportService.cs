@@ -54,6 +54,7 @@ public sealed class RoomGraphExportService(IDbContextFactory<LogicDbContext> con
     {
         var globalFailures = new List<RoomGraphExportFailure>();
         var roomFailures = new List<RoomGraphExportFailure>();
+        var warnings = new List<RoomGraphExportWarning>();
         var identityOwners = new Dictionary<string, string>(StringComparer.Ordinal);
         var typeLegend = BuildTypeLegend(globalFailures);
         var catalogue = BuildCatalogue(snapshot, globalFailures);
@@ -210,14 +211,47 @@ public sealed class RoomGraphExportService(IDbContextFactory<LogicDbContext> con
                     requirement, connection.Row.Notes, connection.Row.IsTodo, connection.Row.IsVerified, reasons.Length == 0 ? "active" : "unresolved", reasons);
             }).ToArray();
 
+            var needsUnassignedNode = false;
             var projectedLocations = Get(checksByRoom, room.Row.Id).Select(x => locationStates[x.Id]).OrderBy(x => x.Row.SortOrder).ThenBy(x => x.Id, StringComparer.Ordinal).Select(location =>
             {
-                var node = roomSubrooms.Length == 0 ? room.Id is null ? "#room" : $"{room.Id}#room" : ResolveSubroomNode(roomFailures, room, location.Row.SubroomText, location.Row.ResolvedSubroomId, roomSubrooms, "location", Display(location.Row.Name, location.Row.InGameId), "subroom");
+                var reasons = new List<string>();
+                string? node;
+                if (roomSubrooms.Length == 0) node = room.Id is null ? "#room" : $"{room.Id}#room";
+                else
+                {
+                    var text = location.Row.SubroomText;
+                    var matches = string.IsNullOrWhiteSpace(text) ? [] : roomSubrooms.Where(x =>
+                        string.Equals(text.Trim(), x.Row.ReferenceId.Trim(), StringComparison.OrdinalIgnoreCase)).ToArray();
+                    var cause = string.IsNullOrWhiteSpace(text) ? "subroom reference is blank"
+                        : matches.Length == 0 ? $"subroom reference does not resolve to an active own-room subroom: {text}"
+                        : matches.Length > 1 ? $"subroom reference is ambiguous: {text}"
+                        : location.Row.ResolvedSubroomId != matches[0].Row.Id ? $"subroom resolver state is stale, mismatched, or wrong-room: {text}"
+                        : null;
+                    if (cause is not null)
+                    {
+                        needsUnassignedNode = true;
+                        node = room.Id is null ? "#unassigned" : $"{room.Id}#unassigned";
+                        reasons.Add(cause);
+                        warnings.Add(new(cause, room.Id, room.Row.Name, "location", Display(location.Row.Name, location.Row.InGameId), room.Row.Id));
+                    }
+                    else
+                    {
+                        node = matches[0].Id;
+                        if (node is null) Fail(room, "resolved subroom has no valid export node identity", "location", Display(location.Row.Name, location.Row.InGameId));
+                    }
+                }
                 var requirement = Translate(location.Row.Requirements, room.Row.Id, translationContext);
-                var reasons = requirement.Mode == "unresolved" ? new[] { "requirement is unresolved" } : [];
+                if (requirement.Mode == "unresolved") reasons.Add("requirement is unresolved");
                 return new RoomGraphLocation(location.Id ?? "", location.Row.Name, location.Row.InGameId, location.Type ?? "unknown", location.HasPersistedState,
-                    node ?? "", requirement, location.Row.Notes, location.Row.IsTodo, location.Row.IsVerified, reasons.Length == 0 ? "active" : "unresolved", reasons);
+                    node ?? "", requirement, location.Row.Notes, location.Row.IsTodo, location.Row.IsVerified, reasons.Count == 0 ? "active" : "unresolved", reasons);
             }).ToArray();
+
+            if (needsUnassignedNode)
+            {
+                var unassignedId = room.Id is null ? "#unassigned" : $"{room.Id}#unassigned";
+                if (room.Id is not null) Register(unassignedId, $"synthetic unassigned node for room '{room.Row.Name}'", identityOwners, roomFailures, room);
+                nodes = [.. nodes, new RoomGraphNode(unassignedId, "unassigned", "")];
+            }
 
             projectedRooms.Add(new(room.Id ?? "", room.Row.Id.ToString("D", CultureInfo.InvariantCulture).ToLowerInvariant(), room.Group?.Id ?? "", room.Row.Name,
                 room.Row.InGameId, room.Row.Contributors ?? "", room.Row.Comments ?? "", nodes, projectedTransitions, projectedConnections, projectedLocations));
@@ -225,7 +259,7 @@ public sealed class RoomGraphExportService(IDbContextFactory<LogicDbContext> con
 
         var roomOrder = roomStates.Select((room, index) => (room.Row.Id, index)).ToDictionary(x => x.Id, x => x.index);
         var failures = globalFailures.Concat(roomFailures.OrderBy(x => x.RoomRecordId is { } id && roomOrder.TryGetValue(id, out var index) ? index : int.MaxValue)).ToArray();
-        if (failures.Length != 0) return RoomGraphExportResult.Failed(failures);
+        if (failures.Length != 0) return RoomGraphExportResult.Failed(failures, warnings);
 
         var areaIds = groupStates.Select(x => x.Id!).ToArray();
         var document = new RoomGraphDocument(3, new("silksong-logic-manager-export", projectedRooms.Count), areaIds,
@@ -234,7 +268,7 @@ public sealed class RoomGraphExportService(IDbContextFactory<LogicDbContext> con
             snapshot.Predicates.Select(x => new RoomGraphTranslationPredicate(x.Name, x.Category, x.InputSyntax, x.OutputSyntax, RequirementCatalogueLanguage.ParseAliases(x.Aliases), x.Notes)).ToArray(),
             snapshot.Items.Select(x => new RoomGraphTranslationItem(x.Name, x.Category, RequirementCatalogueLanguage.ParseAliases(x.Aliases), x.OutputValue, x.Notes)).ToArray(),
             typeLegend, projectedRooms);
-        return RoomGraphExportResult.Success(Serialize(document));
+        return RoomGraphExportResult.Success(Serialize(document), warnings);
 
         void Fail(RoomState room, string cause, string? kind = null, string? child = null) => roomFailures.Add(new(cause, room.Id, room.Row.Name, kind, child, room.Row.Id));
     }

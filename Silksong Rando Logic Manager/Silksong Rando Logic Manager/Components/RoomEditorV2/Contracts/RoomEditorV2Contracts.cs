@@ -330,7 +330,10 @@ public sealed record SceneMarkerView(Guid EntityId, string Kind, string Label, s
 }
 /// <summary>Resolved-ID-only live-canvas relationship with complete renderable endpoint geometry.</summary>
 public sealed record SceneRelationshipThreadView(Guid MarkerEntityId, Guid FrameEntityId, double MarkerX, double MarkerY,
-    double FrameX, double FrameY, double FrameWidth, double FrameHeight);
+    double FrameX, double FrameY, double FrameWidth, double FrameHeight)
+{
+    public bool IsOneWayConnection { get; init; }
+}
 /// <summary>Closed pane-local scene identity. It is transient and never a persistence key or DOM marker.</summary>
 public enum V2SceneSelectedItemKind { Subroom, Transition, Check, Connection }
 /// <summary>One pane-local selection survives a non-renderable durable state; renderability is derived from SceneLayoutView.</summary>

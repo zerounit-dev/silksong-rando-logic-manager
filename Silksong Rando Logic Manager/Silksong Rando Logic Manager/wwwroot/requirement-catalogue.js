@@ -143,7 +143,11 @@ window.requirementCatalogueDrag = (() => {
         const graphFailureDialog = event.target.closest("[data-room-graph-failure-dialog]");
         if (graphFailureDialog && event.key === "Tab") {
             event.preventDefault();
-            graphFailureDialog.querySelector("[data-room-graph-failure-close]")?.focus();
+            const controls = [...graphFailureDialog.querySelectorAll("a[href], button:not(:disabled)")];
+            const index = controls.indexOf(document.activeElement);
+            const next = index < 0 ? (event.shiftKey ? controls.length - 1 : 0)
+                : (index + (event.shiftKey ? -1 : 1) + controls.length) % controls.length;
+            (controls[next] ?? graphFailureDialog).focus();
         }
     });
     document.addEventListener("pointerdown", event => { definitionBackdropPointer = event.target.matches("[data-requirement-definition-backdrop]") ? { element: event.target, pointerId: event.pointerId } : null; });

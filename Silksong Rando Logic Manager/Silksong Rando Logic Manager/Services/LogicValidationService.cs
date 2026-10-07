@@ -49,9 +49,9 @@ public sealed class LogicValidationService
     public ValidationSeverity TransitionFriendlyName(RoomTransition transition, IEnumerable<RoomTransition> transitions) =>
         Duplicate(transition, transitions, x => x.FriendlyName, x => x.RoomId == transition.RoomId) ? ValidationSeverity.Danger : RequiredNow(transition.FriendlyName);
 
-    public ValidationSeverity TransitionInGameId(RoomTransition transition, IEnumerable<RoomTransition> transitions, IEnumerable<CheckLocation> checks) =>
+    public ValidationSeverity TransitionInGameId(RoomTransition transition, IEnumerable<RoomTransition> transitions) =>
         !IsActive(transition) ? ValidationSeverity.Neutral :
-        DuplicateImportedGameId(transition.InGameId, transitions.Where(x => IsActive(x) && !SameRecord(x, transition)).Select(x => x.InGameId).Concat(checks.Where(IsActive).Select(x => x.InGameId)));
+        DuplicateImportedGameId(transition.InGameId, transitions.Where(x => IsActive(x) && x.RoomId == transition.RoomId && !SameRecord(x, transition)).Select(x => x.InGameId));
 
     public ValidationSeverity TransitionAnnotationPosition(RoomTransition transition) =>
         ValidOptionalFinitePair(transition.AnnotationSceneUnitX, transition.AnnotationSceneUnitY) ? ValidationSeverity.Neutral : ValidationSeverity.Danger;
@@ -108,15 +108,19 @@ public sealed class LogicValidationService
             return ValidationSeverity.Warning;
         }
 
-        var matches = checks.Where(candidate => IsActive(candidate) && TextMatches(candidate.FriendlyName, check.FriendlyName)).ToList();
-        return matches.Count(candidate => candidate.RoomId == check.RoomId) > 1 ? ValidationSeverity.Danger :
-            matches.Any(candidate => candidate.RoomId != check.RoomId) ? ValidationSeverity.Warning :
+        var active = checks.Where(IsActive).ToList();
+        var key = RoomGraphExportService.CanonicalValue(check.FriendlyName);
+        // Empty conversion retains authored-name matching, not a shared null key.
+        var localCount = active.Count(candidate => candidate.RoomId == check.RoomId &&
+            (key is null ? TextMatches(candidate.FriendlyName, check.FriendlyName) :
+                RoomGraphExportService.CanonicalValue(candidate.FriendlyName) == key));
+        return localCount > 1 ? ValidationSeverity.Danger :
+            active.Any(candidate => candidate.RoomId != check.RoomId && TextMatches(candidate.FriendlyName, check.FriendlyName)) ? ValidationSeverity.Warning :
             ValidationSeverity.Neutral;
     }
 
-    public ValidationSeverity CheckInGameId(CheckLocation check, IEnumerable<RoomTransition> transitions, IEnumerable<CheckLocation> checks) =>
-        !IsActive(check) ? ValidationSeverity.Neutral :
-        DuplicateImportedGameId(check.InGameId, transitions.Where(IsActive).Select(x => x.InGameId).Concat(checks.Where(x => IsActive(x) && !SameRecord(x, check)).Select(x => x.InGameId)));
+    // Check game IDs are metadata, not uniqueness diagnostics, for every type.
+    public ValidationSeverity CheckInGameId(CheckLocation check) => ValidationSeverity.Neutral;
 
     public ValidationSeverity CheckAnnotationPosition(CheckLocation check) =>
         ValidOptionalFinitePair(check.AnnotationSceneUnitX, check.AnnotationSceneUnitY) ? ValidationSeverity.Neutral : ValidationSeverity.Danger;

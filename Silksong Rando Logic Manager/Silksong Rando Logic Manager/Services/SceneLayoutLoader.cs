@@ -76,7 +76,7 @@ internal static class SceneLayoutMapper
                 var marker = new SceneMarkerView(first.Id, "connection", first.Alias, Title(first.FriendlyName), first.X!.Value, first.Y!.Value);
                 markers.Add(marker);
                 foreach (var endpointId in rows.SelectMany(x => new[] { x.SourceId, x.DestinationId }).OfType<Guid>().Distinct())
-                    AddThread(threads, marker, endpointId, framesById);
+                    AddThread(threads, marker, endpointId, framesById, rows.Length == 1);
             }
         var hasTransform = CompletePair(room.ScaleX, room.ScaleY) && CompletePair(room.PanX, room.PanY) && room.ScaleX > 0 && room.ScaleY > 0;
         return new(validBounds, room.Width, room.Height, frames, markers.OrderBy(x => x.Kind).ThenBy(x => x.Label, StringComparer.OrdinalIgnoreCase).ToArray(), new(hasTransform, room.IsStale, imageExists, room.UpdatedUtc.Ticks), threads);
@@ -89,10 +89,10 @@ internal static class SceneLayoutMapper
         markers.Add(marker);
         return marker;
     }
-    private static void AddThread(List<SceneRelationshipThreadView> threads, SceneMarkerView? marker, Guid? frameId, IReadOnlyDictionary<Guid, SceneSubroomFrameView> framesById)
+    private static void AddThread(List<SceneRelationshipThreadView> threads, SceneMarkerView? marker, Guid? frameId, IReadOnlyDictionary<Guid, SceneSubroomFrameView> framesById, bool isOneWayConnection = false)
     {
         if (marker is null || frameId is null) return;
-        if (framesById.TryGetValue(frameId.Value, out var frame)) threads.Add(new(marker.EntityId, frame.EntityId, marker.X, marker.Y, frame.X, frame.Y, frame.Width, frame.Height));
+        if (framesById.TryGetValue(frameId.Value, out var frame)) threads.Add(new(marker.EntityId, frame.EntityId, marker.X, marker.Y, frame.X, frame.Y, frame.Width, frame.Height) { IsOneWayConnection = isOneWayConnection });
     }
     private static bool ValidConnectionGroup(SceneConnectionLoad[] group, IReadOnlyList<SceneConnectionLoad> all) =>
         group.Length is 1 or 2 && group[0].Alias.Length is >= 1 and <= 3 &&

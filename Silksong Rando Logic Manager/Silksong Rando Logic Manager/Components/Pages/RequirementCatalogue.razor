@@ -183,9 +183,10 @@
 @if (roomGraphFailures is not null)
 {
     <div class="confirmation-backdrop requirement-catalogue-backdrop" role="presentation" @onclick="CloseRoomGraphFailures">
-        <section class="confirmation-modal room-graph-failure-modal" role="dialog" aria-modal="true" aria-labelledby="room-graph-failure-title" tabindex="-1" data-room-graph-failure-dialog @onclick:stopPropagation="true" @onkeydown="RoomGraphFailureKeyDown">
-            <h2 id="room-graph-failure-title">Room graph export failed</h2>
+        <section class="confirmation-modal room-graph-failure-modal" role="dialog" aria-modal="true" aria-busy="@exportingRoomGraph" aria-labelledby="room-graph-failure-title" tabindex="-1" data-room-graph-failure-dialog @onclick:stopPropagation="true" @onkeydown="RoomGraphFailureKeyDown">
+            <h2 id="room-graph-failure-title">@(roomGraphFailures.Count == 0 ? "Room graph export has issues" : "Room graph export failed")</h2>
             <div class="room-graph-failure-content">
+                @if (roomGraphFailures.Count != 0 && roomGraphWarnings.Count != 0) { <h3>Blocking failures</h3> }
                 @if (roomGraphFailures.Any(x => x.RoomRecordId is null))
                 {
                     <h3>global configuration</h3>
@@ -202,8 +203,30 @@
                         }
                     </ul>
                 }
+                @if (roomGraphWarnings.Count != 0)
+                {
+                    <h3>Nonblocking location warnings</h3>
+                    <p>These locations are retained on the unassigned node and cannot execute, even when their requirements translate successfully.</p>
+                    @foreach (var group in roomGraphWarnings.GroupBy(x => x.RoomRecordId))
+                    {
+                        var first = group.First();
+                        <h3>@first.RoomName@if (!string.IsNullOrWhiteSpace(first.RoomId)) { <span class="room-graph-failure-room-id"> (@first.RoomId)</span> }@if (first.RoomRecordId is { } roomRecordId) { <text> </text><a href="@($"/rooms/{roomRecordId}")" target="_blank" rel="noopener noreferrer">[navigate]</a> }</h3>
+                        <ul>
+                            @foreach (var warning in group)
+                            {
+                                <li><strong>@warning.ChildKind “@warning.ChildName”: </strong>@warning.Cause</li>
+                            }
+                        </ul>
+                    }
+                }
             </div>
-            <div class="requirement-catalogue-modal-footer"><div class="requirement-catalogue-modal-alternatives"></div><div class="requirement-catalogue-modal-commit-group"><button type="button" class="catalogue-modal-action catalogue-modal-close" data-room-graph-failure-close @onclick="CloseRoomGraphFailures">Close</button></div></div>
+            <div class="requirement-catalogue-modal-footer"><div class="requirement-catalogue-modal-alternatives"></div><div class="requirement-catalogue-modal-commit-group">
+                <button type="button" class="catalogue-modal-action catalogue-modal-close" data-room-graph-failure-close @onclick="CloseRoomGraphFailures" disabled="@exportingRoomGraph">Close</button>
+                @if (roomGraphFailures.Count == 0)
+                {
+                    <button type="button" class="catalogue-modal-action catalogue-modal-apply" @onclick="ConfirmRoomGraphExportAsync" disabled="@(exportingRoomGraph || pendingRoomGraphContent is null)">Export anyway</button>
+                }
+            </div></div>
         </section>
     </div>
 }
@@ -229,6 +252,9 @@
     private RequirementCatalogueSnapshot? pendingImport;
     private RequirementCatalogueReferenceView? syntaxGuide;
     private IReadOnlyList<RoomGraphExportFailure>? roomGraphFailures;
+    private IReadOnlyList<RoomGraphExportWarning> roomGraphWarnings = [];
+    private byte[]? pendingRoomGraphContent;
+    private bool disposed;
     private DotNetObjectReference<RequirementCatalogue>? dotNetReference;
     private bool DefinitionModalOpen => predicateDraft is not null || itemDraft is not null;
     private bool ModalOpen => DefinitionModalOpen || deleteConfirmation is not null || pendingImport is not null || syntaxGuide is not null || roomGraphFailures is not null;
@@ -308,16 +334,26 @@
         try
         {
             var result = await RoomGraphExport.GenerateAsync();
+            if (disposed) return;
             if (result.Succeeded)
             {
                 message = "";
-                await JS.InvokeVoidAsync("downloadFileFromBytes", RoomGraphExportResult.FileName, result.Content!);
+                if (result.Warnings.Count == 0) await JS.InvokeVoidAsync("downloadFileFromBytes", RoomGraphExportResult.FileName, result.Content!);
+                else
+                {
+                    roomGraphFailures = result.Failures;
+                    roomGraphWarnings = result.Warnings;
+                    pendingRoomGraphContent = result.Content;
+                }
             }
-            else
+            else if (result.Content is null && result.Failures.Count > 0)
             {
                 message = "";
                 roomGraphFailures = result.Failures;
+                roomGraphWarnings = result.Warnings;
+                pendingRoomGraphContent = null;
             }
+            else throw new InvalidOperationException("Unknown room graph export outcome.");
         }
         catch (Exception exception)
         {
@@ -329,7 +365,31 @@
             exportingRoomGraph = false;
         }
     }
-    private void CloseRoomGraphFailures() { restoreInitiatorFocus = true; roomGraphFailures = null; }
+    private async Task ConfirmRoomGraphExportAsync()
+    {
+        if (disposed || CatalogueBusy || roomGraphFailures is not { Count: 0 } || pendingRoomGraphContent is not { } content) return;
+        exportingRoomGraph = true;
+        pendingRoomGraphContent = null;
+        try { await JS.InvokeVoidAsync("downloadFileFromBytes", RoomGraphExportResult.FileName, content); }
+        catch (Exception exception)
+        {
+            Logger.LogError(exception, "Unexpected room graph export download failure.");
+            Diagnostics.Show(exception.ToString());
+        }
+        finally
+        {
+            exportingRoomGraph = false;
+            if (!disposed) CloseRoomGraphFailures();
+        }
+    }
+    private void CloseRoomGraphFailures()
+    {
+        if (exportingRoomGraph) return;
+        restoreInitiatorFocus = true;
+        roomGraphFailures = null;
+        roomGraphWarnings = [];
+        pendingRoomGraphContent = null;
+    }
     private Task RoomGraphFailureKeyDown(KeyboardEventArgs args) { if (args.Key == "Escape") CloseRoomGraphFailures(); return Task.CompletedTask; }
     private IEnumerable<RequirementPredicateView> FilterPredicates() => view.Predicates.Where(x => Matches(predicateSearch, x.Name, x.Category, x.Aliases));
     private IEnumerable<RequirementItemView> FilterItems() => view.Items.Where(x => Matches(itemSearch, x.Name, x.Category, x.Aliases));
@@ -484,7 +544,7 @@
     private Task ClearDragAsync() => dragInitialization is { IsCompletedSuccessfully: true } ? JS.InvokeVoidAsync("requirementCatalogueDrag.cleanup").AsTask() : Task.CompletedTask;
     private Task DeleteKeyDown(KeyboardEventArgs args) { if (args.Key == "Escape") CloseDelete(); return Task.CompletedTask; }
     private Task ImportKeyDown(KeyboardEventArgs args) { if (args.Key == "Escape") CancelImport(); return Task.CompletedTask; }
-    public async ValueTask DisposeAsync() { try { if (dragInitialization is { IsCompletedSuccessfully: true }) await JS.InvokeVoidAsync("requirementCatalogueDrag.dispose"); } catch (Microsoft.JSInterop.JSDisconnectedException) { } finally { dotNetReference?.Dispose(); } }
+    public async ValueTask DisposeAsync() { disposed = true; pendingRoomGraphContent = null; roomGraphFailures = null; roomGraphWarnings = []; try { if (dragInitialization is { IsCompletedSuccessfully: true }) await JS.InvokeVoidAsync("requirementCatalogueDrag.dispose"); } catch (Microsoft.JSInterop.JSDisconnectedException) { } finally { dotNetReference?.Dispose(); } }
 
     private const string DefinitionApplyId = "requirement-catalogue-definition-apply";
     private static string DefinitionFieldId(string field) => $"requirement-catalogue-definition-{field.ToLowerInvariant()}";

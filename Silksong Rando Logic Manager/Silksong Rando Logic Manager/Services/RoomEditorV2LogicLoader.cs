@@ -42,11 +42,8 @@ public sealed class RoomEditorV2LogicLoader(IDbContextFactory<LogicDbContext> co
         var connections = await ConnectionLoader.LoadAsync(db, roomId, cancellationToken);
         var checks = await CheckLoader.LoadAsync(db, roomId, cancellationToken);
         var roomCandidates = await RoomReferenceCandidateLoader.LoadAsync(db, transitions, cancellationToken);
-        // The transition in-game fact query is also keyed by selected active check
-        // IDs. This retains the bounded transition fact shape while ensuring a
-        // selected check is compared with active transitions anywhere in the catalogue.
-        var transitionFacts = await TransitionValidationLoader.LoadAsync(db, roomId, transitions, checks, cancellationToken);
-        var checkFacts = await CheckValidationLoader.LoadAsync(db, checks, cancellationToken);
+        var transitionFacts = await TransitionValidationLoader.LoadAsync(db, roomId, transitions, cancellationToken);
+        var checkFacts = await CheckValidationLoader.LoadAsync(db, cancellationToken);
         var predicates = await RequirementsParserPredicateLoader.LoadAsync(db, cancellationToken);
         var items = await RequirementsParserItemLoader.LoadAsync(db, cancellationToken);
         var countables = await db.RequirementCountables.AsNoTracking().OrderBy(x => x.SortOrder).ThenBy(x => x.Id)
@@ -321,9 +318,9 @@ internal sealed record TransitionLoad(Guid Id, Guid RoomId, string Alias, string
 internal sealed record ConnectionLoad(Guid Id, Guid RoomId, string Alias, string FriendlyName, string Source, string Destination, string Requirements, string Notes, bool AnnotationEnabled, double? X, double? Y, Guid? SourceId, Guid? DestinationId, int SortOrder, bool Archived, bool Todo, bool? Verified, DateTime UpdatedUtc, bool? RequirementsParseSucceeded);
 internal sealed record CheckLoad(Guid Id, Guid RoomId, string FriendlyName, string? InGameId, double? InGameX, double? InGameY, double? InGameZ, double? LocalX, double? LocalY, double? LocalZ, double? AnnotationX, double? AnnotationY, string? Subroom, string Requirements, string Notes, string? LocationType, bool AnnotationEnabled, Guid? SubroomId, int SortOrder, bool Todo, bool? Verified, bool Archived, DateTime UpdatedUtc, bool? RequirementsParseSucceeded);
 internal sealed record TransitionFactLoad(Guid Id, Guid RoomId, string Alias, Guid? DestinationRoomId, Guid? DestinationId, string? InGameId, bool Archived, string? DestinationRoomReferenceText = null, string? DestinationTransitionAliasText = null);
-internal sealed record CheckFactLoad(Guid Id, Guid RoomId, string FriendlyName, string? InGameId);
+internal sealed record CheckFactLoad(Guid Id, Guid RoomId, string FriendlyName);
 internal sealed record TransitionFacts(IReadOnlyList<TransitionFactLoad> Inverses, IReadOnlyList<TransitionFactLoad> DestinationAliases, IReadOnlyList<TransitionFactLoad> InGameConflicts);
-internal sealed record CheckFacts(IReadOnlyList<CheckFactLoad> NameConflicts, IReadOnlyList<CheckFactLoad> InGameConflicts);
+internal sealed record CheckFacts(IReadOnlyList<CheckFactLoad> NameConflicts);
 
 internal static class RoomHeaderLoader { internal static Task<RoomHeaderLoad?> LoadAsync(LogicDbContext db, Guid id, CancellationToken token) => db.Rooms.AsNoTracking().Where(x => x.Id == id).Select(x => new RoomHeaderLoad(x.Id,x.FriendlyName,x.ReferenceId,x.InGameId,x.Contributors,x.Comments,x.SceneUnitWidth,x.SceneUnitHeight,x.SceneImageScaleXPercent,x.SceneImageScaleYPercent,x.SceneImagePanXPercent,x.SceneImagePanYPercent,x.IsSceneImageStale,x.IsArchived,x.RoomGroupId != null,x.UpdatedUtc)).SingleOrDefaultAsync(token); }
 internal static class RoomSuggestionLoader { internal static Task<List<RoomReferenceLoad>> LoadAsync(LogicDbContext db, CancellationToken token) => db.Rooms.AsNoTracking().Where(x => !x.IsArchived).Select(x => new RoomReferenceLoad(x.Id,x.ReferenceId,x.InGameId,false)).ToListAsync(token); }
@@ -344,29 +341,28 @@ internal static class CheckLoader { internal static Task<List<CheckLoad>> LoadAs
 
 internal static class TransitionValidationLoader
 {
-    internal static async Task<TransitionFacts> LoadAsync(LogicDbContext db, Guid roomId, IReadOnlyList<TransitionLoad> rows, IReadOnlyList<CheckLoad> checks, CancellationToken token)
+    internal static async Task<TransitionFacts> LoadAsync(LogicDbContext db, Guid roomId, IReadOnlyList<TransitionLoad> rows, CancellationToken token)
     {
         var active = rows.Where(x => !x.Archived).ToArray(); var ids = active.Select(x => x.Id).ToArray();
         var destinations = active.Where(x => x.DestinationRoomId is not null).Select(x => x.DestinationRoomId!.Value).Distinct().ToArray();
-        var gameIds = active.Select(x => x.InGameId).Concat(checks.Where(x => !x.Archived).Select(x => x.InGameId)).Where(MapperSupport.Text).Select(MapperSupport.Key).Distinct().ToArray();
         var inverses = await db.RoomTransitions.AsNoTracking().Where(x => !x.IsArchived && destinations.Contains(x.RoomId) && x.ResolvedDestinationRoomId == roomId && x.ResolvedDestinationTransitionId != null && ids.Contains(x.ResolvedDestinationTransitionId.Value)).Select(x => new TransitionFactLoad(x.Id,x.RoomId,x.Alias,x.ResolvedDestinationRoomId,x.ResolvedDestinationTransitionId,x.InGameId,x.IsArchived,x.DestinationRoomReferenceText,x.DestinationTransitionAliasText)).ToListAsync(token);
         var aliases = await db.RoomTransitions.AsNoTracking().Where(x => destinations.Contains(x.RoomId)).Select(x => new TransitionFactLoad(x.Id,x.RoomId,x.Alias,x.ResolvedDestinationRoomId,x.ResolvedDestinationTransitionId,x.InGameId,x.IsArchived,x.DestinationRoomReferenceText,x.DestinationTransitionAliasText)).ToListAsync(token);
-        var games = await db.RoomTransitions.AsNoTracking().Where(x => !x.IsArchived && x.InGameId != null && gameIds.Contains(x.InGameId.Trim().ToUpper())).Select(x => new TransitionFactLoad(x.Id,x.RoomId,x.Alias,x.ResolvedDestinationRoomId,x.ResolvedDestinationTransitionId,x.InGameId,false)).ToListAsync(token);
+        // Compare raw same-room values in the mapper with OrdinalIgnoreCase;
+        // SQLite's upper-case function is not the comparison contract.
+        var games = await db.RoomTransitions.AsNoTracking().Where(x => !x.IsArchived && x.RoomId == roomId && x.InGameId != null).Select(x => new TransitionFactLoad(x.Id,x.RoomId,x.Alias,x.ResolvedDestinationRoomId,x.ResolvedDestinationTransitionId,x.InGameId,false)).ToListAsync(token);
         return new(inverses, aliases, games);
     }
 }
 internal static class CheckValidationLoader
 {
-    internal static async Task<CheckFacts> LoadAsync(LogicDbContext db, IReadOnlyList<CheckLoad> rows, CancellationToken token)
+    internal static async Task<CheckFacts> LoadAsync(LogicDbContext db, CancellationToken token)
     {
-        var active = rows.Where(x => !x.Archived).ToArray(); var names = active.Select(x => x.FriendlyName).Where(MapperSupport.Text).Select(MapperSupport.Key).Distinct().ToArray(); var gameIds = active.Select(x => x.InGameId).Where(MapperSupport.Text).Select(MapperSupport.Key).Distinct().ToArray();
         // This scalar context projection simultaneously supplies the browser's
         // active check multiplicity and the selected-room duplicate-name facts.
-        // Keeping it as one bounded reader preserves the 12 -> 14 logical batch
-        // cutover: the two new readers are the managed predicate/item projections.
-        var namesFacts = await db.CheckLocations.AsNoTracking().Where(x => !x.IsArchived && !x.Room.IsArchived).Select(x => new CheckFactLoad(x.Id,x.RoomId,x.FriendlyName,x.InGameId)).ToListAsync(token);
-        var gameFacts = await db.CheckLocations.AsNoTracking().Where(x => !x.IsArchived && x.InGameId != null && gameIds.Contains(x.InGameId.Trim().ToUpper())).Select(x => new CheckFactLoad(x.Id,x.RoomId,x.FriendlyName,x.InGameId)).ToListAsync(token);
-        return new(namesFacts, gameFacts);
+        // Check game IDs need no conflict reader; retain the full name catalogue
+        // for parser resolution as well as local/global name diagnostics.
+        var namesFacts = await db.CheckLocations.AsNoTracking().Where(x => !x.IsArchived && !x.Room.IsArchived).Select(x => new CheckFactLoad(x.Id,x.RoomId,x.FriendlyName)).ToListAsync(token);
+        return new(namesFacts);
     }
 }
 
@@ -376,7 +372,7 @@ public static class RoomEditorV2Mapper
     {
         var mappedHeader = RoomHeaderMapper.Map(header, suggestions);
         var mappedSubrooms = SubroomTableMapper.Map(subrooms, transitions, connections, checks);
-        var mappedTransitions = TransitionTableMapper.Map(header, suggestions, candidates, subrooms, transitions, transitionFacts, checkFacts);
+        var mappedTransitions = TransitionTableMapper.Map(header, suggestions, candidates, subrooms, transitions, transitionFacts);
         var mappedConnections = ConnectionTableMapper.Map(subrooms, connections);
         mappedConnections = new ConnectionTableView(
             ApplyConnectionSelfLoopStatus(
@@ -384,7 +380,7 @@ public static class RoomEditorV2Mapper
                 connections),
             ApplyConnectionRequirementStatus(mappedConnections.ArchivedRows, connections, true, header.Archived),
             mappedConnections.SubroomReferenceSuggestions);
-        var (mappedChecks, mappedEnemies) = CheckTableMapper.Map(subrooms, checks, transitionFacts, checkFacts, header.Archived);
+        var (mappedChecks, mappedEnemies) = CheckTableMapper.Map(subrooms, checks, checkFacts, header.Archived);
         return new(mappedHeader,
             mappedSubrooms, mappedTransitions, mappedConnections, mappedChecks, mappedEnemies);
 
@@ -463,7 +459,7 @@ public static class SubroomTableMapper
 }
 public static class TransitionTableMapper
 {
-    internal static TransitionTableView Map(RoomHeaderLoad header,IReadOnlyList<RoomReferenceLoad> suggestions,IReadOnlyList<RoomReferenceLoad> candidates,IReadOnlyList<SubroomLoad> subrooms,IReadOnlyList<TransitionLoad> rows,TransitionFacts facts,CheckFacts checks)
+    internal static TransitionTableView Map(RoomHeaderLoad header,IReadOnlyList<RoomReferenceLoad> suggestions,IReadOnlyList<RoomReferenceLoad> candidates,IReadOnlyList<SubroomLoad> subrooms,IReadOnlyList<TransitionLoad> rows,TransitionFacts facts)
     {
         var active=rows.Where(x=>!x.Archived).ToArray(); var activeSubs=subrooms.Where(x=>!x.Archived).ToArray();
         var aliases=rows.ToDictionary(x=>x.Id,x=>AliasSuggestions(x));
@@ -476,7 +472,7 @@ public static class TransitionTableMapper
             var room=MapperSupport.Reference(x.DestinationRoom,x.DestinationRoomId,candidates.Select(y=>(y.Id,y.ReferenceId,y.Archived)));
             var alias=DestinationAlias(x,room); var isActive=!x.Archived;
             var pair=isActive && MapperSupport.Text(x.DestinationRoom) && MapperSupport.Text(x.DestinationAlias) && active.Count(y=>MapperSupport.SameEndpoint(y.DestinationRoom,y.DestinationRoomId,x.DestinationRoom,x.DestinationRoomId)&&MapperSupport.SameEndpoint(y.DestinationAlias,y.DestinationId,x.DestinationAlias,x.DestinationId))>1?V2Severity.Danger:V2Severity.Neutral;
-            var game=isActive&&MapperSupport.Text(x.InGameId)&&(facts.InGameConflicts.Any(y=>y.Id!=x.Id&&y.RoomId==x.RoomId&&MapperSupport.Same(y.InGameId,x.InGameId))||checks.InGameConflicts.Any(y=>y.RoomId==x.RoomId&&MapperSupport.Same(y.InGameId,x.InGameId)))?V2Severity.Danger:V2Severity.Neutral;
+            var game=isActive&&MapperSupport.Text(x.InGameId)&&facts.InGameConflicts.Any(y=>!y.Archived&&y.Id!=x.Id&&y.RoomId==x.RoomId&&MapperSupport.Same(y.InGameId,x.InGameId))?V2Severity.Danger:V2Severity.Neutral;
             var inverse = Inverse(x); var inverseTarget = inverse == V2InverseState.One ? facts.Inverses.Single(y => y.RoomId == x.DestinationRoomId && y.DestinationRoomId == header.Id && y.DestinationId == x.Id) : null;
             var resolvedTarget = x.DestinationId is Guid targetId ? facts.DestinationAliases.SingleOrDefault(y => !y.Archived && y.Id == targetId && y.RoomId == x.DestinationRoomId) : null;
             var canAuthorInverse = isActive && resolvedTarget is not null &&
@@ -523,26 +519,30 @@ public static class CheckTableMapper
 {
     internal static (CheckLocationsTableView CheckLocations, EnemiesTableView Enemies) Map(
         IReadOnlyList<SubroomLoad> subrooms, IReadOnlyList<CheckLoad> rows,
-        TransitionFacts transitions, CheckFacts facts, bool owningRoomArchived)
+        CheckFacts facts, bool owningRoomArchived)
     {
         var activeSubrooms = subrooms.Where(x => !x.Archived).ToArray();
         var suggestions = Array.AsReadOnly(activeSubrooms.Select(x => x.ReferenceId)
             .OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray());
         var types = CheckLocationTypeCatalogue.Definitions;
+        // Index the complete active catalogue before section partitioning. Keep
+        // authored facts intact for parser lookup and cross-room-only warnings.
+        var localNames = facts.NameConflicts.Where(x => MapperSupport.Text(x.FriendlyName))
+            .GroupBy(x => (x.RoomId, Key: RoomGraphExportService.CanonicalValue(x.FriendlyName) ?? MapperSupport.Key(x.FriendlyName)))
+            .ToDictionary(x => x.Key, x => x.Count());
+        var authoredNameRooms = facts.NameConflicts.Where(x => MapperSupport.Text(x.FriendlyName))
+            .GroupBy(x => x.FriendlyName.Trim(), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(x => x.Key, x => x.Select(y => y.RoomId).Distinct().ToArray(), StringComparer.OrdinalIgnoreCase);
         var checksActive = new List<CheckRowView>(); var checksArchived = new List<CheckRowView>();
         var enemiesActive = new List<CheckRowView>(); var enemiesArchived = new List<CheckRowView>();
         foreach (var x in rows.OrderBy(x => x.SortOrder).ThenBy(x => x.Id))
         {
             var state = MapperSupport.Reference(x.Subroom, x.SubroomId, subrooms.Select(y => (y.Id, y.ReferenceId, y.Archived)));
             var active = !x.Archived;
-            var names = facts.NameConflicts.Where(y => MapperSupport.Same(y.FriendlyName, x.FriendlyName)).ToArray();
             var name = !MapperSupport.Text(x.FriendlyName) ? V2Severity.Warning
-                : names.Count(y => y.RoomId == x.RoomId) > 1 ? V2Severity.Danger
-                : names.Any(y => y.RoomId != x.RoomId) ? V2Severity.Warning : V2Severity.Neutral;
-            var game = active && MapperSupport.Text(x.InGameId) &&
-                (transitions.InGameConflicts.Any(y => y.RoomId == x.RoomId && MapperSupport.Same(y.InGameId, x.InGameId)) ||
-                 facts.InGameConflicts.Any(y => y.Id != x.Id && y.RoomId == x.RoomId && MapperSupport.Same(y.InGameId, x.InGameId)))
-                ? V2Severity.Danger : V2Severity.Neutral;
+                : localNames.GetValueOrDefault((x.RoomId, RoomGraphExportService.CanonicalValue(x.FriendlyName) ?? MapperSupport.Key(x.FriendlyName))) > 1 ? V2Severity.Danger
+                : authoredNameRooms.TryGetValue(x.FriendlyName.Trim(), out var nameRooms) &&
+                    (nameRooms.Length > 1 || nameRooms.Length == 1 && nameRooms[0] != x.RoomId) ? V2Severity.Warning : V2Severity.Neutral;
             var definition = types.FirstOrDefault(y => string.Equals(y.OutputValue, x.LocationType, StringComparison.Ordinal));
             var isEnemy = definition?.Group == "enemies";
             var row = new CheckRowView(x.Id, x.SortOrder, x.Archived, x.UpdatedUtc, x.RequirementsParseSucceeded,
@@ -553,7 +553,7 @@ public static class CheckTableMapper
                 active ? MapperSupport.ReferenceSeverity(MapperSupport.Presence(x.Subroom, activeSubrooms.Length > 0), state) : V2Severity.Neutral,
                 !active ? V2Severity.Neutral : owningRoomArchived ? MapperSupport.Required(x.Requirements)
                     : MapperSupport.Requirements(x.Requirements, x.RequirementsParseSucceeded),
-                game, MapperSupport.Pair(x.AnnotationX, x.AnnotationY),
+                V2Severity.Neutral, MapperSupport.Pair(x.AnnotationX, x.AnnotationY),
                 active && !owningRoomArchived && definition is null ? V2Severity.Danger : V2Severity.Neutral, state)
                 { IsEnemy = isEnemy };
             (isEnemy ? active ? enemiesActive : enemiesArchived : active ? checksActive : checksArchived).Add(row);

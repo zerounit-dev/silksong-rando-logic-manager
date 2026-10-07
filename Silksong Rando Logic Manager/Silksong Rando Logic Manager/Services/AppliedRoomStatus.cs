@@ -69,12 +69,12 @@ public sealed class AppliedRoomStatusService(IDbContextFactory<LogicDbContext> c
                 x.IsTodo, x.IsVerified, x.IsArchived, x.RequirementsParseSucceeded))
             .ToListAsync(token);
 
-        // Cross-room check-name information is globally relevant. The compact
-        // read also supplies same-room transition/check game-ID conflicts.
+        // Check facts retain name, reference, requirements, type and position
+        // diagnostics, but game IDs do not contribute to applied status.
         var checkQuery = db.CheckLocations.AsNoTracking().Where(x => !x.Room.IsArchived);
         if (requested is not null) checkQuery = checkQuery.Where(x => selectedIds.Contains(x.RoomId));
         var checks = await checkQuery
-            .Select(x => new StatusCheck(x.Id, x.RoomId, x.FriendlyName, x.InGameId,
+            .Select(x => new StatusCheck(x.Id, x.RoomId, x.FriendlyName,
                 x.SubroomReferenceText, x.Requirements, x.LocationType,
                 x.AnnotationSceneUnitX, x.AnnotationSceneUnitY, x.ResolvedSubroomId,
                 x.IsTodo, x.IsVerified, x.IsArchived, x.RequirementsParseSucceeded))
@@ -139,7 +139,7 @@ public sealed class AppliedRoomStatusService(IDbContextFactory<LogicDbContext> c
             var aliasNormal = MapperSupport.Max(MapperSupport.Alias(row.DestinationAlias, []), duplicateEndpoint ? V2Severity.Danger : V2Severity.Neutral);
             Add(MapperSupport.ReferenceSeverity(aliasNormal, indexes.DestinationAliasState(row, roomState)));
             Add(MapperSupport.Requirements(row.Requirements, row.ParseSucceeded));
-            if (MapperSupport.Text(row.InGameId) && indexes.RoomGameIdCount(room.Id, row.InGameId!) > 1) Add(V2Severity.Danger);
+            if (MapperSupport.Text(row.InGameId) && indexes.TransitionGameIdCount(room.Id, row.InGameId!) > 1) Add(V2Severity.Danger);
             if (row.DestinationRoomId is not null && row.DestinationId is not null)
             {
                 var inverseCount = indexes.InverseCount(row.DestinationRoomId.Value, room.Id, row.Id);
@@ -169,7 +169,6 @@ public sealed class AppliedRoomStatusService(IDbContextFactory<LogicDbContext> c
             // A name match only in another room is deliberately informational.
             Add(MapperSupport.ReferenceSeverity(MapperSupport.Presence(row.Subroom, activeSubrooms.Length > 0), indexes.SubroomReferenceState(room.Id, row.Subroom, row.SubroomId)));
             Add(MapperSupport.Requirements(row.Requirements, row.ParseSucceeded));
-            if (MapperSupport.Text(row.InGameId) && indexes.RoomGameIdCount(room.Id, row.InGameId!) > 1) Add(V2Severity.Danger);
             Add(MapperSupport.Pair(row.AnnotationX, row.AnnotationY));
             if (!CheckLocationTypeCatalogue.IsRecognized(row.LocationType)) Add(V2Severity.Danger);
             if (worst == V2Severity.Danger || row.Verified == false) return AppliedRoomStatus.Danger;
@@ -196,7 +195,7 @@ public sealed class AppliedRoomStatusService(IDbContextFactory<LogicDbContext> c
         private readonly TransitionEndpointIndex transitionEndpoints = new();
         private readonly Dictionary<(Guid RoomId, string Alias), List<StatusTransition>> destinationAliases = [];
         private readonly Dictionary<(Guid CandidateRoomId, Guid DestinationRoomId, Guid DestinationId), int> inverses;
-        private readonly Dictionary<(Guid RoomId, string Key), int> roomGameIds;
+        private readonly Dictionary<Guid, Dictionary<string, int>> transitionGameIds;
         private readonly Dictionary<(Guid RoomId, string Key), int> checkNames;
         private readonly Dictionary<Guid, V2Severity> pathwaySeverities;
 
@@ -205,7 +204,7 @@ public sealed class AppliedRoomStatusService(IDbContextFactory<LogicDbContext> c
             IReadOnlyList<StatusCheck> checks)
         {
             activeRoomReferences = []; activeRoomGames = []; subroomNames = []; subroomReferences = [];
-            transitionAliases = []; transitionNames = []; inverses = []; roomGameIds = []; checkNames = [];
+            transitionAliases = []; transitionNames = []; inverses = []; transitionGameIds = []; checkNames = [];
             foreach (var row in rooms)
             {
                 if (MapperSupport.Text(row.ReferenceId)) { var key = MapperSupport.Key(row.ReferenceId); Add(roomsByReference, key, row); if (!row.Archived) Increment(activeRoomReferences, key); }
@@ -226,12 +225,17 @@ public sealed class AppliedRoomStatusService(IDbContextFactory<LogicDbContext> c
                 if (MapperSupport.Text(row.Alias)) Increment(transitionAliases, (row.RoomId, MapperSupport.Key(row.Alias)));
                 if (MapperSupport.Text(row.FriendlyName)) Increment(transitionNames, (row.RoomId, MapperSupport.Key(row.FriendlyName)));
                 if (row.DestinationRoomId is { } destinationRoom && row.DestinationId is { } destinationId) Increment(inverses, (row.RoomId, destinationRoom, destinationId));
-                if (MapperSupport.Text(row.InGameId)) Increment(roomGameIds, (row.RoomId, MapperSupport.Key(row.InGameId)));
+                if (MapperSupport.Text(row.InGameId))
+                {
+                    if (!transitionGameIds.TryGetValue(row.RoomId, out var gameIds))
+                        transitionGameIds[row.RoomId] = gameIds = new(StringComparer.OrdinalIgnoreCase);
+                    Increment(gameIds, row.InGameId!.Trim());
+                }
             }
             foreach (var row in checks.Where(x => !x.Archived))
             {
-                if (MapperSupport.Text(row.FriendlyName)) Increment(checkNames, (row.RoomId, MapperSupport.Key(row.FriendlyName)));
-                if (MapperSupport.Text(row.InGameId)) Increment(roomGameIds, (row.RoomId, MapperSupport.Key(row.InGameId)));
+                if (MapperSupport.Text(row.FriendlyName)) Increment(checkNames, (row.RoomId,
+                    RoomGraphExportService.CanonicalValue(row.FriendlyName) ?? MapperSupport.Key(row.FriendlyName)));
             }
             var activeConnections = connections.Where(x => !x.Archived).ToArray();
             var groups = new Dictionary<(Guid RoomId, string Key), List<StatusConnection>>();
@@ -257,8 +261,9 @@ public sealed class AppliedRoomStatusService(IDbContextFactory<LogicDbContext> c
         public int TransitionNameCount(Guid roomId, string value) => transitionNames.GetValueOrDefault((roomId, MapperSupport.Key(value)));
         public int TransitionEndpointCount(StatusTransition row) => transitionEndpoints.Count(row);
         public int InverseCount(Guid candidateRoomId, Guid destinationRoomId, Guid destinationId) => inverses.GetValueOrDefault((candidateRoomId, destinationRoomId, destinationId));
-        public int RoomGameIdCount(Guid roomId, string value) => roomGameIds.GetValueOrDefault((roomId, MapperSupport.Key(value)));
-        public int CheckNameCount(Guid roomId, string value) => checkNames.GetValueOrDefault((roomId, MapperSupport.Key(value)));
+        public int TransitionGameIdCount(Guid roomId, string value) => transitionGameIds.GetValueOrDefault(roomId)?.GetValueOrDefault(value.Trim()) ?? 0;
+        public int CheckNameCount(Guid roomId, string value) => checkNames.GetValueOrDefault((roomId,
+            RoomGraphExportService.CanonicalValue(value) ?? MapperSupport.Key(value)));
         public V2Severity PathwaySeverity(Guid id) => pathwaySeverities.GetValueOrDefault(id);
 
         public V2ReferenceState RoomReferenceState(string? text, Guid? id)
@@ -366,7 +371,7 @@ public sealed class AppliedRoomStatusService(IDbContextFactory<LogicDbContext> c
         Guid? DestinationId, bool Todo, bool? Verified, bool Archived, bool? ParseSucceeded);
     private sealed record StatusConnection(Guid Id, Guid RoomId, string Alias, string FriendlyName, string Source, string Destination,
         string Requirements, Guid? SourceId, Guid? DestinationId, bool Todo, bool? Verified, bool Archived, bool? ParseSucceeded);
-    private sealed record StatusCheck(Guid Id, Guid RoomId, string FriendlyName, string? InGameId, string? Subroom,
+    private sealed record StatusCheck(Guid Id, Guid RoomId, string FriendlyName, string? Subroom,
         string Requirements, string? LocationType, double? AnnotationX, double? AnnotationY, Guid? SubroomId,
         bool Todo, bool? Verified, bool Archived, bool? ParseSucceeded);
 }
