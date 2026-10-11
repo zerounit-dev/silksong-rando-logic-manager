@@ -77,8 +77,7 @@ public static class SceneDumpIdentity
     public static string? GameId(SceneDumpObject node) => node.Classification switch
     {
         SceneDumpClassification.Exit => node.Name,
-        SceneDumpClassification.Enemy => node.Name.EndsWith("(Clone)", StringComparison.Ordinal)
-            ? node.Name[..^7].TrimEnd() : node.Name,
+        SceneDumpClassification.Enemy => node.EnemyIdentityPath,
         SceneDumpClassification.Check => node.Components.Select(component => component.ItemDataId)
             .FirstOrDefault(id => !string.IsNullOrWhiteSpace(id)) ?? node.Name,
         _ => node.Components.Select(component => component.ItemDataId).FirstOrDefault(id => !string.IsNullOrWhiteSpace(id))

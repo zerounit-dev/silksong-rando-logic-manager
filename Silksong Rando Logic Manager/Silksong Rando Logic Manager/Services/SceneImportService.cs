@@ -172,8 +172,10 @@ public sealed class SceneImportService(IDbContextFactory<LogicDbContext> dbConte
                         EnableAnnotation = true,
                         LocationType = node.Classification == SceneDumpClassification.Enemy ? "enemy" : null,
                         Requirements = node.Classification == SceneDumpClassification.Enemy
-                            ? ScenePlacementWorldResolver.EnemyRequirements(node)
+                            ? SceneEnemySpawnNotesResolver.EnemyRequirements(node)
                             : node.IsAct3Only ? "Act 3" : string.Empty,
+                        Notes = node.Classification == SceneDumpClassification.Enemy
+                            ? SceneEnemySpawnNotesResolver.EnemyNotes(node) : string.Empty,
                         SortOrder = await NextSortOrderAsync(db.CheckLocations.Where(x => x.RoomId == targetRoom.Id && !x.IsArchived), cancellationToken) + importedChecks.Count
                     };
                     importedChecks.Add(check);

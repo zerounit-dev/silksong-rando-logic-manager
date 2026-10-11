@@ -12,7 +12,7 @@ public interface IRoomGeometryExportService
 }
 
 public sealed record RoomGeometryDocument(int SchemaVersion, IReadOnlyList<RoomGeometryRoom> Rooms);
-public sealed record RoomGeometryRoom(string Id, string ImageGuid, string Name, string? InGameId, bool IsMetadataOnly,
+public sealed record RoomGeometryRoom(string Id, string ImageGuid, string Name, string RoomGroupName, string? InGameId, bool IsMetadataOnly,
     double? SceneMinX, double? SceneMinY, double? SceneMaxX, double? SceneMaxY,
     double? SceneWidth, double? SceneHeight, double? ImagePixelWidth, double? ImagePixelHeight,
     IReadOnlyList<RoomGeometryNode> Nodes, IReadOnlyList<RoomGeometryTransition> Transitions,

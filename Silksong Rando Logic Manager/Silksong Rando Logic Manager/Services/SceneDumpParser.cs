@@ -64,8 +64,10 @@ public sealed partial class SceneDumpParser
             AssignContext(roots[index], null, 0, index.ToString(CultureInfo.InvariantCulture));
         }
 
+        AssignEnemyIdentityPaths(roots, null);
         var review = new SceneDumpReview(sceneName, roots, warnings.ToArray(), VerifiedSceneUnitSize(sceneName, dumpStage, mapContext));
         ScenePlacementWorldResolver.Apply(review);
+        SceneEnemySpawnNotesResolver.Apply(review);
         return review;
     }
 
@@ -324,7 +326,8 @@ public sealed partial class SceneDumpParser
         return new SceneDumpObject(name, tag, layer, activeSelf, activeInHierarchy, worldPosition, localPosition, components, children)
         { HasReliableFillerEvidence = componentsReliable && childrenReliable && !exportError,
           CaptureInstanceId = instanceId, HasReliableWorldIdentity = !exportError && !string.IsNullOrWhiteSpace(name),
-          HasReliableWorldComponents = componentsReliable && !exportError };
+          HasReliableWorldComponents = componentsReliable && !exportError,
+          HasReliableActivity = !exportError };
     }
 
     private (ScenePosition? World, ScenePosition? Local) ParseTransform(string context)
@@ -439,7 +442,7 @@ public sealed partial class SceneDumpParser
         {
             var property = json.ReadPropertyName();
             json.Expect(':');
-            if (!members.Add(property)) evidence.Filler.Invalid = true;
+            if (!members.Add(property)) { evidence.Filler.Invalid = true; evidence.NotesRootInvalid = true; evidence.ConditionHeaderInvalid = true; }
             if (property == "type")
             {
                 type = json.ReadNullableString() ?? string.Empty;
@@ -450,7 +453,7 @@ public sealed partial class SceneDumpParser
             }
             else
             {
-                if (property == "error") evidence.Filler.Invalid = true;
+                if (property == "error") { evidence.Filler.Invalid = true; evidence.NotesRootInvalid = true; evidence.ConditionHeaderInvalid = true; }
                 json.SkipValue();
             }
 
@@ -475,7 +478,9 @@ public sealed partial class SceneDumpParser
                 : type == "PlayMakerFSM" && evidence.FsmJournal.Malformed)
         { HasReliableFillerEvidence = evidence.Filler.DataPresent && !evidence.Filler.Invalid,
           ConditionalFillerEligible = evidence.Filler.Eligible(type),
-          WorldEvidence = FinishWorldEvidence(type, evidence) };
+          WorldEvidence = FinishWorldEvidence(type, evidence),
+          EnemyConditionEvidence = FinishEnemyConditionEvidence(type, evidence),
+          HasReliableConditionCoverage = !evidence.ConditionHeaderInvalid && !string.IsNullOrWhiteSpace(type) && !IsMissingEvidence(type) };
     }
 
     private bool ScanComponentData(SceneComponentEvidence evidence, bool insideItemData, bool isComponentDataRoot, string context,
@@ -490,8 +495,8 @@ public sealed partial class SceneDumpParser
             {
                 var property = json.ReadPropertyName();
                 json.Expect(':');
-                if (!seen.Add(property)) { valid = false; evidence.Filler.Invalid = true; }
-                if (property == "error") evidence.Filler.Invalid = true;
+                if (!seen.Add(property)) { valid = false; evidence.Filler.Invalid = true; if (isComponentDataRoot) evidence.NotesRootInvalid = true; }
+                if (property == "error") { evidence.Filler.Invalid = true; if (isComponentDataRoot) evidence.NotesRootInvalid = true; }
                 FillerShape? childShape = null;
                 if (isComponentDataRoot)
                 {
@@ -538,7 +543,7 @@ public sealed partial class SceneDumpParser
                     valid &= childValid;
                     // A supplied root type wrapper must be well-formed even for native data.
                     // Conditional field guards remain admission-only for their owning types.
-                    if (isComponentDataRoot && property == "$type" && !childValid) evidence.Filler.Invalid = true;
+                    if (isComponentDataRoot && property == "$type" && !childValid) { evidence.Filler.Invalid = true; evidence.NotesRootInvalid = true; }
                     if (isComponentDataRoot && childShape is not null && childValid) evidence.Filler.Valid.Add(property);
                 }
 
@@ -603,6 +608,21 @@ public sealed partial class SceneDumpParser
         }
     }
 
+    // EPN1 comparison metadata: all retained siblings, exact names and original source order.
+    // Deliberately literal/opaque, not an escaped or executable address. Diagnostic paths stay separate.
+    private static void AssignEnemyIdentityPaths(IEnumerable<SceneDumpObject> siblings, string? parentPath)
+    {
+        var occurrences = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var node in siblings)
+        {
+            var index = occurrences.GetValueOrDefault(node.Name);
+            occurrences[node.Name] = index + 1;
+            var segment = $"\"{node.Name}\"[{index.ToString(CultureInfo.InvariantCulture)}]";
+            node.EnemyIdentityPath = parentPath is null ? segment : $"{parentPath}/{segment}";
+            AssignEnemyIdentityPaths(node.Children, node.EnemyIdentityPath);
+        }
+    }
+
     private void Warn(string path, string message) => warnings.Add(new SceneDumpWarning(path, message));
 
     private sealed class SceneComponentEvidence
@@ -616,6 +636,8 @@ public sealed partial class SceneDumpParser
         public SceneJournalEvidence FsmJournal { get; } = new();
         public FillerDataEvidence Filler { get; } = new();
         public WorldDataEvidence World { get; } = new();
+        public bool NotesRootInvalid;
+        public bool ConditionHeaderInvalid;
     }
 
     private sealed class SceneJournalEvidence
@@ -805,6 +827,7 @@ public sealed class SceneDumpObject(
     public Guid? ParentId { get; internal set; }
     public int Depth { get; internal set; }
     public string HierarchyPath { get; internal set; } = string.Empty;
+    public string EnemyIdentityPath { get; internal set; } = string.Empty;
     public string Name { get; } = name;
     public string? Tag { get; } = tag;
     public int? Layer { get; } = layer;
@@ -820,9 +843,12 @@ public sealed class SceneDumpObject(
     public int? CaptureInstanceId { get; internal set; }
     public bool HasReliableWorldIdentity { get; internal set; }
     public bool HasReliableWorldComponents { get; internal set; }
+    public bool HasReliableActivity { get; internal set; }
+    public string InactiveEnemyReason { get; internal set; } = string.Empty;
     public bool IsEnemyActorCandidate { get; internal set; }
     public ScenePlacementWorldAvailability PlacementWorld { get; internal set; }
     public IReadOnlyList<ScenePlayerDataCondition> PlayerDataConditions { get; internal set; } = [];
+    public IReadOnlyList<SceneBooleanTest> SpawnConditions { get; internal set; } = [];
     public IReadOnlyList<string> WorldUncertainty { get; internal set; } = [];
     // Permanent scoped distinction: SW1 enemy/candidate proof versus SR1 non-enemy context.
     public bool ShowAct3Indication => IsEnemyActorCandidate || Classification == SceneDumpClassification.Enemy
@@ -839,6 +865,8 @@ public sealed record SceneDumpComponent(string Type, string? ItemDataId, string?
     public bool HasReliableFillerEvidence { get; internal init; }
     public bool ConditionalFillerEligible { get; internal init; }
     public SceneComponentWorldEvidence? WorldEvidence { get; internal init; }
+    public SceneEnemyConditionEvidence? EnemyConditionEvidence { get; internal init; }
+    public bool HasReliableConditionCoverage { get; internal init; }
 }
 
 public sealed record ScenePosition(double? X, double? Y, double? Z);

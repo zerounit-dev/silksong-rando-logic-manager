@@ -13,6 +13,10 @@ public sealed partial class SceneDumpParser
         public SceneBooleanTest? Test;
         public HashSet<string> Valid { get; } = new(StringComparer.Ordinal);
         public List<SceneFsmBooleanTest> FsmTests { get; } = [];
+        public List<SceneBooleanTest> NotesFacts { get; } = [];
+        public List<SceneBooleanTest> QuestNotesFacts { get; } = [];
+        public bool NotesPresence;
+        public bool NotesIncomplete;
     }
 
     private bool ReadWorldField(string property, SceneComponentEvidence component)
@@ -28,12 +32,19 @@ public sealed partial class SceneDumpParser
             case "boolName": world.BoolName = WorldText(world); return true;
             case "waitForStart": world.WaitForStart = WorldBoolean(world); valid = world.WaitForStart.HasValue; break;
             case "playerDataTest": world.Test = ParseWorldPlayerDataTest(world); return true;
-            case "questTests": case "equipTests": case "entryGateWhitelist": case "entryGateBlacklist":
-                valid = ReadEmptyWorldArray(world); break;
-            case "checkActive": valid = ReadExplicitNull(world); break;
-            case "expectedActive": valid = WorldBoolean(world).HasValue; break;
+            case "questTests": valid = ReadQuestTests(world); break;
+            case "equipTests": case "entryGateWhitelist": case "entryGateBlacklist":
+                var array = new WorldDataEvidence();
+                var empty = ReadEmptyWorldArray(array);
+                world.NotesIncomplete |= !empty;
+                world.Invalid |= array.Invalid;
+                world.HasExportError |= array.HasExportError;
+                valid = !world.Invalid && empty;
+                break;
+            case "checkActive": valid = ReadExplicitNull(world); world.NotesIncomplete |= !valid; break;
+            case "expectedActive": valid = WorldBoolean(world).HasValue; world.NotesIncomplete |= !valid; break;
             case "activateEventRegister": case "deactivateEventRegister":
-                valid = WorldText(world, allowEmpty: true) == string.Empty; break;
+                valid = WorldText(world, allowEmpty: true) == string.Empty; world.NotesIncomplete |= !valid; break;
             default: return false;
         }
         if (valid) world.Valid.Add(property);
@@ -171,25 +182,52 @@ public sealed partial class SceneDumpParser
         var world = new WorldDataEvidence();
         List<SceneBooleanTest?> tests = [];
         var groups = 0;
+        var wrapperValid = true;
         var seen = WorldMembers(world, property =>
         {
-            if (property == "$type") WorldType(world, "PlayerDataTest");
-            else if (property == "TestGroups") WorldArray(world, () =>
+            if (property == "$type")
             {
-                groups++;
-                var groupFields = WorldMembers(world, groupProperty =>
+                wrapperValid &= WorldText(world) == "PlayerDataTest";
+                world.Invalid |= !wrapperValid;
+            }
+            else if (property == "TestGroups")
+            {
+                world.NotesIncomplete |= json.Peek() != '[';
+                WorldArray(world, () =>
                 {
-                    if (groupProperty == "$type") WorldType(world, "PlayerDataTest+TestGroup");
-                    else if (groupProperty == "Tests") WorldArray(world, () => tests.Add(ParseWorldBooleanTest(world)));
-                    else { world.Invalid = true; WorldSkip(world); }
+                    groups++;
+                    var group = new WorldDataEvidence();
+                    var groupWrapperValid = true;
+                    var groupFields = WorldMembers(group, groupProperty =>
+                    {
+                        if (groupProperty == "$type")
+                        {
+                            groupWrapperValid &= WorldText(group) == "PlayerDataTest+TestGroup";
+                            group.Invalid |= !groupWrapperValid;
+                        }
+                        else if (groupProperty == "Tests") WorldArray(group, () => tests.Add(ParseWorldBooleanTest(group)));
+                        else { group.Invalid = true; WorldSkip(group); }
+                    });
+                    if (!groupFields.Contains("Tests")) group.Invalid = true;
+                    world.Invalid |= group.Invalid;
+                    world.HasExportError |= group.HasExportError;
+                    world.NotesPresence |= group.NotesPresence;
+                    world.NotesIncomplete |= group.NotesIncomplete || group.Invalid;
+                    // A malformed group wrapper cannot assign its contained facts.
+                    if (groupWrapperValid && !group.HasExportError && groupFields.Contains("Tests") &&
+                        groupFields.All(field => field is "$type" or "Tests")) world.NotesFacts.AddRange(group.NotesFacts);
                 });
-                if (!groupFields.Contains("Tests")) world.Invalid = true;
-            });
+            }
             else { world.Invalid = true; WorldSkip(world); }
         });
         var valid = !world.Invalid && seen.Contains("TestGroups") && groups == 1 && tests.Count == 1 && tests[0] is not null;
         parent.Invalid |= !valid;
         parent.HasExportError |= world.HasExportError;
+        parent.NotesPresence |= world.NotesPresence;
+        parent.NotesIncomplete |= world.NotesIncomplete || !wrapperValid || !seen.Contains("TestGroups") ||
+            seen.Any(field => field is not ("$type" or "TestGroups"));
+        if (wrapperValid && !world.HasExportError && seen.Contains("TestGroups") &&
+            seen.All(field => field is "$type" or "TestGroups")) parent.NotesFacts.AddRange(world.NotesFacts);
         return valid ? tests[0] : null;
     }
 
@@ -216,6 +254,9 @@ public sealed partial class SceneDumpParser
             new[] { "Type", "FieldName", "BoolValue" }.All(seen.Contains);
         parent.Invalid |= !valid;
         parent.HasExportError |= world.HasExportError;
+        parent.NotesPresence = true;
+        parent.NotesIncomplete |= !valid;
+        if (valid) parent.NotesFacts.Add(new(field!, value!.Value));
         return valid ? new(field!, value!.Value) : null;
     }
 
@@ -227,13 +268,17 @@ public sealed partial class SceneDumpParser
         var fields = component.Filler.Fields;
         var valid = component.Filler.DataPresent && component.Filler.ObjectData && !component.Filler.Invalid && !world.Invalid;
         if (component.Filler.DataType is { } wrapper && wrapper != type) valid = false;
+        var notesValid = false;
         if (type == "TestGameObjectActivator")
         {
             string[] required = ["activateGameObject", "deactivateGameObject", "activateEventRegister", "deactivateEventRegister",
                 "playerDataTest", "questTests", "equipTests", "entryGateWhitelist", "entryGateBlacklist", "checkActive", "expectedActive"];
             valid &= required.All(fields.Contains) && fields.All(field => field == "$type" || required.Contains(field)) &&
                 required.Where(field => field is not ("activateGameObject" or "deactivateGameObject" or "playerDataTest")).All(world.Valid.Contains) &&
-                world.Test is not null && world.Activate is { IsNull: false, Valid: true } && world.Deactivate is { IsNull: false, Valid: true };
+                world.Test is not null && world.Activate is { Valid: true } && world.Deactivate is { Valid: true };
+            // Notes permits an explicit null unused side. SW1 retains its stricter paired proof.
+            notesValid = valid && (world.Activate is { IsNull: false } || world.Deactivate is { IsNull: false });
+            valid &= world.Activate is { IsNull: false } && world.Deactivate is { IsNull: false };
         }
         else if (type is "DeactivateIfPlayerdataFalse" or "DeactivateIfPlayerdataTrue" or "ActivateIfPlayerdataFalse" or "ActivateIfPlayerdataTrue")
         {
@@ -241,10 +286,11 @@ public sealed partial class SceneDumpParser
             valid &= fields.Contains("boolName") && fields.Contains(target) && world.BoolName is not null && world.GateTarget is { Valid: true } &&
                 fields.All(field => field == "$type" || field == "boolName" || field == target || field == "waitForStart") &&
                 (!fields.Contains("waitForStart") || world.Valid.Contains("waitForStart"));
+            notesValid = valid;
         }
         else if (type == "PlayMakerFSM") valid &= fields.Contains("fsm");
         return new(valid, world.Test, world.Activate, world.Deactivate, world.BoolName, world.GateTarget,
-            world.WaitForStart, world.FsmTests.ToArray(), world.FsmUncertain);
+            world.WaitForStart, world.FsmTests.ToArray(), world.FsmUncertain, notesValid);
     }
 
     private sealed record SceneLiteralString(string? Value, bool Valid);
@@ -318,7 +364,7 @@ public sealed record SceneWorldReference(string? Type, string? Name, int? Instan
 public sealed record SceneFsmBooleanTest(string Field, string IsTrue, string IsFalse, string? State, int ActionIndex);
 public sealed record SceneComponentWorldEvidence(bool Valid, SceneBooleanTest? Test, SceneWorldReference? Activate,
     SceneWorldReference? Deactivate, string? BoolName, SceneWorldReference? GateTarget, bool? WaitForStart,
-    IReadOnlyList<SceneFsmBooleanTest> FsmTests, bool HasFsmUncertainty);
+    IReadOnlyList<SceneFsmBooleanTest> FsmTests, bool HasFsmUncertainty, bool NotesValid);
 public enum ScenePlacementWorldAvailability { Unknown, BlackThreadOnly, NormalOnly, Act3AffectedOrBoth }
 public sealed record ScenePlayerDataCondition(string Field, bool? RequiredValue, Guid SourceObjectId, string Source,
     string? IsTrue = null, string? IsFalse = null);

@@ -50,7 +50,8 @@ Data database; replace `$db` with the exact intended existing database path when
 operating elsewhere. Neither input nor database is inferred by the utility.
 
 Only recursive case-insensitive `.sceneReady.json` suffixes are parsed, serially
-with the ordinary 256 MiB parser limit, classification, SI1/SN1/SW1 defaults. Other
+with the ordinary 256 MiB parser limit, classification, SI1/SN1/SW1 defaults and
+EPN1 identity and EPN3 governing-condition/default successors. Other
 files are listed as excluded, not parsed. Embedded names match trimmed
 OrdinalIgnoreCase active room IDs; names of files never select rooms. Distinct
 captures claiming one scene conflict even if identical. Duplicate room IDs,
@@ -61,12 +62,51 @@ also prevents apply because exact input binding cannot be verified.
 
 Read **all** coverage, blockers, warnings, instructions and exclusions. Report has
 exact machine-artifact digest; machine JSON is authoritative for exact values.
-Enemy Creates initialize normal annotations/type/world predicates; Updates change
+Enemy Creates initialize normal annotations/type and shared Requirements defaults; Updates change
 only imported identity/world/local XYZ, not authored fields. All active target-room
 checks share SI1 identity matching. Counts use the full current hierarchy; naming
 allocates selected Enemies only. Inactive/repeated actors remain. No new rooms,
 dimensions/group/image-stale modifications or image output. Existing resolver can
 touch navigation metadata outside the target room.
+
+EPN1 (`documentation/ENEMY_PATH_AND_SPAWN_NOTES_IMPLEMENTATION_PLAN.md`) changes
+Enemy game-ID metadata to the full root-to-object named hierarchy (no scene), e.g.
+`"Pilgrims"[0]/"Pilgrim Folder"[0]/"Pilgrim 01"[1]`. Every segment has a zero-based
+exact-name sibling occurrence index in original parsed structural order. Names,
+including `(Clone)`, quotes, slashes and brackets, remain literal with no escaping
+inside this opaque string. Normal JSON/report string encoding is transport only;
+do not parse this metadata as a path. No stable uniqueness promise, old-ID backfill
+or legacy-name fallback. SI1 trimmed OrdinalIgnoreCase collision-safe defaults
+remain; deliberate Update can reconcile an old row while retaining authored data.
+
+Machine instructions and human reports include actual proposed Create Notes and
+retained Update Notes alongside Requirements. New Enemy Creates receive
+`Spawn conditions: field=true, Quest name accepted=true, ...` for finite non-world
+governing self/ancestor Boolean/quest expected-value facts; no printable facts means
+blank condition Notes. The list is documentation, not AND/OR or a gameplay expression.
+Four simple gates retain strict guards/polarity; direct TestGameObjectActivator
+zero/multi Bool groups and selected Boolean quest checks support explicit-null unused
+sides and verified external targets. Composite opposite criteria count as presence,
+not individually inverted facts; the known pure single-Bool inverse is preserved.
+Ordering is direct/nearest-to-outer, then controller source/component order, with
+exact field/value pairs deduplicated and opposite values retained. Exact
+`blackThreadWorld` is omitted from Notes; SW1 proof remains unchanged.
+Unsupported criteria retain presence/incompleteness, not guessed facts or absence.
+No unresolved placeholder, FSM interpreter, catalogue mapping, new warnings or authored-field
+changes on Updates.
+
+EPN3 (`documentation/ENEMY_GOVERNING_CONDITIONS_IMPLEMENTATION_PLAN.md`) supersedes
+EPN2: reliable actor hierarchy=false plus reliable self/ancestor self=false gets exactly
+`Invalid` ONLY with no governing condition or relevant uncertainty on the whole chain.
+Notes are `Disabled; no activation found.` for self, otherwise `Disabled ancestor; no
+activation found.`, alone, never reason plus conditions. Suppression/world/quest and
+unsupported criterion presence prevents Invalid, even for a separately disabled child.
+Otherwise retain SW1's exact proven world phrase or blank with available finite Notes.
+Any known reliable supplied activity contradiction on the chain suppresses the diagnostic;
+missing/unknown flags do not invent causes/contradictions. Active unconditional actors,
+SW1 world proof/indication and all authored Update fields remain unchanged. Invalid
+is freeform text with normal catalogue-dependent validation, not a new enum/atom or
+proof game activation is impossible. No actor removal/backfill/FSM/composite inference.
 
 Missing-room placeholders are ordinary active Unknown checks named exactly
 `import enemies`, TODO, explicitly unverified, blank Requirements/null validation,
@@ -92,6 +132,12 @@ logical-baseline equality, and records backup path/file SHA256. Backup failure
 aborts all writes. Failed/partial backups are retained, not restored or deleted.
 Immediately before the first unit transaction, after backup/receipt preparation,
 the workflow rechecks all admitted hashes/inventory and the complete logical DB.
+
+Notes are part of the canonical approval-bound instruction bytes. Old approved
+artifacts do not authorize EPN1 IDs or EPN3 defaults: obtain a fresh plan and separate
+concrete APPLY approval. Existing canonical-artifact/replan comparison rejects
+stale content; there is no upgrade, compatibility replay or automatic execution.
+The completed historical BI1 operation is not authorization for a new operation.
 
 One scene uses the existing importer transaction with strict Enemy-only existing
 room admission and metadata preservation; each placeholder uses its own active
@@ -131,5 +177,7 @@ one deferred read transaction; transient SQLite/WAL/SHM bytes are excluded.
 Parser GUIDs are never stored in plans: input hash + preorder source ordinal/path/
 name/identity safely remap instructions to freshly parsed object GUIDs at apply.
 
-Manual B1–B6 acceptance and independent full-unit review are required. Source/build
+Manual B1–B6, EPN1 E1–E7 and EPN2 I1–I6 acceptance and independent full-unit review
+are required. Approval of a report authorizes only its separately approved operation,
+not acceptance of new application behavior. Source/build
 evidence does not establish runtime SQLite, filesystem, cancellation or UI behavior.

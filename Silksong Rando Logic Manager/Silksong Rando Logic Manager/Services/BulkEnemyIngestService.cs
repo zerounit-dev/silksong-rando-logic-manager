@@ -6,7 +6,7 @@ using Silksong_Rando_Logic_Manager.Data;
 namespace Silksong_Rando_Logic_Manager.Services;
 
 public sealed record BulkEnemyInstruction(int Ordinal, string HierarchyPath, string SourceName, string? GameId,
-    SceneImportMode Mode, Guid? ExistingRecordId, string FriendlyName, string Requirements,
+    SceneImportMode Mode, Guid? ExistingRecordId, string FriendlyName, string Requirements, string Notes,
     int IncomingOccurrences, int DurableMatches, ScenePlacementWorldAvailability World);
 public sealed record BulkEnemyCapturePlan(string Path, string? Sha256, string? SceneName, string Outcome,
     Guid? RoomId, string? Error, IReadOnlyList<SceneDumpWarning> Warnings, IReadOnlyList<BulkEnemyInstruction> Instructions)
@@ -75,8 +75,8 @@ public sealed class BulkEnemyIngestService
         var rooms = await db.Rooms.AsNoTracking().Where(r => !r.IsArchived)
             .Select(r => new RoomIdentity(r.Id, r.FriendlyName, r.InGameId)).ToListAsync(token);
         rooms = rooms.OrderBy(r => r.Id).ToList();
-        var requirements = await db.CheckLocations.AsNoTracking().Where(c => !c.IsArchived && !c.Room.IsArchived)
-            .Select(c => new { c.Id, c.Requirements }).ToDictionaryAsync(c => c.Id, c => c.Requirements, token);
+        var retained = await db.CheckLocations.AsNoTracking().Where(c => !c.IsArchived && !c.Room.IsArchived)
+            .Select(c => new { c.Id, c.Requirements, c.Notes }).ToDictionaryAsync(c => c.Id, token);
         var captures = new List<BulkEnemyCapturePlan>();
         foreach (var path in admitted)
         {
@@ -105,8 +105,10 @@ public sealed class BulkEnemyIngestService
                     if (!drafts.TryGetValue(node.Id, out var draft)) continue;
                     var id = SceneDumpIdentity.GameId(node);
                     instructions.Add(new(ordinal, node.HierarchyPath, node.Name, id, draft.Mode, draft.ExistingRecordId,
-                        draft.FriendlyName, draft.Mode == SceneImportMode.Update ? requirements[draft.ExistingRecordId!.Value]
-                            : ScenePlacementWorldResolver.EnemyRequirements(node),
+                        draft.FriendlyName, draft.Mode == SceneImportMode.Update ? retained[draft.ExistingRecordId!.Value].Requirements
+                            : SceneEnemySpawnNotesResolver.EnemyRequirements(node),
+                        draft.Mode == SceneImportMode.Update ? retained[draft.ExistingRecordId!.Value].Notes
+                            : SceneEnemySpawnNotesResolver.EnemyNotes(node),
                         string.IsNullOrWhiteSpace(id) ? 0 : counts.GetValueOrDefault(id.Trim()),
                         preview.Checks.Count(c => c.RoomId == matches[0].Id && Matches(c.InGameId, id)), node.PlacementWorld));
                 }
@@ -220,7 +222,10 @@ public sealed class BulkEnemyIngestService
             if (instruction.Ordinal < 0 || instruction.Ordinal >= all.Length) throw new InvalidOperationException("Invalid approved traversal ordinal.");
             var node = all[instruction.Ordinal];
             if (node.Classification != SceneDumpClassification.Enemy || node.HierarchyPath != instruction.HierarchyPath ||
-                node.Name != instruction.SourceName || SceneDumpIdentity.GameId(node) != instruction.GameId)
+                node.Name != instruction.SourceName || SceneDumpIdentity.GameId(node) != instruction.GameId ||
+                instruction.Mode == SceneImportMode.Create &&
+                    (SceneEnemySpawnNotesResolver.EnemyRequirements(node) != instruction.Requirements ||
+                     SceneEnemySpawnNotesResolver.EnemyNotes(node) != instruction.Notes))
                 throw new InvalidOperationException("Approved source traversal no longer maps to the Enemy object.");
             instructions.Add(new(node.Id, instruction.Mode, instruction.ExistingRecordId, instruction.FriendlyName));
         }

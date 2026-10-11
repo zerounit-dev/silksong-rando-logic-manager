@@ -164,7 +164,7 @@ internal static class BulkEnemyOperator
         {
             b.AppendLine($"{Text(c.Path)} SHA256={c.Sha256 ?? "unavailable"} scene={Text(c.SceneName)} outcome={c.Outcome} room={c.RoomId} error={Text(c.Error)}");
             foreach (var w in c.Warnings) b.AppendLine($"  WARNING {Text(w.HierarchyPath)}: {Text(w.Message)}");
-            foreach (var i in c.Instructions) b.AppendLine($"  ordinal={i.Ordinal} hierarchy={Text(i.HierarchyPath)} source={Text(i.SourceName)} gameID={Text(i.GameId)} {i.Mode} target={i.ExistingRecordId} name={Text(i.FriendlyName)} Requirements={Text(i.Requirements)} incomingCount={i.IncomingOccurrences} durableMatches={i.DurableMatches} world={i.World}");
+            foreach (var i in c.Instructions) b.AppendLine($"  ordinal={i.Ordinal} hierarchy={Text(i.HierarchyPath)} source={Text(i.SourceName)} gameID={Text(i.GameId)} {i.Mode} target={i.ExistingRecordId} name={Text(i.FriendlyName)} Requirements={Text(i.Requirements)} Notes={Text(i.Notes)} incomingCount={i.IncomingOccurrences} durableMatches={i.DurableMatches} world={i.World}");
             if (c.Outcome == "Covered" && c.Instructions.Count == 0) b.AppendLine("  Covered, zero enemies: no import transaction.");
         }
         b.AppendLine("\nALL ACTIVE ROOM COVERAGE");

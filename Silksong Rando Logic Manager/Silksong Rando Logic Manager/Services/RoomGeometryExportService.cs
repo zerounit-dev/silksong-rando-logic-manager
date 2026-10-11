@@ -16,11 +16,12 @@ public sealed class RoomGeometryExportService(IDbContextFactory<LogicDbContext> 
         RoomExportStructure.BuildTypeLegend(globalFailures);
         var structure = RoomExportStructure.Project(snapshot, globalFailures);
         if (structure.Failures.Count != 0) return new(null, structure.Failures, structure.Warnings);
-        var rooms = structure.Rooms.Select(ProjectRoom).ToArray();
+        var groupNames = snapshot.Groups.ToDictionary(group => group.Id, group => group.Name);
+        var rooms = structure.Rooms.Select(room => ProjectRoom(room, groupNames[room.Row.GroupId!.Value])).ToArray();
         return new(RoomExportStructure.Serialize(new RoomGeometryDocument(2, rooms)), [], structure.Warnings);
     }
 
-    private static RoomGeometryRoom ProjectRoom(RoomExportStructure.ProjectedRoom room)
+    private static RoomGeometryRoom ProjectRoom(RoomExportStructure.ProjectedRoom room, string roomGroupName)
     {
         var valid = SceneBounds.TryGetSize(room.Row.MinX, room.Row.MinY, room.Row.MaxX, room.Row.MaxY, out var wScene, out var hScene);
         double? width = valid ? wScene : null, height = valid ? hScene : null;
@@ -80,7 +81,7 @@ public sealed class RoomGeometryExportService(IDbContextFactory<LogicDbContext> 
                 image.X, image.Y, image.X * pixels.Width, image.Y * pixels.Height, image.OutOfBounds);
         }).ToArray();
         return new(room.Id, room.Row.Id.ToString("D", CultureInfo.InvariantCulture).ToLowerInvariant(), room.Row.Name,
-            room.Row.InGameId, room.IsMetadataOnly, Finite(minX), Finite(minY), Finite(room.Row.MaxX), Finite(room.Row.MaxY),
+            roomGroupName, room.Row.InGameId, room.IsMetadataOnly, Finite(minX), Finite(minY), Finite(room.Row.MaxX), Finite(room.Row.MaxY),
             width, height, pixels.Width, pixels.Height, nodes, transitions, connections, locations);
     }
 

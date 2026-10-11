@@ -428,6 +428,15 @@ button, input, textarea { font: inherit; }
 .in-game-data-field.danger input { border-color: #842029; background: #f8d7da; }
 .in-game-coordinate-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: .45rem; margin-bottom: .7rem; }
 .in-game-coordinate-grid label { font-size: .68rem; }
+.v2-page-modal .v2-metadata-coordinate-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-rows: repeat(4, auto);
+    grid-auto-flow: row;
+}
+.v2-page-modal .v2-metadata-coordinate-grid > label:first-child {
+    grid-column: 1 / -1;
+    grid-row: 1;
+}
 .actions-heading, .row-actions { width: 4.5rem; min-width: 4.5rem; text-align: right !important; }
 .row-actions { vertical-align: top !important; white-space: nowrap; font-size: 0; line-height: 1.2; }
 .row-actions .action-slot { display: inline-flex; width: 1.35rem; min-width: 1.35rem; justify-content: center; }
