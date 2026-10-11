@@ -115,9 +115,9 @@ public sealed record DistributedImportSweepRoom(Guid RoomId, string FriendlyName
 // on the persistence/application-service side of the exchange boundary.
 public sealed record DistributedImportRoomProjection(
     Guid Id, Guid? RoomGroupId, string ReferenceId, string FriendlyName, string? InGameId,
-    string? Contributors, string? Comments, double? SceneUnitWidth, double? SceneUnitHeight,
-    double? SceneImageScaleXPercent, double? SceneImageScaleYPercent, double? SceneImagePanXPercent,
-    double? SceneImagePanYPercent, bool IsSceneImageStale, int SortOrder, bool IsArchived,
+    string? Contributors, string? Comments, double SceneMinX, double SceneMinY, double? SceneMaxX, double? SceneMaxY,
+    double? SceneImagePixelsPerUnitX, double? SceneImagePixelsPerUnitY, double? SceneImagePixelOffsetX,
+    double? SceneImagePixelOffsetY, bool UseSceneImage, bool IsSceneImageStale, int SortOrder, bool IsArchived,
     DateTime? ArchivedUtc, DateTime CreatedUtc, DateTime UpdatedUtc,
     IReadOnlyList<DistributedImportSubroomProjection> Subrooms,
     IReadOnlyList<DistributedImportTransitionProjection> Transitions,
@@ -132,7 +132,7 @@ public static class DistributedImportProjectionMapper
 {
     public static DistributedRoomDocument MapRoom(DistributedImportRoomProjection source) => new(
         source.Id, source.RoomGroupId, source.ReferenceId, source.FriendlyName, source.InGameId, source.Contributors, source.Comments,
-        source.SceneUnitWidth, source.SceneUnitHeight, source.SceneImageScaleXPercent, source.SceneImageScaleYPercent, source.SceneImagePanXPercent, source.SceneImagePanYPercent,
+        source.SceneMinX, source.SceneMinY, source.SceneMaxX, source.SceneMaxY, source.SceneImagePixelsPerUnitX, source.SceneImagePixelsPerUnitY, source.SceneImagePixelOffsetX, source.SceneImagePixelOffsetY, source.UseSceneImage,
         source.IsSceneImageStale, source.SortOrder, source.IsArchived, source.ArchivedUtc, source.CreatedUtc, source.UpdatedUtc,
         source.Subrooms.Select(x => new DistributedSubroom(x.Id, x.ReferenceId, x.FriendlyName, x.Notes, x.SceneUnitX, x.SceneUnitY, x.SceneUnitWidth, x.SceneUnitHeight, x.EnableAnnotation, x.SortOrder, x.IsArchived, x.ArchivedUtc, x.CreatedUtc, x.UpdatedUtc)).ToArray(),
         source.Transitions.Select(x => new DistributedTransition(x.Id, x.Alias, x.FriendlyName, x.InGameId, x.InGamePositionX, x.InGamePositionY, x.InGamePositionZ, x.LocalPositionX, x.LocalPositionY, x.LocalPositionZ, x.AnnotationSceneUnitX, x.AnnotationSceneUnitY, x.EnableAnnotation, x.SourceSubroomReferenceText, x.DestinationRoomReferenceText, x.DestinationTransitionAliasText, x.Requirements, x.Notes, x.SortOrder, x.IsTodo, x.IsVerified, x.IsArchived, x.ArchivedUtc, x.CreatedUtc, x.UpdatedUtc, x.IsUnsafeArrival)).ToArray(),

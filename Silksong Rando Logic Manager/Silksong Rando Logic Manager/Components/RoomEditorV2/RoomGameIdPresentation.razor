@@ -1,6 +1,6 @@
 @using Silksong_Rando_Logic_Manager.Components.RoomEditorV2.Contracts
 
-<label>game <textarea class="@SeverityClass(View.Severity)" aria-label="Room game ID" readonly="@(!Editable)" rows="1" @bind="value" @bind:event="oninput" @onblur="Blur"></textarea></label>
+<label>game <textarea data-v2-header-field="game" class="@SeverityClass(View.Severity)" aria-label="Room game ID" readonly="@(!Editable)" rows="1" @bind="value" @bind:event="oninput" @onblur="Blur"></textarea></label>
 
 @code {
     [Parameter, EditorRequired] public RoomGameIdView View { get; set; } = null!;

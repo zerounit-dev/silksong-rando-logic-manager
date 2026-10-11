@@ -104,6 +104,9 @@ public sealed class LogicDbContext(DbContextOptions<LogicDbContext> options) : D
         entity.Property(x => x.ReferenceId).IsRequired().UseCollation("NOCASE");
         entity.Property(x => x.FriendlyName).IsRequired();
         entity.Property(x => x.InGameId).UseCollation("NOCASE");
+        entity.Property(x => x.SceneMinX).HasDefaultValue(0d);
+        entity.Property(x => x.SceneMinY).HasDefaultValue(0d);
+        entity.Property(x => x.UseSceneImage).HasDefaultValue(true);
         entity.Property(x => x.IsSceneImageStale).HasDefaultValue(false);
         entity.HasMany(x => x.Subrooms).WithOne(x => x.Room).HasForeignKey(x => x.RoomId).OnDelete(DeleteBehavior.Restrict);
         entity.HasMany(x => x.Transitions).WithOne(x => x.Room).HasForeignKey(x => x.RoomId).OnDelete(DeleteBehavior.Restrict);

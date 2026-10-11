@@ -213,14 +213,14 @@ public sealed class DistributedImportApplicationService(IDbContextFactory<LogicD
         catch (DbUpdateException ex) { return new("area-map", false, false, "failed:" + ex.Message); }
     }
 
-    private static void CopyRoom(Room r, DistributedRoomDocument x, Guid? group) { r.RoomGroupId=group; r.ReferenceId=x.ReferenceId; r.FriendlyName=x.FriendlyName; r.InGameId=x.InGameId; r.Contributors=x.Contributors; r.Comments=x.Comments; r.SceneUnitWidth=x.SceneUnitWidth; r.SceneUnitHeight=x.SceneUnitHeight; r.SceneImageScaleXPercent=x.SceneImageScaleXPercent; r.SceneImageScaleYPercent=x.SceneImageScaleYPercent; r.SceneImagePanXPercent=x.SceneImagePanXPercent; r.SceneImagePanYPercent=x.SceneImagePanYPercent; r.IsSceneImageStale=x.IsSceneImageStale; r.SortOrder=x.SortOrder; r.IsArchived=x.IsArchived; r.ArchivedUtc=x.ArchivedUtc; r.CreatedUtc=x.CreatedUtc; r.UpdatedUtc=x.UpdatedUtc; }
+    private static void CopyRoom(Room r, DistributedRoomDocument x, Guid? group) { r.RoomGroupId=group; r.ReferenceId=x.ReferenceId; r.FriendlyName=x.FriendlyName; r.InGameId=x.InGameId; r.Contributors=x.Contributors; r.Comments=x.Comments; r.SceneMinX=x.SceneMinX; r.SceneMinY=x.SceneMinY; r.SceneMaxX=x.SceneMaxX; r.SceneMaxY=x.SceneMaxY; r.SceneImagePixelsPerUnitX=x.SceneImagePixelsPerUnitX; r.SceneImagePixelsPerUnitY=x.SceneImagePixelsPerUnitY; r.SceneImagePixelOffsetX=x.SceneImagePixelOffsetX; r.SceneImagePixelOffsetY=x.SceneImagePixelOffsetY; r.UseSceneImage=x.UseSceneImage; r.IsSceneImageStale=x.IsSceneImageStale; r.SortOrder=x.SortOrder; r.IsArchived=x.IsArchived; r.ArchivedUtc=x.ArchivedUtc; r.CreatedUtc=x.CreatedUtc; r.UpdatedUtc=x.UpdatedUtc; }
     private static bool CaptureStateDiffers(Room current, DistributedRoomDocument incoming) =>
-        current.SceneUnitWidth != incoming.SceneUnitWidth ||
-        current.SceneUnitHeight != incoming.SceneUnitHeight ||
-        current.SceneImageScaleXPercent != incoming.SceneImageScaleXPercent ||
-        current.SceneImageScaleYPercent != incoming.SceneImageScaleYPercent ||
-        current.SceneImagePanXPercent != incoming.SceneImagePanXPercent ||
-        current.SceneImagePanYPercent != incoming.SceneImagePanYPercent ||
+        current.SceneMinX != incoming.SceneMinX || current.SceneMinY != incoming.SceneMinY ||
+        current.SceneMaxX != incoming.SceneMaxX || current.SceneMaxY != incoming.SceneMaxY ||
+        current.SceneImagePixelsPerUnitX != incoming.SceneImagePixelsPerUnitX ||
+        current.SceneImagePixelsPerUnitY != incoming.SceneImagePixelsPerUnitY ||
+        current.SceneImagePixelOffsetX != incoming.SceneImagePixelOffsetX || current.SceneImagePixelOffsetY != incoming.SceneImagePixelOffsetY ||
+        current.UseSceneImage != incoming.UseSceneImage ||
         current.IsSceneImageStale != incoming.IsSceneImageStale;
     private static void CopyMap(Map r, DistributedMap x) { r.InGameId=x.InGameId; r.FriendlyName=x.FriendlyName; r.SortOrder=x.SortOrder; r.MapUnitMinX=x.MapUnitMinX; r.MapUnitMinY=x.MapUnitMinY; r.MapUnitMaxX=x.MapUnitMaxX; r.MapUnitMaxY=x.MapUnitMaxY; }
     private static void CopyOverlay(MapOverlay r, DistributedMapOverlay x, Guid parent) { r.MapId=parent; r.FriendlyName=x.FriendlyName; r.ImageAssetKey=x.ImageAssetKey; r.ScaleXPercent=x.ScaleXPercent; r.ScaleYPercent=x.ScaleYPercent; r.LeftOffsetPercent=x.LeftOffsetPercent; r.BottomOffsetPercent=x.BottomOffsetPercent; r.SortOrder=x.SortOrder; }

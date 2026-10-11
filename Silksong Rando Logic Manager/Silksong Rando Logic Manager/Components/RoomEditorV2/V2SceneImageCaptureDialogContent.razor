@@ -3,72 +3,131 @@
 @using Microsoft.JSInterop
 @implements IAsyncDisposable
 @inject IJSRuntime JS
-<h2 id="v2-page-modal-title">@(IsRecapture ? "recapture scene image" : "capture scene image")</h2>
+<h2 id="v2-page-modal-title">scene bounds and image</h2>
 @if (View.Preview is { } preview)
 {
-    <svg @ref="capturePreview" class="scene-image-capture-preview" data-v2-scene-capture-preview="true" data-base-viewbox="@ViewBox(preview)" viewBox="@ViewBox(preview)" role="img" aria-label="Scene image capture preview">
-        <image class="scene-image-capture-source" data-v2-scene-capture-source="true" href="/data/scene-source/preview.webp" x="@N(ImageX(preview))" y="@N(ImageY(preview))" width="@N(ImageWidth(preview))" height="@N(ImageHeight(preview))" preserveAspectRatio="none" />
-        <rect class="scene-layout-room-bounds" data-v2-scene-capture-bounds="true" x="0" y="@N(-preview.Height)" width="@N(preview.Width)" height="@N(preview.Height)" />
+    <svg @ref="capturePreview" class="scene-image-capture-preview" data-v2-scene-capture-preview="true" data-base-viewbox="@ViewBox(preview)" viewBox="@ViewBox(preview)" role="img" aria-label="Scene bounds and image preview">
+        @if (View.UseSceneImage) { <image class="scene-image-capture-source" data-v2-scene-capture-source="true" href="/data/scene-source/preview.webp" preserveAspectRatio="none" /> }
+        <rect data-v2-scene-capture-black="true" fill="black" pointer-events="none" />
+        <rect class="scene-layout-room-bounds" data-v2-scene-capture-reference="true" pointer-events="none" />
         @foreach (var frame in preview.Frames) { <g class="scene-layout-subroom" data-v2-scene-capture-frame="true"><rect class="scene-layout-subroom-body" x="@N(frame.X)" y="@N(-frame.Y-frame.Height)" width="@N(frame.Width)" height="@N(frame.Height)" /><svg:text x="@N(frame.X+frame.Width/2)" y="@N(-frame.Y-frame.Height/2)" text-anchor="middle" dominant-baseline="central">@frame.Label</svg:text></g> }
         @foreach (var marker in preview.Markers) { var y = -marker.Y; <g class="@($"scene-layout-marker scene-layout-{marker.Kind}{(marker.IsEnemy ? " scene-layout-enemy" : "")}")" data-v2-scene-capture-marker="@marker.Kind">@if (marker.Kind == "check") { <circle cx="@N(marker.X)" cy="@N(y)" r="1.5" /> } else { <rect x="@N(marker.X-7)" y="@N(y-4)" width="14" height="8" rx=".8" /><svg:text x="@N(marker.X)" y="@N(y)" text-anchor="middle" dominant-baseline="central">@marker.Label</svg:text> }</g> }
+        <line data-v2-scene-minimum="x" stroke="#00ffff" stroke-width="3" vector-effect="non-scaling-stroke" style="cursor:ew-resize" />
+        <line data-v2-scene-minimum="y" stroke="#00ffff" stroke-width="3" vector-effect="non-scaling-stroke" style="cursor:ns-resize" />
+        <line data-v2-scene-minimum-hit="x" stroke="transparent" stroke-width="16" vector-effect="non-scaling-stroke" pointer-events="stroke" style="cursor:ew-resize" />
+        <line data-v2-scene-minimum-hit="y" stroke="transparent" stroke-width="16" vector-effect="non-scaling-stroke" pointer-events="stroke" style="cursor:ns-resize" />
     </svg>
-    <p class="scene-image-capture-legend">wheel: zoom | drag: pan | Ctrl+wheel: uniform scale | Ctrl+drag: pan image | Ctrl+Shift+drag: scale X/Y</p>
+    <div class="scene-image-capture-preview-controls">
+        <p class="scene-image-capture-legend">wheel: zoom | drag: inspect | cyan edges: minima | Ctrl+wheel: scale | Ctrl+drag: position image</p>
+        <button @ref="annotationToggle" type="button" class="icon-button" aria-pressed="true" aria-label="Hide annotations" title="Hide annotations"><i class="fa-solid fa-layer-group" aria-hidden="true"></i></button>
+    </div>
 }
-<div class="scene-image-capture-fields">
-    <label>scale X <input @ref="scaleX" type="number" step="any" aria-label="Scene image scale X" value="@View.ScaleXPercent" @oninput="e => Change(scaleX: e.Value?.ToString())" disabled="@Disabled" /></label>
-    <label>scale Y <input @ref="scaleY" type="number" step="any" aria-label="Scene image scale Y" value="@View.ScaleYPercent" @oninput="e => Change(scaleY: e.Value?.ToString())" disabled="@Disabled" /></label>
-    <label>pan X <input @ref="panX" type="number" step="any" aria-label="Scene image pan X" value="@View.PanXPercent" @oninput="e => Change(panX: e.Value?.ToString())" disabled="@Disabled" /></label>
-    <label>pan Y <input @ref="panY" type="number" step="any" aria-label="Scene image pan Y" value="@View.PanYPercent" @oninput="e => Change(panY: e.Value?.ToString())" disabled="@Disabled" /></label>
+<div @ref="numericFields" class="scene-image-capture-fields">
+    <div class="scene-image-capture-field-group">
+    <h3>scene bounds</h3>
+    <div class="scene-image-capture-field-row">
+    <div class="scene-image-capture-axis-pair">
+    <label>min X <input @ref="minX" type="number" step="any" aria-label="Scene minimum X" value="@View.MinX" @oninput="Changed" disabled="@Disabled" /></label>
+    <label>min Y <input @ref="minY" type="number" step="any" aria-label="Scene minimum Y" value="@View.MinY" @oninput="Changed" disabled="@Disabled" /></label>
+    </div>
+    <div class="scene-image-capture-axis-pair">
+    <label>max X <input @ref="maxX" type="number" step="any" aria-label="Scene maximum X" value="@View.MaxX" @oninput="Changed" disabled="@Disabled" /></label>
+    <label>max Y <input @ref="maxY" type="number" step="any" aria-label="Scene maximum Y" value="@View.MaxY" @oninput="Changed" disabled="@Disabled" /></label>
+    </div>
+    </div>
+    </div>
+    <div class="scene-image-capture-field-group">
+    <h3>image mapping</h3>
+    <div class="scene-image-capture-field-row">
+    <div class="scene-image-capture-axis-pair">
+    <label>pixels/unit X <input @ref="scaleX" type="number" step="0.1" aria-label="Scene image pixels per unit X" value="@View.PixelsPerUnitX" @oninput="Changed" disabled="@Disabled" /></label>
+    <label>pixels/unit Y <input @ref="scaleY" type="number" step="0.1" aria-label="Scene image pixels per unit Y" value="@View.PixelsPerUnitY" @oninput="Changed" disabled="@Disabled" /></label>
+    </div>
+    <div class="scene-image-capture-axis-pair">
+    <label>pixel offset X <input @ref="pixelOffsetX" type="number" step="0.1" aria-label="Scene image pixel offset X" value="@View.PixelOffsetX" @oninput="Changed" disabled="@(Disabled || !View.UseSceneImage)" /></label>
+    <label>pixel offset Y <input @ref="pixelOffsetY" type="number" step="0.1" aria-label="Scene image pixel offset Y" value="@View.PixelOffsetY" @oninput="Changed" disabled="@(Disabled || !View.UseSceneImage)" /></label>
+    </div>
+    <label><input @ref="useSceneImage" type="checkbox" checked="@View.UseSceneImage" @onchange="Changed" disabled="@Disabled" /> Use scene image</label>
+    </div>
+    </div>
 </div>
-@if (HasError) { <p class="scene-upload-error" role="alert">@View.AvailabilitySummary</p> }
-else if (HasInformation) { <p class="text-secondary" role="status">@View.AvailabilitySummary</p> }
-<div class="confirmation-actions">@if (Disabled) { <span data-scene-image-generation-progress="true">generating scene image...</span> } else { <button type="button" @onclick="Reset">reset estimate</button><span></span><button type="button" @onclick="Cancel">cancel</button><button type="button" @onclick="ApplyCapture" disabled="@(!View.IsAvailable)">apply</button> }</div>
+@if (!string.IsNullOrWhiteSpace(View.AvailabilitySummary))
+{
+    <p class="text-secondary" role="status">@View.AvailabilitySummary</p>
+}
+<div class="confirmation-actions">
+    @if (Disabled) { <span data-scene-image-generation-progress="true" role="status">applying scene bounds and image...</span> }
+    else { <button type="button" @onclick="ResetDraft">reset recommendation</button><button type="button" @onclick="Clear">clear bounds</button><span></span><button type="button" @onclick="Cancel">cancel</button><button type="button" @onclick="ApplyCapture">apply</button> }
+</div>
 @code {
     [Parameter, EditorRequired] public V2SceneImageCaptureDialogView View { get; set; } = null!;
     [Parameter] public bool Disabled { get; set; }
+    [Parameter] public long CorrectionFocusVersion { get; set; }
     [Parameter] public EventCallback<V2SceneImageCaptureDialogView> DraftChanged { get; set; }
     [Parameter] public EventCallback Reset { get; set; }
+    [Parameter] public EventCallback Clear { get; set; }
     [Parameter] public EventCallback Cancel { get; set; }
     [Parameter] public EventCallback Apply { get; set; }
-    private ElementReference capturePreview, scaleX, scaleY, panX, panY;
-    private bool previewInitialized;
+    private ElementReference capturePreview, annotationToggle, numericFields, minX, minY, maxX, maxY, scaleX, scaleY, pixelOffsetX, pixelOffsetY, useSceneImage;
+    private bool previewInitialized, disposed;
+    private bool correctionFocusInitializing;
+    private IJSObjectReference? correctionFocusOwner;
+    private long restoredCorrectionFocusVersion;
     private long appliedBrowserResetVersion;
-    private bool IsRecapture => string.Equals(View.ApplyLabel, "Apply recapture", StringComparison.Ordinal);
-    private bool HasError => !View.IsAvailable;
-    private bool HasInformation => !string.Equals(View.AvailabilitySummary, "Scene image capture is ready.", StringComparison.Ordinal);
-    private Task Change(string? scaleX = null, string? scaleY = null, string? panX = null, string? panY = null) => DraftChanged.InvokeAsync(View with { ScaleXPercent = scaleX ?? View.ScaleXPercent, ScaleYPercent = scaleY ?? View.ScaleYPercent, PanXPercent = panX ?? View.PanXPercent, PanYPercent = panY ?? View.PanYPercent });
-    private async Task ApplyCapture()
+    private async Task Changed(ChangeEventArgs _) => await ReconcileDraft();
+    private async Task ReconcileDraft()
     {
-        // Preview gestures are browser-only. Their displayed local values cross the
-        // component boundary only at this explicit durable-command boundary.
         var local = await JS.InvokeAsync<V2SceneImageCapturePreviewValues?>("readV2SceneImageCapturePreview", capturePreview);
-        if (local is not null)
-            await DraftChanged.InvokeAsync(View with { ScaleXPercent = local.ScaleXPercent, ScaleYPercent = local.ScaleYPercent, PanXPercent = local.PanXPercent, PanYPercent = local.PanYPercent });
-        await Apply.InvokeAsync();
+        if (local is not null) await DraftChanged.InvokeAsync(View with { MinX = local.MinX, MinY = local.MinY, MaxX = local.MaxX, MaxY = local.MaxY,
+            PixelsPerUnitX = local.PixelsPerUnitX, PixelsPerUnitY = local.PixelsPerUnitY, PixelOffsetX = local.PixelOffsetX, PixelOffsetY = local.PixelOffsetY, UseSceneImage = local.UseSceneImage });
     }
+    private async Task ApplyCapture() { await ReconcileDraft(); await Apply.InvokeAsync(); }
+    private async Task ResetDraft() { await ReconcileDraft(); await Reset.InvokeAsync(); }
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (!previewInitialized && View.Preview is not null)
+        if (disposed) return;
+        if (correctionFocusOwner is null && !correctionFocusInitializing)
         {
-            await JS.InvokeVoidAsync("initializeV2SceneImageCapturePreview", capturePreview, scaleX, scaleY, panX, panY);
-            previewInitialized = true;
+            correctionFocusInitializing = true;
+            try
+            {
+                var candidate = await JS.InvokeAsync<IJSObjectReference?>("createV2SceneCaptureFocusOwner", numericFields, minX, minY, maxX, maxY, scaleX, scaleY, pixelOffsetX, pixelOffsetY);
+                if (disposed) { if (candidate is not null) { await candidate.InvokeVoidAsync("dispose"); await candidate.DisposeAsync(); } return; }
+                correctionFocusOwner = candidate;
+            }
+            finally { correctionFocusInitializing = false; }
+        }
+        if (!disposed && !Disabled && correctionFocusOwner is not null && CorrectionFocusVersion > restoredCorrectionFocusVersion)
+        {
+            // An owned failed-Apply outcome requests exactly one restoration;
+            // ordinary input/Reset/renders do not request it.
+            restoredCorrectionFocusVersion = CorrectionFocusVersion;
+            await correctionFocusOwner.InvokeVoidAsync("restore");
+        }
+        if (disposed || View.Preview is null) return;
+        if (!previewInitialized)
+        {
+            await JS.InvokeVoidAsync("initializeV2SceneImageCapturePreview", capturePreview, minX, minY, maxX, maxY, scaleX, scaleY, pixelOffsetX, pixelOffsetY, useSceneImage, annotationToggle);
+            if (disposed) { await JS.InvokeVoidAsync("disposeV2SceneImageCapturePreview", capturePreview); return; }
+            previewInitialized = true; appliedBrowserResetVersion = View.BrowserResetVersion;
+        }
+        if (appliedBrowserResetVersion != View.BrowserResetVersion)
+        {
+            await JS.InvokeVoidAsync("resetV2SceneImageCapturePreview", capturePreview, new V2SceneImageCapturePreviewValues(View.MinX, View.MinY, View.MaxX, View.MaxY, View.PixelsPerUnitX, View.PixelsPerUnitY, View.PixelOffsetX, View.PixelOffsetY, View.UseSceneImage));
             appliedBrowserResetVersion = View.BrowserResetVersion;
         }
-        else if (previewInitialized && appliedBrowserResetVersion != View.BrowserResetVersion)
-        {
-            await JS.InvokeVoidAsync("resetV2SceneImageCapturePreview", capturePreview, View.ScaleXPercent, View.ScaleYPercent, View.PanXPercent, View.PanYPercent);
-            appliedBrowserResetVersion = View.BrowserResetVersion;
-        }
-        else if (previewInitialized) await JS.InvokeVoidAsync("reconcileV2SceneImageCapturePreview", capturePreview);
+        await JS.InvokeVoidAsync("reconcileV2SceneImageCapturePreview", capturePreview, Disabled, annotationToggle);
     }
-    public async ValueTask DisposeAsync() { if (!previewInitialized) return; try { await JS.InvokeVoidAsync("disposeV2SceneImageCapturePreview", capturePreview); } catch (JSDisconnectedException) { } }
-    private double ScaleX => Number(View.ScaleXPercent, 100); private double ScaleY => Number(View.ScaleYPercent, 100);
-    private double ImageWidth(V2SceneImageCapturePreviewView preview) => preview.Width * 100d / ScaleX;
-    private double ImageHeight(V2SceneImageCapturePreviewView preview) => preview.Height * 100d / ScaleY;
-    private double ImageX(V2SceneImageCapturePreviewView preview) => (preview.Width - ImageWidth(preview)) / 2d + Finite(View.PanXPercent, 0) / 100d * ImageWidth(preview);
-    private double ImageY(V2SceneImageCapturePreviewView preview) => -preview.Height + (preview.Height - ImageHeight(preview)) / 2d + Finite(View.PanYPercent, 0) / 100d * ImageHeight(preview);
-    private static double Number(string value, double fallback) => double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var result) && double.IsFinite(result) && result > 0 ? result : fallback;
-    private static double Finite(string value, double fallback) => double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var result) && double.IsFinite(result) ? result : fallback;
-    private static string N(double value) => value.ToString("0.###", CultureInfo.InvariantCulture);
-    private static string ViewBox(V2SceneImageCapturePreviewView preview) => $"{N(-preview.Width*.1)} {N(-preview.Height*1.1)} {N(preview.Width*1.2)} {N(preview.Height*1.2)}";
+    public async ValueTask DisposeAsync()
+    {
+        disposed = true;
+        try
+        {
+            if (correctionFocusOwner is not null) { await correctionFocusOwner.InvokeVoidAsync("dispose"); await correctionFocusOwner.DisposeAsync(); correctionFocusOwner = null; }
+            if (previewInitialized) await JS.InvokeVoidAsync("disposeV2SceneImageCapturePreview", capturePreview);
+        }
+        catch (JSDisconnectedException) { }
+    }
+    private static string N(double value) => value.ToString("R", CultureInfo.InvariantCulture);
+    private static string ViewBox(V2SceneImageCapturePreviewView preview) => $"{N(preview.InitialViewport.X)} {N(preview.InitialViewport.Y)} {N(preview.InitialViewport.Width)} {N(preview.InitialViewport.Height)}";
 }

@@ -374,6 +374,13 @@ var sectionArchived = section.ArchivedRows;
         ApplyPendingPair();
         return Notify();
     }
+    public bool FollowBlocked => !PageOwned || AllRows.Any(row => row.WriteInFlight || row.RequiresReload || row.State == RowState.Failed || row.Interaction.HasRetainedCorrection || row.EntityId is null && Meaningful(row));
+    public bool AdmitsFollowBoundary(ArchipelagoFollowBoundary native)
+    {
+        if (FollowBlocked || !Guid.TryParse(native.Client, out var id) || !ChildTableBrowserFacts.TryField(native.Field, out var field) || !fields.Contains(native.Field)) return false;
+        var row = ActiveRows.SingleOrDefault(row => row.ClientDraftId == id);
+        return row is not null && (row.EntityId is not null || (ChildTableDraftAdapters.IsText(field) ? native.Value.Length == 0 : native.Value == (field == ChildTableField.Type ? row.Draft.LocationType ?? "" : field == ChildTableField.Todo ? row.Draft.IsTodo ? "true" : "false" : Verification(row.Draft.IsVerified))));
+    }
     private void Fail(Row row,string? correction,string? failure,CheckDurableBaseline? freshBaseline)
     {
         row.Interaction.Fail(failure??"Save failed; edit a field to try again.",freshBaseline,retainCorrection:true);

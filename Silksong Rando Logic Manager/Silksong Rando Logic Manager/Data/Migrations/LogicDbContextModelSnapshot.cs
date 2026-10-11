@@ -404,23 +404,38 @@ namespace Silksong_Rando_Logic_Manager.Data.Migrations
                     b.Property<Guid?>("RoomGroupId")
                         .HasColumnType("TEXT");
 
-                    b.Property<double?>("SceneImagePanXPercent")
+                    b.Property<double?>("SceneImagePixelOffsetX")
                         .HasColumnType("REAL");
 
-                    b.Property<double?>("SceneImagePanYPercent")
+                    b.Property<double?>("SceneImagePixelOffsetY")
                         .HasColumnType("REAL");
 
-                    b.Property<double?>("SceneImageScaleXPercent")
+                    b.Property<double?>("SceneImagePixelsPerUnitX")
                         .HasColumnType("REAL");
 
-                    b.Property<double?>("SceneImageScaleYPercent")
+                    b.Property<double?>("SceneImagePixelsPerUnitY")
                         .HasColumnType("REAL");
 
-                    b.Property<double?>("SceneUnitHeight")
+                    b.Property<bool>("UseSceneImage")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(true);
+
+                    b.Property<double?>("SceneMaxX")
                         .HasColumnType("REAL");
 
-                    b.Property<double?>("SceneUnitWidth")
+                    b.Property<double?>("SceneMaxY")
                         .HasColumnType("REAL");
+
+                    b.Property<double>("SceneMinX")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("REAL")
+                        .HasDefaultValue(0d);
+
+                    b.Property<double>("SceneMinY")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("REAL")
+                        .HasDefaultValue(0d);
 
                     b.Property<int>("SortOrder")
                         .HasColumnType("INTEGER");

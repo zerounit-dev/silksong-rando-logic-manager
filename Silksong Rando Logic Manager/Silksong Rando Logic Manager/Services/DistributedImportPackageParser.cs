@@ -13,13 +13,13 @@ public sealed class DistributedImportPackageParser
             RejectDuplicateProperties(document.RootElement, "$", new HashSet<string>(StringComparer.Ordinal));
             var root = new ObjectReader(document.RootElement, "$", RequireObject);
             var version = root.Int("exportVersion");
-            if (version is not 1 and not 2 and not 3 and not 4 and not 5) throw new PackageFormatException("$.exportVersion is unsupported.");
+            if (version is < 1 or > 6) throw new PackageFormatException("$.exportVersion is unsupported.");
 
             var hasRooms = root.Has("rooms");
             bool? partial = null;
             if (hasRooms)
             {
-                if (version is not 2 and not 3 and not 4 and not 5) throw new PackageFormatException("$.rooms is not supported by Version 1.");
+                if (version == 1) throw new PackageFormatException("$.rooms is not supported by Version 1.");
                 partial = root.Bool("isPartialRoomDump");
             }
             else if (root.Has("isPartialRoomDump")) throw new PackageFormatException("$.isPartialRoomDump requires $.rooms.");
@@ -122,7 +122,22 @@ public sealed class DistributedImportPackageParser
     private static DistributedRoomDocument ReadRoom(JsonElement value, string path, IdentityRegistry ids, int version)
     {
         var r = new ObjectReader(value, path, RequireObject); var id = r.Guid("id"); ids.Add(id, "room", path);
-        return new DistributedRoomDocument(id, r.NullableGuid("roomGroupId"), r.String("referenceId"), r.String("friendlyName"), r.NullableString("inGameId"), r.NullableString("contributors"), r.NullableString("comments"), r.NullableNumber("sceneUnitWidth"), r.NullableNumber("sceneUnitHeight"), r.NullableNumber("sceneImageScaleXPercent"), r.NullableNumber("sceneImageScaleYPercent"), r.NullableNumber("sceneImagePanXPercent"), r.NullableNumber("sceneImagePanYPercent"), r.Bool("isSceneImageStale"), r.Int("sortOrder"), r.Bool("isArchived"), r.NullableUtc("archivedUtc"), r.Utc("createdUtc"), r.Utc("updatedUtc"), r.Array("subrooms").Select((x,i) => ReadSubroom(x, $"{path}.subrooms[{i}]", ids, id)).ToArray(), r.Array("transitions").Select((x,i) => ReadTransition(x, $"{path}.transitions[{i}]", ids, id, version)).ToArray(), r.Array("connections").Select((x,i) => ReadConnection(x, $"{path}.connections[{i}]", ids, id)).ToArray(), r.Array("checks").Select((x,i) => ReadCheck(x, $"{path}.checks[{i}]", ids, id, version)).ToArray());
+        double minX = 0, minY = 0; double? maxX, maxY, sx, sy, px, py;
+        var stale = r.Bool("isSceneImageStale"); var useSceneImage = true;
+        if (version == 6)
+        {
+            minX = r.Number("sceneMinX"); minY = r.Number("sceneMinY");
+            maxX = r.NullableNumber("sceneMaxX"); maxY = r.NullableNumber("sceneMaxY");
+            sx = r.NullableNumber("sceneImagePixelsPerUnitX"); sy = r.NullableNumber("sceneImagePixelsPerUnitY");
+            px = r.NullableNumber("sceneImagePixelOffsetX"); py = r.NullableNumber("sceneImagePixelOffsetY"); useSceneImage = r.Bool("useSceneImage");
+        }
+        else
+        {
+            maxX = r.NullableNumber("sceneUnitWidth"); maxY = r.NullableNumber("sceneUnitHeight");
+            (sx, sy, px, py, stale) = SceneBounds.ConvertLegacy(maxX, maxY, r.NullableNumber("sceneImageScaleXPercent"),
+                r.NullableNumber("sceneImageScaleYPercent"), r.NullableNumber("sceneImagePanXPercent"), r.NullableNumber("sceneImagePanYPercent"), stale);
+        }
+        return new DistributedRoomDocument(id, r.NullableGuid("roomGroupId"), r.String("referenceId"), r.String("friendlyName"), r.NullableString("inGameId"), r.NullableString("contributors"), r.NullableString("comments"), minX, minY, maxX, maxY, sx, sy, px, py, useSceneImage, stale, r.Int("sortOrder"), r.Bool("isArchived"), r.NullableUtc("archivedUtc"), r.Utc("createdUtc"), r.Utc("updatedUtc"), r.Array("subrooms").Select((x,i) => ReadSubroom(x, $"{path}.subrooms[{i}]", ids, id)).ToArray(), r.Array("transitions").Select((x,i) => ReadTransition(x, $"{path}.transitions[{i}]", ids, id, version)).ToArray(), r.Array("connections").Select((x,i) => ReadConnection(x, $"{path}.connections[{i}]", ids, id)).ToArray(), r.Array("checks").Select((x,i) => ReadCheck(x, $"{path}.checks[{i}]", ids, id, version)).ToArray());
     }
     private static DistributedSubroom ReadSubroom(JsonElement v, string p, IdentityRegistry ids, Guid owner) { var r=new ObjectReader(v,p,RequireObject); var id=r.Guid("id"); ids.AddChild(id,"subroom",p,owner); return new(id,r.String("referenceId"),r.String("friendlyName"),r.NullableString("notes"),r.NullableNumber("sceneUnitX"),r.NullableNumber("sceneUnitY"),r.NullableNumber("sceneUnitWidth"),r.NullableNumber("sceneUnitHeight"),r.Bool("enableAnnotation"),r.Int("sortOrder"),r.Bool("isArchived"),r.NullableUtc("archivedUtc"),r.Utc("createdUtc"),r.Utc("updatedUtc")); }
     private static DistributedTransition ReadTransition(JsonElement v, string p, IdentityRegistry ids, Guid owner, int version) { var r=new ObjectReader(v,p,RequireObject); var id=r.Guid("id"); ids.AddChild(id,"transition",p,owner); return new(id,r.String("alias"),r.String("friendlyName"),r.NullableString("inGameId"),r.NullableNumber("inGamePositionX"),r.NullableNumber("inGamePositionY"),r.NullableNumber("inGamePositionZ"),r.NullableNumber("localPositionX"),r.NullableNumber("localPositionY"),r.NullableNumber("localPositionZ"),r.NullableNumber("annotationSceneUnitX"),r.NullableNumber("annotationSceneUnitY"),r.Bool("enableAnnotation"),r.NullableString("sourceSubroomReferenceText"),r.NullableString("destinationRoomReferenceText"),r.NullableString("destinationTransitionAliasText"),r.String("requirements"),r.String("notes"),r.Int("sortOrder"),r.Bool("isTodo"),r.NullableBool("isVerified"),r.Bool("isArchived"),r.NullableUtc("archivedUtc"),r.Utc("createdUtc"),r.Utc("updatedUtc"),version >= 5 && r.Bool("isUnsafeArrival")); }
@@ -146,7 +161,7 @@ public sealed class DistributedImportPackageParser
         private JsonElement Kind(string name, JsonValueKind kind) { var item=Get(name); if(item.ValueKind!=kind) throw new PackageFormatException($"{Path}.{name} must be {kind.ToString().ToLowerInvariant()}."); return item; }
         public string String(string n)=>Kind(n,JsonValueKind.String).GetString()!; public string? NullableString(string n){var x=Get(n);if(x.ValueKind==JsonValueKind.Null)return null;if(x.ValueKind!=JsonValueKind.String)throw new PackageFormatException($"{Path}.{n} must be string or null.");return x.GetString();}
         public bool Bool(string n){var x=Get(n);if(x.ValueKind is not (JsonValueKind.True or JsonValueKind.False))throw new PackageFormatException($"{Path}.{n} must be boolean.");return x.GetBoolean();} public bool? NullableBool(string n){var x=Get(n);return x.ValueKind switch { JsonValueKind.Null=>null,JsonValueKind.True or JsonValueKind.False=>x.GetBoolean(), _=>throw new PackageFormatException($"{Path}.{n} must be boolean or null.")};}
-        public int Int(string n){var x=Get(n);if(x.ValueKind!=JsonValueKind.Number||!x.TryGetInt32(out var v))throw new PackageFormatException($"{Path}.{n} must be an integer.");return v;} public double Number(string n){var x=Kind(n,JsonValueKind.Number);if(!x.TryGetDouble(out var v))throw new PackageFormatException($"{Path}.{n} must be a number.");return v;} public double? NullableNumber(string n){var x=Get(n);if(x.ValueKind==JsonValueKind.Null)return null;if(x.ValueKind!=JsonValueKind.Number||!x.TryGetDouble(out var v))throw new PackageFormatException($"{Path}.{n} must be number or null.");return v;}
+        public int Int(string n){var x=Get(n);if(x.ValueKind!=JsonValueKind.Number||!x.TryGetInt32(out var v))throw new PackageFormatException($"{Path}.{n} must be an integer.");return v;} public double Number(string n){var x=Kind(n,JsonValueKind.Number);if(!x.TryGetDouble(out var v)||!double.IsFinite(v))throw new PackageFormatException($"{Path}.{n} must be a finite number.");return v;} public double? NullableNumber(string n){var x=Get(n);if(x.ValueKind==JsonValueKind.Null)return null;if(x.ValueKind!=JsonValueKind.Number||!x.TryGetDouble(out var v)||!double.IsFinite(v))throw new PackageFormatException($"{Path}.{n} must be finite number or null.");return v;}
         public Guid Guid(string n){var x=String(n);if(!System.Guid.TryParse(x,out var v))throw new PackageFormatException($"{Path}.{n} must be a GUID string.");return v;} public Guid? NullableGuid(string n){var x=Get(n);if(x.ValueKind==JsonValueKind.Null)return null;if(x.ValueKind!=JsonValueKind.String||!System.Guid.TryParse(x.GetString(),out var v))throw new PackageFormatException($"{Path}.{n} must be GUID string or null.");return v;}
         public DateTime Utc(string n)=>ParseUtc(String(n),$"{Path}.{n}"); public DateTime? NullableUtc(string n){var x=Get(n);if(x.ValueKind==JsonValueKind.Null)return null;if(x.ValueKind!=JsonValueKind.String)throw new PackageFormatException($"{Path}.{n} must be UTC timestamp string or null.");return ParseUtc(x.GetString()!,$"{Path}.{n}");} public JsonElement[] Array(string n)=>Kind(n,JsonValueKind.Array).EnumerateArray().ToArray();
     }

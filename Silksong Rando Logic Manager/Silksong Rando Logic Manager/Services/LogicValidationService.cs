@@ -30,7 +30,9 @@ public sealed class LogicValidationService
         HasText(room.InGameId) && Duplicate(room, rooms, x => x.InGameId) ? ValidationSeverity.Danger : ValidationSeverity.Neutral;
 
     public ValidationSeverity RoomSceneDimensions(Room room) =>
-        ValidOptionalPositivePair(room.SceneUnitWidth, room.SceneUnitHeight) ? ValidationSeverity.Neutral : ValidationSeverity.Danger;
+        double.IsFinite(room.SceneMinX) && double.IsFinite(room.SceneMinY) &&
+        (room.SceneMaxX is null && room.SceneMaxY is null || SceneBounds.TryGetSize(room.SceneMinX, room.SceneMinY, room.SceneMaxX, room.SceneMaxY, out _, out _))
+            ? ValidationSeverity.Neutral : ValidationSeverity.Danger;
 
     public ValidationSeverity SubroomReferenceId(Subroom subroom, IEnumerable<Subroom> subrooms) =>
         Duplicate(subroom, subrooms, x => x.ReferenceId, x => x.RoomId == subroom.RoomId) ? ValidationSeverity.Danger : RequiredNow(subroom.ReferenceId);

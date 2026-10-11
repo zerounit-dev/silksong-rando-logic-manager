@@ -25,7 +25,7 @@ public sealed class SceneLayoutLoader(IDbContextFactory<LogicDbContext> contexts
     public async Task<SceneLayoutView?> LoadAsync(LogicDbContext db, Guid roomId, CancellationToken cancellationToken)
     {
         var room = await db.Rooms.AsNoTracking().Where(x => x.Id == roomId)
-            .Select(x => new SceneRoomLoad(x.Id, x.IsArchived, x.SceneUnitWidth, x.SceneUnitHeight, x.SceneImageScaleXPercent, x.SceneImageScaleYPercent, x.SceneImagePanXPercent, x.SceneImagePanYPercent, x.IsSceneImageStale, x.UpdatedUtc)).SingleOrDefaultAsync(cancellationToken);
+            .Select(x => new SceneRoomLoad(x.Id, x.IsArchived, x.SceneMinX, x.SceneMinY, x.SceneMaxX, x.SceneMaxY, x.SceneImagePixelsPerUnitX, x.SceneImagePixelsPerUnitY, x.SceneImagePixelOffsetX, x.SceneImagePixelOffsetY, x.UseSceneImage, x.IsSceneImageStale, x.UpdatedUtc)).SingleOrDefaultAsync(cancellationToken);
         if (room is null || room.Archived) return null;
         var subrooms = await db.Subrooms.AsNoTracking().Where(x => x.RoomId == roomId && !x.IsArchived)
             .Select(x => new SceneSubroomLoad(x.Id, x.FriendlyName, x.SceneUnitX, x.SceneUnitY, x.SceneUnitWidth, x.SceneUnitHeight, x.EnableAnnotation)).ToListAsync(cancellationToken);
@@ -40,7 +40,7 @@ public sealed class SceneLayoutLoader(IDbContextFactory<LogicDbContext> contexts
     }
 }
 
-internal sealed record SceneRoomLoad(Guid Id, bool Archived, double? Width, double? Height, double? ScaleX, double? ScaleY, double? PanX, double? PanY, bool IsStale, DateTime UpdatedUtc);
+internal sealed record SceneRoomLoad(Guid Id, bool Archived, double MinX, double MinY, double? MaxX, double? MaxY, double? ScaleX, double? ScaleY, double? PixelOffsetX, double? PixelOffsetY, bool UseSceneImage, bool IsStale, DateTime UpdatedUtc);
 internal sealed record SceneSubroomLoad(Guid Id, string FriendlyName, double? X, double? Y, double? Width, double? Height, bool Enabled);
 internal sealed record SceneTransitionLoad(Guid Id, string Alias, string FriendlyName, double? OverrideX, double? OverrideY, Guid? SourceSubroomId);
 internal sealed record SceneCheckLoad(Guid Id, string FriendlyName, double? OverrideX, double? OverrideY, Guid? SubroomId, string? LocationType);
@@ -50,7 +50,7 @@ internal static class SceneLayoutMapper
 {
     internal static SceneLayoutView Map(SceneRoomLoad room, IReadOnlyList<SceneSubroomLoad> subrooms, IReadOnlyList<SceneTransitionLoad> transitions, IReadOnlyList<SceneCheckLoad> checks, IReadOnlyList<SceneConnectionLoad> connections, bool imageExists = false)
     {
-        var validBounds = PositivePair(room.Width, room.Height);
+        var validBounds = SceneBounds.TryGetSize(room.MinX, room.MinY, room.MaxX, room.MaxY, out _, out _);
         var frames = subrooms.Where(x => x.Enabled && Rectangle(x.X, x.Y, x.Width, x.Height))
             .OrderBy(x => x.FriendlyName, StringComparer.OrdinalIgnoreCase)
             .Select(x => new SceneSubroomFrameView(x.Id, x.FriendlyName, Title(x.FriendlyName), x.X!.Value, x.Y!.Value, x.Width!.Value, x.Height!.Value)).ToArray();
@@ -78,8 +78,10 @@ internal static class SceneLayoutMapper
                 foreach (var endpointId in rows.SelectMany(x => new[] { x.SourceId, x.DestinationId }).OfType<Guid>().Distinct())
                     AddThread(threads, marker, endpointId, framesById, rows.Length == 1);
             }
-        var hasTransform = CompletePair(room.ScaleX, room.ScaleY) && CompletePair(room.PanX, room.PanY) && room.ScaleX > 0 && room.ScaleY > 0;
-        return new(validBounds, room.Width, room.Height, frames, markers.OrderBy(x => x.Kind).ThenBy(x => x.Label, StringComparer.OrdinalIgnoreCase).ToArray(), new(hasTransform, room.IsStale, imageExists, room.UpdatedUtc.Ticks), threads);
+        var hasTransform = SceneBounds.HasUsableScales(room.ScaleX, room.ScaleY) && (!room.UseSceneImage || SceneBounds.HasUsablePixelOffsets(room.PixelOffsetX, room.PixelOffsetY));
+        var mappingPresent = room.ScaleX is not null || room.ScaleY is not null || room.PixelOffsetX is not null || room.PixelOffsetY is not null;
+        return new(validBounds, room.MinX, room.MinY, room.MaxX, room.MaxY, frames, markers.OrderBy(x => x.Kind).ThenBy(x => x.Label, StringComparer.OrdinalIgnoreCase).ToArray(), new(hasTransform, room.IsStale, imageExists, room.UpdatedUtc.Ticks), threads)
+        { BoundsImageDiagnostic = !validBounds ? "scene bounds unavailable or unusable" : mappingPresent && !hasTransform ? "scene image mapping incomplete or unusable" : null };
     }
 
     private static SceneMarkerView? AddAnnotation(List<SceneMarkerView> markers, Guid id, string kind, string label, string friendly, double? overrideX, double? overrideY, bool isEnemy = false)

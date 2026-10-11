@@ -11,7 +11,7 @@ public static class SceneViewportMath
     public const double MaximumWheelExponent = .06d;
     public static SceneViewportBounds Initial(SceneLayoutView view)
     {
-        SceneViewportBounds? content = view.HasValidBounds && view.SceneUnitWidth is > 0 and var width && view.SceneUnitHeight is > 0 and var height ? new(0, 0, width, height) : null;
+        SceneViewportBounds? content = view.HasValidBounds && view.SceneUnitWidth is > 0 and var width && view.SceneUnitHeight is > 0 and var height ? new(view.SceneMinX, view.SceneMinY, width, height) : null;
         foreach (var frame in view.Frames.Where(IsFinite)) content = Include(content, new(frame.X, frame.Y, frame.Width, frame.Height));
         foreach (var marker in view.Markers.Where(IsFinite)) content = Include(content, new(marker.X, marker.Y, 0, 0));
         var normalized = Normalize(content ?? new SceneViewportBounds(-.5d, -.5d, 1d, 1d));

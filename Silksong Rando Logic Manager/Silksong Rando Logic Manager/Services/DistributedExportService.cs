@@ -16,7 +16,7 @@ public sealed class DistributedExportService(IDbContextFactory<LogicDbContext> d
         var rooms = await LoadRoomsAsync(db, null, cancellationToken);
         var groups = await db.RoomGroups.AsNoTracking().OrderBy(x => x.SortOrder).ThenBy(x => x.Id).Select(x => new DistributedRoomGroup(x.Id, x.FriendlyName, x.ZoneReferenceText, x.IsVirtual, x.SortOrder, x.CreatedUtc, x.UpdatedUtc)).ToListAsync(cancellationToken);
         if (InvalidLocationType(rooms) is { } invalid) return new CompleteExportInvalidLocationType(invalid);
-        var envelope = new Version5RoomExportEnvelope(5, false, rooms, new DistributedRoomGroupingSnapshot(groups), includeAreaMap ? await LoadAreaMapAsync(db, cancellationToken) : null);
+        var envelope = new Version6RoomExportEnvelope(6, false, rooms, new DistributedRoomGroupingSnapshot(groups), includeAreaMap ? await LoadAreaMapAsync(db, cancellationToken) : null);
         return new CompleteExported(Serialize(envelope, $"silksong-logic-{Timestamp()}.json"));
     }
 
@@ -28,7 +28,7 @@ public sealed class DistributedExportService(IDbContextFactory<LogicDbContext> d
         if (room is null) return new CurrentRoomMissing(roomId);
         if (InvalidLocationType(rooms) is { } invalid) return new CurrentRoomExportInvalidLocationType(invalid);
         var groups = room.RoomGroupId is Guid groupId ? await db.RoomGroups.AsNoTracking().Where(x => x.Id == groupId).Select(x => new DistributedRoomGroup(x.Id, x.FriendlyName, x.ZoneReferenceText, x.IsVirtual, x.SortOrder, x.CreatedUtc, x.UpdatedUtc)).ToListAsync(cancellationToken) : [];
-        var envelope = new Version5RoomExportEnvelope(5, true, rooms, new DistributedRoomGroupingSnapshot(groups), null);
+        var envelope = new Version6RoomExportEnvelope(6, true, rooms, new DistributedRoomGroupingSnapshot(groups), null);
         var prefix = string.IsNullOrWhiteSpace(room.ReferenceId) ? "empty-room" : room.ReferenceId;
         return new CurrentRoomExported(Serialize(envelope, $"{prefix}-{Timestamp()}.json"));
     }
@@ -46,7 +46,7 @@ public sealed class DistributedExportService(IDbContextFactory<LogicDbContext> d
 
         var rooms = await LoadRoomsAsync(db, null, id, cancellationToken);
         if (InvalidLocationType(rooms) is { } invalid) return new ZoneExportInvalidLocationType(invalid);
-        var envelope = new Version5RoomExportEnvelope(5, true, rooms, new DistributedRoomGroupingSnapshot([group]), null);
+        var envelope = new Version6RoomExportEnvelope(6, true, rooms, new DistributedRoomGroupingSnapshot([group]), null);
         return new ZoneExported(Serialize(envelope, $"zone-{id:D}-{Timestamp()}.json"));
     }
 
@@ -58,7 +58,7 @@ public sealed class DistributedExportService(IDbContextFactory<LogicDbContext> d
         var rooms = db.Rooms.AsNoTracking();
         if (roomId is Guid id) rooms = rooms.Where(x => x.Id == id);
         if (roomGroupId is Guid groupId) rooms = rooms.Where(x => x.RoomGroupId == groupId);
-        return await rooms.OrderBy(x => x.SortOrder).ThenBy(x => x.Id).Select(x => new DistributedRoomDocument(x.Id, x.RoomGroupId, x.ReferenceId, x.FriendlyName, x.InGameId, x.Contributors, x.Comments, x.SceneUnitWidth, x.SceneUnitHeight, x.SceneImageScaleXPercent, x.SceneImageScaleYPercent, x.SceneImagePanXPercent, x.SceneImagePanYPercent, x.IsSceneImageStale, x.SortOrder, x.IsArchived, x.ArchivedUtc, x.CreatedUtc, x.UpdatedUtc,
+        return await rooms.OrderBy(x => x.SortOrder).ThenBy(x => x.Id).Select(x => new DistributedRoomDocument(x.Id, x.RoomGroupId, x.ReferenceId, x.FriendlyName, x.InGameId, x.Contributors, x.Comments, x.SceneMinX, x.SceneMinY, x.SceneMaxX, x.SceneMaxY, x.SceneImagePixelsPerUnitX, x.SceneImagePixelsPerUnitY, x.SceneImagePixelOffsetX, x.SceneImagePixelOffsetY, x.UseSceneImage, x.IsSceneImageStale, x.SortOrder, x.IsArchived, x.ArchivedUtc, x.CreatedUtc, x.UpdatedUtc,
             x.Subrooms.OrderBy(y => y.SortOrder).ThenBy(y => y.Id).Select(y => new DistributedSubroom(y.Id, y.ReferenceId, y.FriendlyName, y.Notes, y.SceneUnitX, y.SceneUnitY, y.SceneUnitWidth, y.SceneUnitHeight, y.EnableAnnotation, y.SortOrder, y.IsArchived, y.ArchivedUtc, y.CreatedUtc, y.UpdatedUtc)).ToList(),
             x.Transitions.OrderBy(y => y.SortOrder).ThenBy(y => y.Id).Select(y => new DistributedTransition(y.Id, y.Alias, y.FriendlyName, y.InGameId, y.InGamePositionX, y.InGamePositionY, y.InGamePositionZ, y.LocalPositionX, y.LocalPositionY, y.LocalPositionZ, y.AnnotationSceneUnitX, y.AnnotationSceneUnitY, y.EnableAnnotation, y.SourceSubroomReferenceText, y.DestinationRoomReferenceText, y.DestinationTransitionAliasText, y.Requirements, y.Notes, y.SortOrder, y.IsTodo, y.IsVerified, y.IsArchived, y.ArchivedUtc, y.CreatedUtc, y.UpdatedUtc, y.IsUnsafeArrival)).ToList(),
             x.Connections.OrderBy(y => y.SortOrder).ThenBy(y => y.Id).Select(y => new DistributedConnection(y.Id, y.Alias, y.FriendlyName, y.SourceSubroomReferenceText, y.DestinationSubroomReferenceText, y.Requirements, y.Notes, y.EnableAnnotation, y.SceneUnitX, y.SceneUnitY, y.SortOrder, y.IsTodo, y.IsVerified, y.IsArchived, y.ArchivedUtc, y.CreatedUtc, y.UpdatedUtc)).ToList(),
@@ -89,7 +89,7 @@ public sealed class DistributedExportService(IDbContextFactory<LogicDbContext> d
         return null;
     }
 
-    private DistributedExportResult Serialize(Version5RoomExportEnvelope envelope, string fileName) => new(fileName, envelope, JsonSerializer.SerializeToUtf8Bytes(envelope, JsonOptions));
+    private DistributedExportResult Serialize(Version6RoomExportEnvelope envelope, string fileName) => new(fileName, envelope, JsonSerializer.SerializeToUtf8Bytes(envelope, JsonOptions));
     private string Timestamp() => timeProvider.GetUtcNow().ToString("yyyyMMdd-HHmmss-fff", CultureInfo.InvariantCulture);
 
     private static JsonSerializerOptions CreateJsonOptions()

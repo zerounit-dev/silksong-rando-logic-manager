@@ -52,6 +52,7 @@ builder.Services.AddScoped<RequirementCatalogueImportService>();
 builder.Services.AddScoped<RequirementValidationService>();
 builder.Services.AddScoped<IRequirementValidationService>(provider => provider.GetRequiredService<RequirementValidationService>());
 builder.Services.AddScoped<IRoomGraphExportService, RoomGraphExportService>();
+builder.Services.AddScoped<IRoomGeometryExportService, RoomGeometryExportService>();
 builder.Services.AddScoped<ConnectionRoomSaveCoordinator>();
 builder.Services.AddSingleton<LogicValidationService>();
 builder.Services.AddScoped<SceneImportService>();
@@ -76,6 +77,7 @@ builder.Services.AddScoped<SceneImageCaptureService>();
 builder.Services.AddSingleton<DiagnosticState>();
 builder.Services.AddSingleton<WorkspaceChangeNotifier>();
 builder.Services.AddScoped<RoomEditorV2LogicLoader>();
+builder.Services.AddScoped<ArchipelagoRoomLookup>();
 builder.Services.AddScoped<IRoomEditorV2LogicLoader>(provider => provider.GetRequiredService<RoomEditorV2LogicLoader>());
 builder.Services.AddScoped<ISceneLayoutLoader, SceneLayoutLoader>();
 builder.Services.AddScoped<IRoomEditorV2CommandService, RoomEditorV2CommandService>();
@@ -139,6 +141,7 @@ app.MapGet("/data/scene-source/preview.webp", (SceneImageFileService sceneImages
 app.MapLocalExchangeDownloadEndpoints();
 app.MapLocalRequirementCatalogueDownloadEndpoints();
 app.MapLocalRoomGraphDownloadEndpoints();
+app.MapLocalRoomGeometryDownloadEndpoints();
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
 

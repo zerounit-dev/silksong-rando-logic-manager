@@ -12,9 +12,9 @@ public interface IRoomEditorV2CommandService
     V2RoomHeaderCommandOutcome RevertRoomReferenceRename(RoomReferenceRenameProposal proposal) => throw new NotSupportedException();
     Task<V2RoomLifecycleCommandOutcome> SetRoomArchiveAsync(Guid roomId, bool archived) => throw new NotSupportedException();
     Task<V2RoomLifecycleCommandOutcome> DeleteRoomAsync(Guid roomId) => throw new NotSupportedException();
-    Task<V2RoomSceneDimensionsCommandOutcome> SaveRoomSceneDimensionsAsync(Guid roomId, RoomSceneDimensionsDurableBaseline baseline, RoomSceneDimensionsDraft draft) => throw new NotSupportedException();
+    Task<V2SceneImageCaptureCommandOutcome> ClearRoomSceneBoundsAsync(Guid roomId, SceneImageCaptureBaseline baseline);
     Task<V2SceneImageCaptureCommandOutcome> PrepareSceneImageCaptureAsync(Guid roomId) => throw new NotSupportedException();
-    Task<V2SceneImageCaptureCommandOutcome> ResetSceneImageCaptureEstimateAsync(Guid roomId) => throw new NotSupportedException();
+    Task<V2SceneImageCaptureCommandOutcome> ResetSceneImageCaptureEstimateAsync(Guid roomId, SceneImageCaptureDraft draft);
     Task<V2SceneImageCaptureCommandOutcome> ApplySceneImageCaptureAsync(Guid roomId, SceneImageCaptureDraft draft) => throw new NotSupportedException();
     Task<V2SubroomCommandOutcome> SaveSubroomAsync(Guid roomId, SubroomDurableBaseline baseline, SubroomDraft draft);
     Task<V2SubroomCommandOutcome> PrepareSubroomReferenceRenameAsync(Guid roomId, SubroomDurableBaseline baseline, SubroomDraft draft) => SaveSubroomAsync(roomId, baseline, draft);
@@ -78,7 +78,7 @@ public interface IRoomEditorV2CommandService
 /// <summary>V2-only typed adapter.  Entity-shaped V1 patches never cross this boundary.</summary>
 public sealed class RoomEditorV2CommandService(LogicCatalogService catalog, RequirementValidationService requirementValidation,
     IDbContextFactory<LogicDbContext>? contexts = null, ConnectionRoomSaveCoordinator? connectionCoordinator = null,
-    SceneImageCaptureService? sceneImages = null) : IRoomEditorV2CommandService
+    SceneImageCaptureService? sceneImages = null, ILogger<RoomEditorV2CommandService>? logger = null) : IRoomEditorV2CommandService
 {
     private readonly ConnectionRoomSaveCoordinator connections = connectionCoordinator ?? new ConnectionRoomSaveCoordinator(catalog);
     private readonly RequirementValidationService requirementStatus = requirementValidation;
@@ -86,43 +86,35 @@ public sealed class RoomEditorV2CommandService(LogicCatalogService catalog, Requ
     {
         try { if (sceneImages is null) throw new InvalidOperationException("The scene-image capture service is unavailable."); var result = await sceneImages.GetDraftAsync(roomId); return new(V2SceneImageCaptureCommandStatus.Committed, result.Information, result.Draft); }
         catch (InvalidOperationException ex) { return new(V2SceneImageCaptureCommandStatus.ExpectedFailure, ex.Message); }
-        catch (Exception ex) { return new(V2SceneImageCaptureCommandStatus.Unexpected, ex.Message); }
+        catch (Exception ex) { logger?.LogError(ex, "Scene image preparation failed for room {RoomId}", roomId); return new(V2SceneImageCaptureCommandStatus.Unexpected, "Scene image preparation failed unexpectedly. Technical details were logged."); }
     }
-    public async Task<V2SceneImageCaptureCommandOutcome> ResetSceneImageCaptureEstimateAsync(Guid roomId)
+    public async Task<V2SceneImageCaptureCommandOutcome> ResetSceneImageCaptureEstimateAsync(Guid roomId, SceneImageCaptureDraft draft)
     {
-        try { if (sceneImages is null) throw new InvalidOperationException("The scene-image capture service is unavailable."); var result = await sceneImages.GetEstimateAsync(roomId); return new(V2SceneImageCaptureCommandStatus.Committed, result.Information, result.Draft); }
+        try { if (sceneImages is null) throw new InvalidOperationException("The scene-image capture service is unavailable."); var result = await sceneImages.GetEstimateAsync(roomId, draft); return new(V2SceneImageCaptureCommandStatus.Committed, result.Information, result.Draft); }
         catch (InvalidOperationException ex) { return new(V2SceneImageCaptureCommandStatus.ExpectedFailure, ex.Message); }
-        catch (Exception ex) { return new(V2SceneImageCaptureCommandStatus.Unexpected, ex.Message); }
+        catch (Exception ex) { logger?.LogError(ex, "Scene recommendation failed for room {RoomId}", roomId); return new(V2SceneImageCaptureCommandStatus.Unexpected, "Scene recommendation failed unexpectedly. Technical details were logged."); }
     }
     public async Task<V2SceneImageCaptureCommandOutcome> ApplySceneImageCaptureAsync(Guid roomId, SceneImageCaptureDraft draft)
     {
         try { if (sceneImages is null) throw new InvalidOperationException("The scene-image capture service is unavailable."); await sceneImages.ApplyAsync(roomId, draft); return new(V2SceneImageCaptureCommandStatus.Committed); }
+        catch (SceneImageCaptureConflictException ex) { return new(V2SceneImageCaptureCommandStatus.ExpectedFailure, ex.Message, FreshBaseline: ex.Baseline); }
         catch (InvalidOperationException ex) { return new(V2SceneImageCaptureCommandStatus.ExpectedFailure, ex.Message); }
-        catch (Exception ex) { return new(V2SceneImageCaptureCommandStatus.Unexpected, ex.Message); }
+        catch (Exception ex) when (ex is ImageMagick.MagickException or OutOfMemoryException) { logger?.LogError(ex, "Scene image processing failed for room {RoomId}", roomId); return new(V2SceneImageCaptureCommandStatus.ExpectedFailure, "Image processing failed. Check source tiles or reduce output size, then retry the retained draft."); }
+        catch (IOException ex) { logger?.LogError(ex, "Scene image file operation failed for room {RoomId}", roomId); return new(V2SceneImageCaptureCommandStatus.ExpectedFailure, "Scene image file access failed. Check file access before retrying the retained draft."); }
+        catch (Exception ex) { logger?.LogError(ex, "Scene image Apply failed for room {RoomId}", roomId); return new(V2SceneImageCaptureCommandStatus.Unexpected, "Scene image Apply failed unexpectedly. Technical details were logged."); }
     }
-    public async Task<V2RoomSceneDimensionsCommandOutcome> SaveRoomSceneDimensionsAsync(Guid roomId, RoomSceneDimensionsDurableBaseline baseline, RoomSceneDimensionsDraft draft)
+    public async Task<V2SceneImageCaptureCommandOutcome> ClearRoomSceneBoundsAsync(Guid roomId, SceneImageCaptureBaseline baseline)
     {
-        if (!ValidDimensionsDraft(draft)) return new(V2RoomSceneDimensionsCommandStatus.ExpectedFailure, "Enter both finite positive dimensions, or leave both blank.", null, draft);
-        if (baseline.RoomId != roomId) return new(V2RoomSceneDimensionsCommandStatus.Missing, "This room is not loaded.", null, draft);
         try
         {
-            if (contexts is null) throw new InvalidOperationException("The V2 scene-dimensions command requires a database context factory.");
-            await using var db = await contexts.CreateDbContextAsync();
-            var room = await db.Rooms.SingleOrDefaultAsync(x => x.Id == roomId && !x.IsArchived);
-            if (room is null) return new(V2RoomSceneDimensionsCommandStatus.Missing, "This active room no longer exists.", null, draft);
-            if (room.UpdatedUtc != baseline.UpdatedUtc || room.SceneUnitWidth != baseline.Width || room.SceneUnitHeight != baseline.Height)
-                return new(V2RoomSceneDimensionsCommandStatus.Conflict, "The room scene dimensions changed elsewhere.", new(room.Id, room.UpdatedUtc, room.SceneUnitWidth, room.SceneUnitHeight), draft);
-            if (room.SceneUnitWidth == draft.Width && room.SceneUnitHeight == draft.Height) return new(V2RoomSceneDimensionsCommandStatus.Unchanged);
-            var hasTransform = room.SceneImageScaleXPercent is not null && room.SceneImageScaleYPercent is not null && room.SceneImagePanXPercent is not null && room.SceneImagePanYPercent is not null;
-            room.SceneUnitWidth = draft.Width; room.SceneUnitHeight = draft.Height;
-            if (draft.Width is not null && draft.Height is not null && hasTransform) room.IsSceneImageStale = true;
-            var updated = DateTime.UtcNow; room.UpdatedUtc = updated <= room.UpdatedUtc ? room.UpdatedUtc.AddTicks(1) : updated;
-            await db.SaveChangesAsync();
-            return new(V2RoomSceneDimensionsCommandStatus.Committed);
+            if (sceneImages is null) throw new InvalidOperationException("The scene-image capture service is unavailable.");
+            await sceneImages.ClearBoundsAsync(roomId, baseline);
+            return new(V2SceneImageCaptureCommandStatus.Committed);
         }
-        catch (Exception ex) { return new(V2RoomSceneDimensionsCommandStatus.Unexpected, ex.Message, null, draft); }
+        catch (SceneImageCaptureConflictException ex) { return new(V2SceneImageCaptureCommandStatus.ExpectedFailure, ex.Message, FreshBaseline: ex.Baseline); }
+        catch (InvalidOperationException ex) { return new(V2SceneImageCaptureCommandStatus.ExpectedFailure, ex.Message); }
+        catch (Exception ex) { logger?.LogError(ex, "Scene bounds Clear failed for room {RoomId}", roomId); return new(V2SceneImageCaptureCommandStatus.Unexpected, "Scene bounds Clear failed unexpectedly. Technical details were logged."); }
     }
-    private static bool ValidDimensionsDraft(RoomSceneDimensionsDraft draft) => draft.Width is null && draft.Height is null || draft.Width is { } width && draft.Height is { } height && double.IsFinite(width) && double.IsFinite(height) && width > 0 && height > 0;
     public async Task<V2ConnectionCommandOutcome> PlaceConnectionAnnotationAsync(Guid roomId, Guid entityId, double x, double y)
     {
         try

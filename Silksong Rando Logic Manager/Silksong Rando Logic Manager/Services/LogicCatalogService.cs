@@ -575,12 +575,13 @@ public sealed class LogicCatalogService(IDbContextFactory<LogicDbContext> dbCont
         var subroom = await db.Subrooms.SingleAsync(item => item.Id == subroomId, cancellationToken);
         var room = await db.Rooms.SingleAsync(item => item.Id == subroom.RoomId, cancellationToken);
         if (!ValidRoomDimensions(room)) throw new InvalidOperationException("Scene bounds are required before adding a subroom rectangle.");
-        var width = room.SceneUnitWidth!.Value * .25;
-        var height = room.SceneUnitHeight!.Value * .25;
+        SceneBounds.TryGetSize(room.SceneMinX, room.SceneMinY, room.SceneMaxX, room.SceneMaxY, out var roomWidth, out var roomHeight);
+        var width = roomWidth * .25;
+        var height = roomHeight * .25;
         subroom.SceneUnitWidth = width;
         subroom.SceneUnitHeight = height;
-        subroom.SceneUnitX = (room.SceneUnitWidth.Value - width) / 2;
-        subroom.SceneUnitY = (room.SceneUnitHeight.Value - height) / 2;
+        subroom.SceneUnitX = room.SceneMinX + (roomWidth - width) / 2;
+        subroom.SceneUnitY = room.SceneMinY + (roomHeight - height) / 2;
         await db.SaveChangesAsync(cancellationToken);
     }
 
@@ -943,12 +944,15 @@ public sealed class LogicCatalogService(IDbContextFactory<LogicDbContext> dbCont
         var connectionSnapshot = persistedEntity is SubroomConnection connection
             ? await db.SubroomConnections.AsNoTracking().Where(item => item.RoomId == connection.RoomId && !item.IsArchived).ToListAsync(cancellationToken)
             : null;
-        if (entity is Room draftRoom && !SceneImageTransforms.IsValidTransform(draftRoom))
+        if (entity is Room draftRoom && (!SceneImageTransforms.IsValidTransform(draftRoom) ||
+            !double.IsFinite(draftRoom.SceneMinX) || !double.IsFinite(draftRoom.SceneMinY) ||
+            !SceneBounds.FiniteOrNull(draftRoom.SceneMaxX) || !SceneBounds.FiniteOrNull(draftRoom.SceneMaxY)))
         {
-            throw new InvalidOperationException("Scene image transforms must be complete, finite, and use positive scales.");
+            throw new InvalidOperationException("Supplied scene bounds and mapping values must be finite.");
         }
 
-        var markSceneImageStale = persistedEntity is Room persistedRoom && entity is Room roomDraft && SceneImageTransforms.ShouldMarkStale(persistedRoom, roomDraft);
+        var markSceneImageStale = persistedEntity is Room persistedRoom && entity is Room roomDraft &&
+            sceneImages?.Exists(persistedRoom.Id) == true && SceneImageTransforms.ShouldMarkStale(persistedRoom, roomDraft);
         var entry = db.Entry(persistedEntity);
         var originalTextValues = entry.Properties.ToDictionary(item => item.Metadata.Name, item => item.OriginalValue as string, StringComparer.Ordinal);
         var originalRequirementStatus = persistedEntity switch
@@ -1350,7 +1354,8 @@ public sealed class LogicCatalogService(IDbContextFactory<LogicDbContext> dbCont
 
     private static bool RequiresSceneLayoutRefresh(AuditedEntity entity, IReadOnlySet<string> properties) => entity switch
     {
-        Room => properties.Contains(nameof(Room.SceneUnitWidth)) || properties.Contains(nameof(Room.SceneUnitHeight)),
+        Room => properties.Overlaps([nameof(Room.SceneMinX), nameof(Room.SceneMinY), nameof(Room.SceneMaxX), nameof(Room.SceneMaxY),
+            nameof(Room.SceneImagePixelsPerUnitX), nameof(Room.SceneImagePixelsPerUnitY), nameof(Room.SceneImagePixelOffsetX), nameof(Room.SceneImagePixelOffsetY), nameof(Room.UseSceneImage)]),
         Subroom => properties.Overlaps([nameof(Subroom.FriendlyName), nameof(Subroom.SceneUnitX), nameof(Subroom.SceneUnitY), nameof(Subroom.SceneUnitWidth), nameof(Subroom.SceneUnitHeight)]),
         RoomTransition => properties.Overlaps([nameof(RoomTransition.FriendlyName), nameof(RoomTransition.Alias), nameof(RoomTransition.EnableAnnotation), nameof(RoomTransition.InGamePositionX), nameof(RoomTransition.InGamePositionY), nameof(RoomTransition.AnnotationSceneUnitX), nameof(RoomTransition.AnnotationSceneUnitY)]),
         SubroomConnection => properties.Overlaps([nameof(SubroomConnection.Alias), nameof(SubroomConnection.FriendlyName), nameof(SubroomConnection.EnableAnnotation), nameof(SubroomConnection.SceneUnitX), nameof(SubroomConnection.SceneUnitY)]),
@@ -1401,7 +1406,7 @@ public sealed class LogicCatalogService(IDbContextFactory<LogicDbContext> dbCont
         }
     }
 
-    private static bool ValidRoomDimensions(Room room) => room.SceneUnitWidth is { } width && room.SceneUnitHeight is { } height && double.IsFinite(width) && double.IsFinite(height) && width > 0 && height > 0;
+    private static bool ValidRoomDimensions(Room room) => SceneBounds.TryGetSize(room.SceneMinX, room.SceneMinY, room.SceneMaxX, room.SceneMaxY, out _, out _);
     private static bool ValidRectangle(double? x, double? y, double? width, double? height) => x is { } xValue && y is { } yValue && width is { } widthValue && height is { } heightValue && double.IsFinite(xValue) && double.IsFinite(yValue) && double.IsFinite(widthValue) && double.IsFinite(heightValue) && widthValue > 0 && heightValue > 0;
 
     private static async Task<int> NextSortOrderAsync<TEntity>(IQueryable<TEntity> query, CancellationToken cancellationToken) where TEntity : class

@@ -281,7 +281,7 @@
     private bool CanKeepOmittedRooms => !busy && view?.Failure is null && view?.Sweep is not null;
     private bool CanArchiveOmittedRooms => CanKeepOmittedRooms;
     private bool CanGenerateSceneImages => !busy && view is { Completed: true, State: not null };
-    private static readonly HashSet<string> RoomTableFieldNames = ["sceneUnitWidth", "sceneUnitHeight", "sceneImageScaleXPercent", "sceneImageScaleYPercent", "sceneImagePanXPercent", "sceneImagePanYPercent", "isSceneImageStale", "sortOrder", "isArchived", "archivedUtc", "createdUtc", "updatedUtc"];
+    private static readonly HashSet<string> RoomTableFieldNames = ["sceneMinX", "sceneMinY", "sceneMaxX", "sceneMaxY", "sceneImagePixelsPerUnitX", "sceneImagePixelsPerUnitY", "sceneImagePixelOffsetX", "sceneImagePixelOffsetY", "useSceneImage", "isSceneImageStale", "sortOrder", "isArchived", "archivedUtc", "createdUtc", "updatedUtc"];
     private static string? UpdatedUtcClass(DistributedUpdatedUtcComparison comparison) => comparison switch { DistributedUpdatedUtcComparison.Newer => "distributed-import-newer", DistributedUpdatedUtcComparison.Older => "distributed-import-older", _ => null };
     private Guid? fullDetailRoomId;
     private bool ShowFullChildDetail => view?.CurrentComparison is { } comparison && fullDetailRoomId == comparison.RoomId;

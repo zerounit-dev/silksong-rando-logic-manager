@@ -112,6 +112,13 @@
             ()=>Owns(source,generation),Notify,
             async()=>{await(publish?.Invoke()??Task.CompletedTask);if(Owns(source,generation)){Reconcile();await InvokeAsync(StateHasChanged);}},value=>message=value);
     }
+    public bool FollowBlocked => !PageOwned || active.Concat(archived).Any(row => Boundary(row).HoldsPresentation || row.State == ChildTableRowLifecycle.Failed || row.Interaction.HasRetainedCorrection || row.EntityId is null && Meaningful(row));
+    public bool AdmitsFollowBoundary(ArchipelagoFollowBoundary native)
+    {
+        if (FollowBlocked || !Guid.TryParse(native.Client, out var id) || !ChildTableBrowserFacts.TryField(native.Field, out var field) || !fields.Contains(native.Field) && field is not (ChildTableField.Todo or ChildTableField.Verification)) return false;
+        var row = active.SingleOrDefault(row => row.ClientDraftId == id);
+        return row is not null && (row.EntityId is not null || (ChildTableDraftAdapters.IsText(field) ? native.Value.Length == 0 : native.Value == (field == ChildTableField.Todo ? row.Draft.IsTodo ? "true" : "false" : Verify(row.Draft.IsVerified))));
+    }
     private void Fail(Row row, string correction, string? failure, ConnectionDurableBaseline? freshBaseline)
     {
         if (row.Baseline is { } previous && freshBaseline is { } fresh) row.Draft = ChildTableDraftAdapters.Rebase(previous, row.Draft, ChildTableDraftAdapters.From(fresh, row.ClientDraftId));

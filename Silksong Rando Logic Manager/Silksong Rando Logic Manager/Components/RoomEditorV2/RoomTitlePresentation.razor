@@ -3,7 +3,7 @@
 <div class="room-title-row">
     <i class="fa-solid fa-fw @StatusIcon(View.AppliedStatus) room-header-status @StatusClass(View.AppliedStatus)" role="img" title="@StatusLabel(View.AppliedStatus)" aria-label="@StatusLabel(View.AppliedStatus)"></i>
     <label aria-label="Room friendly name">
-        <textarea id="room-friendly-name" class="room-title @SeverityClass(View.Severity)" aria-label="Room friendly name" readonly="@(!Editable)" rows="1" @bind="value" @bind:event="oninput" @onblur="Blur"></textarea>
+        <textarea id="room-friendly-name" data-v2-header-field="name" class="room-title @SeverityClass(View.Severity)" aria-label="Room friendly name" readonly="@(!Editable)" rows="1" @bind="value" @bind:event="oninput" @onblur="Blur"></textarea>
     </label>
 </div>
 @if (View.IsArchived)

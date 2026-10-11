@@ -211,32 +211,11 @@ public sealed class RoomEditorV2RefreshCoordinator(IRoomEditorV2LogicLoader load
         OperationTrace.RecordCompletedRefresh(command);
         return result;
     }
-    public async Task<V2RoomSceneDimensionsCommandOutcome> CommitRoomSceneDimensionsCommandAsync(Guid roomId, string command, Func<Task<V2RoomSceneDimensionsCommandOutcome>> execute)
-    {
-        if(RequiresCheckRoomReload)return new(V2RoomSceneDimensionsCommandStatus.ExpectedFailure,"Reload room before editing.");
-        var commandIterator = iterator;
-        var result = await execute();
-        if (result.Status != V2RoomSceneDimensionsCommandStatus.Committed) return result;
-        // The SQLite command is completion-bound, but a route/disposal that won
-        // while it was running must not turn its eventual result into an old-room
-        // refresh or presentation update.
-        if (disposed || commandIterator != iterator || (currentRoomId != Guid.Empty && currentRoomId != roomId)) return result;
-        OperationTrace.RecordCommitted(command);
-        await RefreshAfterCommandAsync(roomId, true);
-        OperationTrace.RecordCompletedRefresh(command);
-        return result;
-    }
     public async Task<V2SceneImageCaptureCommandOutcome> CommitSceneImageCommandAsync(Guid roomId, string command, Func<Task<V2SceneImageCaptureCommandOutcome>> execute)
     {
         if(RequiresCheckRoomReload)return new(V2SceneImageCaptureCommandStatus.ExpectedFailure,"Reload room before editing.");
-        var commandIterator = iterator;
-        var result = await execute();
-        if (result.Status != V2SceneImageCaptureCommandStatus.Committed) return result;
-        if (disposed || commandIterator != iterator || (currentRoomId != Guid.Empty && currentRoomId != roomId)) return result;
-        OperationTrace.RecordCommitted(command);
-        await RefreshAfterCommandAsync(roomId, true);
-        OperationTrace.RecordCompletedRefresh(command);
-        return result;
+        return await CommitChildCommandAsync(roomId, command, execute, result => result.Status == V2SceneImageCaptureCommandStatus.Committed,
+            (result, applied, reload) => result with { PresentationRefreshed = applied, RequiresRoomReload = reload }, sceneRelevant: true);
     }
     public async Task<V2RoomLifecycleCommandOutcome> CommitRoomLifecycleCommandAsync(Guid roomId, string command, Func<Task<V2RoomLifecycleCommandOutcome>> execute, bool sceneRelevant = false)
     {
@@ -307,11 +286,10 @@ public static class SceneRefreshImpact
     public const bool TransitionInverseEditProposal = false;
     public const bool TransitionInverseCreateProposal = true;
     public const bool RoomLifecycle = true;
-    public const bool RoomSceneDimensions = true;
 }
 
 // Internal scalar load records do not cross the service/component boundary.
-internal sealed record RoomHeaderLoad(Guid Id, string FriendlyName, string ReferenceId, string? InGameId, string? Contributors, string? Comments, double? Width, double? Height, double? ScaleX, double? ScaleY, double? PanX, double? PanY, bool Stale, bool Archived, bool CanExportZone, DateTime UpdatedUtc);
+internal sealed record RoomHeaderLoad(Guid Id, string FriendlyName, string ReferenceId, string? InGameId, string? Contributors, string? Comments, double MinX, double MinY, double? MaxX, double? MaxY, double? ScaleX, double? ScaleY, double? PixelOffsetX, double? PixelOffsetY, bool UseSceneImage, bool Stale, bool Archived, bool CanExportZone, DateTime UpdatedUtc);
 internal sealed record RoomReferenceLoad(Guid Id, string ReferenceId, string? InGameId, bool Archived);
 internal sealed record SubroomLoad(Guid Id, Guid RoomId, string ReferenceId, string FriendlyName, string Notes, double? X, double? Y, double? Width, double? Height, bool AnnotationEnabled, int SortOrder, bool Archived, DateTime UpdatedUtc);
 internal sealed record TransitionLoad(Guid Id, Guid RoomId, string Alias, string FriendlyName, string? InGameId, double? InGameX, double? InGameY, double? InGameZ, double? LocalX, double? LocalY, double? LocalZ, double? AnnotationX, double? AnnotationY, string? Source, string? DestinationRoom, string? DestinationAlias, string Requirements, string Notes, Guid? SourceId, Guid? DestinationRoomId, Guid? DestinationId, int SortOrder, bool Todo, bool? Verified, bool Archived, DateTime UpdatedUtc, bool EnableAnnotation, bool? RequirementsParseSucceeded, bool IsUnsafeArrival);
@@ -322,7 +300,7 @@ internal sealed record CheckFactLoad(Guid Id, Guid RoomId, string FriendlyName);
 internal sealed record TransitionFacts(IReadOnlyList<TransitionFactLoad> Inverses, IReadOnlyList<TransitionFactLoad> DestinationAliases, IReadOnlyList<TransitionFactLoad> InGameConflicts);
 internal sealed record CheckFacts(IReadOnlyList<CheckFactLoad> NameConflicts);
 
-internal static class RoomHeaderLoader { internal static Task<RoomHeaderLoad?> LoadAsync(LogicDbContext db, Guid id, CancellationToken token) => db.Rooms.AsNoTracking().Where(x => x.Id == id).Select(x => new RoomHeaderLoad(x.Id,x.FriendlyName,x.ReferenceId,x.InGameId,x.Contributors,x.Comments,x.SceneUnitWidth,x.SceneUnitHeight,x.SceneImageScaleXPercent,x.SceneImageScaleYPercent,x.SceneImagePanXPercent,x.SceneImagePanYPercent,x.IsSceneImageStale,x.IsArchived,x.RoomGroupId != null,x.UpdatedUtc)).SingleOrDefaultAsync(token); }
+internal static class RoomHeaderLoader { internal static Task<RoomHeaderLoad?> LoadAsync(LogicDbContext db, Guid id, CancellationToken token) => db.Rooms.AsNoTracking().Where(x => x.Id == id).Select(x => new RoomHeaderLoad(x.Id,x.FriendlyName,x.ReferenceId,x.InGameId,x.Contributors,x.Comments,x.SceneMinX,x.SceneMinY,x.SceneMaxX,x.SceneMaxY,x.SceneImagePixelsPerUnitX,x.SceneImagePixelsPerUnitY,x.SceneImagePixelOffsetX,x.SceneImagePixelOffsetY,x.UseSceneImage,x.IsSceneImageStale,x.IsArchived,x.RoomGroupId != null,x.UpdatedUtc)).SingleOrDefaultAsync(token); }
 internal static class RoomSuggestionLoader { internal static Task<List<RoomReferenceLoad>> LoadAsync(LogicDbContext db, CancellationToken token) => db.Rooms.AsNoTracking().Where(x => !x.IsArchived).Select(x => new RoomReferenceLoad(x.Id,x.ReferenceId,x.InGameId,false)).ToListAsync(token); }
 internal static class RoomReferenceCandidateLoader
 {
@@ -430,7 +408,7 @@ public static class RoomEditorV2Mapper
 
 public static class RoomHeaderMapper
 {
-    internal static RoomHeaderView Map(RoomHeaderLoad x, IReadOnlyList<RoomReferenceLoad> rooms) => new(x.Id,x.FriendlyName,x.ReferenceId,x.InGameId,x.Contributors,x.Comments,x.Width,x.Height,x.ScaleX is not null && x.ScaleY is not null && x.PanX is not null && x.PanY is not null,x.Stale,x.Archived,x.CanExportZone,x.UpdatedUtc,MapperSupport.Required(x.FriendlyName),MapperSupport.Duplicate(x.ReferenceId,rooms.Select(y=>y.ReferenceId)),MapperSupport.Text(x.InGameId)?MapperSupport.Duplicate(x.InGameId!,rooms.Select(y=>y.InGameId)):V2Severity.Neutral);
+    internal static RoomHeaderView Map(RoomHeaderLoad x, IReadOnlyList<RoomReferenceLoad> rooms) => new(x.Id,x.FriendlyName,x.ReferenceId,x.InGameId,x.Contributors,x.Comments,x.MinX,x.MinY,x.MaxX,x.MaxY,SceneBounds.HasUsableScales(x.ScaleX,x.ScaleY) && (!x.UseSceneImage || SceneBounds.HasUsablePixelOffsets(x.PixelOffsetX,x.PixelOffsetY)),x.Stale,x.Archived,x.CanExportZone,x.UpdatedUtc,MapperSupport.Required(x.FriendlyName),MapperSupport.Duplicate(x.ReferenceId,rooms.Select(y=>y.ReferenceId)),MapperSupport.Text(x.InGameId)?MapperSupport.Duplicate(x.InGameId!,rooms.Select(y=>y.InGameId)):V2Severity.Neutral);
     internal static RoomHeaderView Reconcile(RoomHeaderView? _, RoomHeaderView fresh) => fresh;
 }
 public static class SubroomTableMapper

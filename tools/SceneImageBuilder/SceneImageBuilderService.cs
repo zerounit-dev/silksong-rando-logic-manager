@@ -7,7 +7,7 @@ namespace SceneImageBuilder;
 public static class SceneImageBuilderService
 {
     public const int TileSize = 1024;
-    public const int PreviewMaxDimension = 2048;
+    public const int PreviewMaxDimension = 8192;
     private const string MasterFileName = "room-map-hd.png";
     private const string PreviewFileName = "preview.webp";
     private const string BuildFileName = "build.json";
@@ -39,7 +39,7 @@ public static class SceneImageBuilderService
         var hash = await HashAsync(masterPath, cancellationToken);
         var buildPath = Path.Combine(directory, BuildFileName);
         var prior = await ReadBuildAsync(buildPath, cancellationToken);
-        if (prior is not null && prior.MasterSha256 == hash && OutputsExist(directory, prior)) return SceneImageBuildResult.Skipped;
+        if (prior is not null && prior.MasterSha256 == hash && OutputsExist(directory, prior) && PreviewDimensionsMatch(directory, masterPath)) return SceneImageBuildResult.Skipped;
 
         var stagingDirectory = Path.Combine(directory, $".scene-image-build-{Guid.NewGuid():N}");
         Directory.CreateDirectory(stagingDirectory);
@@ -89,6 +89,17 @@ public static class SceneImageBuilderService
         File.Exists(Path.Combine(directory, PreviewFileName)) &&
         Directory.Exists(Path.Combine(directory, "tiles")) &&
         Enumerable.Range(0, manifest.Rows).All(row => Enumerable.Range(0, manifest.Columns).All(column => File.Exists(Path.Combine(directory, "tiles", $"{column}-{row}.webp"))));
+
+    private static bool PreviewDimensionsMatch(string directory, string masterPath)
+    {
+        var master = new MagickImageInfo(masterPath);
+        var preview = new MagickImageInfo(Path.Combine(directory, PreviewFileName));
+        var scale = Math.Min(1d, PreviewMaxDimension / (double)Math.Max(master.Width, master.Height));
+        // Match Magick's aspect-preserving resize rounding, including no upscaling.
+        var width = Math.Max(1d, Math.Floor(master.Width * scale + 0.5d));
+        var height = Math.Max(1d, Math.Floor(master.Height * scale + 0.5d));
+        return preview.Width == width && preview.Height == height;
+    }
 
     private static async Task<string> HashAsync(string path, CancellationToken cancellationToken)
     {

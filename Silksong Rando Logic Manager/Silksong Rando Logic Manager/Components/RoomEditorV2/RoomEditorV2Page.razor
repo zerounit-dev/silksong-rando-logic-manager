@@ -12,6 +12,7 @@
 @inject ILogger<RoomEditorV2Page> Logger
 @inject DiagnosticState Diagnostics
 @inject IAreaMapLoader AreaMaps
+@inject ArchipelagoRoomLookup ArchipelagoRooms
 @using Silksong_Rando_Logic_Manager.Components.RoomEditorV2.Contracts
 @using Microsoft.JSInterop
 
@@ -23,9 +24,9 @@ else
 {
     var tableOwnerRoom = RoomId;
     var tableOwnerGeneration = childInteractionOwnerGeneration;
-    <div @ref="pageRoot" class="room-editor-v2">
+    <div @ref="pageRoot" class="room-editor-v2" data-v2-dialog-open="@SceneDialogOpen.ToString().ToLowerInvariant()">
         <article class="room-document" aria-label="Room editor">
-            <RoomHeaderPresentation View="view.Header" Map="mapView" MapOwnerGeneration="@(mapLoads?.AppliedGeneration ?? 0)" Scene="view.Scene" Placement="placementRequest" SelectedItem="selectedSceneItem" ActionBox="SceneActionBox" ActionRequested="HandleSceneActionAsync" OwnerMounted="SetSceneOwnerAsync" SelectionChanged="SetSceneSelectionAsync" PlacementCommitted="CommitScenePlacementAsync" PlacementCancelled="CancelScenePlacementAsync" MarkerDragCommitted="CommitSceneMarkerDragAsync" SceneNudgeCommitted="CommitSceneNudgeAsync" FrameGeometryCommitted="CommitSubroomGeometryAsync" Capture="RequestSceneImageCaptureAsync" LinkedRoomActivated="NavigateLinkedMapRoomAsync" MapLinksChanged="ReloadAreaMapAfterMapLinkChangeAsync" MapLinkModalStateChanged="SetRoomMapLinkModalStateAsync" Draft="headerDraft" RefreshDiagnostic="refreshDiagnostic" Status="headerSaveStatus" ShowMapContext="showMapContext" MapContextVisibilityResolved="mapContextVisibilityResolved" BackToMap="NavigateBackToMap" ToggleMapContext="ToggleMapContextAsync" ShowArchivedChildren="showArchivedChildren" ToggleArchivedChildren="ToggleArchivedChildren" LifecycleContentIntent="HandleLifecycleContentIntentAsync" RecheckRoomLogicBusy="recheckingRoomLogic" Archive="ArchiveRoomAsync" Restore="RestoreRoomAsync" PermanentDelete="RequestRoomPermanentDeleteAsync" SceneDimensions="RequestSceneDimensionsAsync" CurrentRoomExport="DownloadCurrentRoomExport" ZoneExport="DownloadZoneExport" DraftChanged="SetHeaderDraft" Save="SaveHeader" />
+            <RoomHeaderPresentation View="view.Header" Map="mapView" MapOwnerGeneration="@(mapLoads?.AppliedGeneration ?? 0)" Scene="view.Scene" Placement="placementRequest" TakePlacementFocus="TakeScenePlacementFocus" SelectedItem="selectedSceneItem" ActionBox="SceneActionBox" ActionRequested="HandleSceneActionAsync" OwnerMounted="SetSceneOwnerAsync" SelectionChanged="SetSceneSelectionAsync" PlacementCommitted="CommitScenePlacementAsync" PlacementCancelled="CancelScenePlacementAsync" MarkerDragCommitted="CommitSceneMarkerDragAsync" SceneNudgeCommitted="CommitSceneNudgeAsync" FrameGeometryCommitted="CommitSubroomGeometryAsync" Capture="RequestSceneImageCaptureAsync" LinkedRoomActivated="NavigateLinkedMapRoomAsync" MapLinksChanged="ReloadAreaMapAfterMapLinkChangeAsync" MapLinkModalStateChanged="SetRoomMapLinkModalStateAsync" Draft="headerDraft" RefreshDiagnostic="refreshDiagnostic" Status="headerSaveStatus" ShowMapContext="showMapContext" MapContextVisibilityResolved="mapContextVisibilityResolved" BackToMap="NavigateBackToMap" ToggleMapContext="ToggleMapContextAsync" ShowArchivedChildren="showArchivedChildren" ToggleArchivedChildren="ToggleArchivedChildren" LifecycleContentIntent="HandleLifecycleContentIntentAsync" RecheckRoomLogicBusy="recheckingRoomLogic" Archive="ArchiveRoomAsync" Restore="RestoreRoomAsync" PermanentDelete="RequestRoomPermanentDeleteAsync" CurrentRoomExport="DownloadCurrentRoomExport" ZoneExport="DownloadZoneExport" DraftChanged="SetHeaderDraft" Save="SaveHeader" />
             <div class="room-document-content">
                 <RoomCommentsPresentation View="new RoomCommentsView(headerDraft?.Comments ?? view.Header.Comments)" Editable="headerSaveStatus.IsEditable" DraftChanged="SetHeaderComments" Save="SaveHeader" />
                 <SubroomTablePresentation @ref="subroomTable" RoomId="RoomId" OwnerGeneration="tableOwnerGeneration" OwnerIsCurrent="@(() => IsTableOwnerCurrent(tableOwnerRoom,tableOwnerGeneration))" View="view.Subrooms" ShowArchivedChildren="showArchivedChildren" SceneActionsAvailable="SceneTableActionsAvailable" SceneActionsUnavailableReason="@SceneTableActionsUnavailableReason" Save="SaveSubroom" Create="CreateSubroom" Reorder="ReorderSubroom" SetArchive="SetSubroomArchive" AnnotationRequested="HandleSubroomAnnotationAsync" GeometryRequested="RequestSubroomGeometryAsync" DeleteConfirmationRequested="RequestChildPermanentDeleteAsync" DeleteConfirmationCancelled="CancelChildPermanentDeleteAsync" DeleteConfirmationConfirmed="ConfirmChildPermanentDeleteAsync" FocusRequested="RequestChildFocusAsync" DraftStateChanged="@(value => SetPendingDraft(ChildTableKind.Subroom, value, tableOwnerRoom, tableOwnerGeneration))" RefreshApplied="ApplyRefreshedState" ClearDragFeedback="ClearSubroomDragFeedbackAsync" />
@@ -35,7 +36,7 @@ else
             </div>
             <RoomReminderFooterPresentation View="new RoomReminderFooterView(ReminderFooterProse)" Intent="HandleReminderFooterIntentAsync" />
         </article>
-        <V2PageModalHost Content="modalState?.Content" Stage="modalState?.Stage" FocusRequested="modalFocusRequested" MetadataDraft="modalState?.TransitionMetadataOperation?.Draft" MetadataDraftChanged="SetTransitionMetadataDraft" CheckMetadataDraft="modalState?.CheckMetadataOperation?.Draft" CheckMetadataDraftChanged="SetCheckMetadataDraft" SubroomGeometryDraftChanged="SetSubroomGeometryDraft" SceneDimensionsDraftChanged="SetSceneDimensionsDraft" SceneImageCaptureDraftChanged="SetSceneImageCaptureDraft" SceneImageCaptureReset="ResetSceneImageCaptureEstimateAsync" ManageRequirementCatalogue="NavigateToRequirementCatalogueAsync" Cancel="CancelModalAsync" Apply="ApplyModalAsync" DoNotUpdate="DoNotUpdateModalAsync" />
+        <V2PageModalHost Content="modalState?.Content" Stage="modalState?.Stage" FocusRequested="modalFocusRequested" SceneCaptureCorrectionFocusVersion="sceneCaptureCorrectionFocusVersion" MetadataDraft="modalState?.TransitionMetadataOperation?.Draft" MetadataDraftChanged="SetTransitionMetadataDraft" CheckMetadataDraft="modalState?.CheckMetadataOperation?.Draft" CheckMetadataDraftChanged="SetCheckMetadataDraft" SubroomGeometryDraftChanged="SetSubroomGeometryDraft" SceneImageCaptureDraftChanged="SetSceneImageCaptureDraft" SceneImageCaptureReset="ResetSceneImageCaptureEstimateAsync" SceneBoundsClear="ClearSceneBoundsAsync" ManageRequirementCatalogue="NavigateToRequirementCatalogueAsync" Cancel="CancelModalAsync" Apply="ApplyModalAsync" DoNotUpdate="DoNotUpdateModalAsync" />
         <div data-v2-requirements-expanded-host></div>
     </div>
 }
@@ -52,7 +53,7 @@ else
     private RoomAreaMapLoadOwner? mapLoads;
     private AreaMapSurfaceView? mapView => mapLoads?.View;
     private readonly SemaphoreSlim commandGate = new(1, 1);
-    private bool showArchivedChildren, disposed, sceneActionPending, recheckingRoomLogic, applicationNavigationActive, suppressStaleSceneDimensionsCompletionRender, suppressStaleSceneImageCaptureCompletionRender, suppressStaleRoomLogicRecheckCompletionRender, childInteractionOwnerInitializing;
+    private bool showArchivedChildren, disposed, sceneActionPending, recheckingRoomLogic, applicationNavigationActive, suppressStaleSceneImageCaptureCompletionRender, suppressStaleRoomLogicRecheckCompletionRender, childInteractionOwnerInitializing;
     private readonly Dictionary<ChildTableKind, bool> pendingDrafts = [];
     private bool suppressStaleCheckModalCompletionRender;
     private async Task PageEventAsync(Func<Task> action)
@@ -103,6 +104,9 @@ else
         }
     }
     private SceneAnnotationPlacementRequest? placementRequest;
+    private SceneAnnotationPlacementRequest? reconciledPlacementFocusRequest;
+    private bool SceneDialogOpen => modalState is not null || roomMapLinkModalState != AreaMapPanePresentation.RoomMapLinkModalState.Closed;
+    private long sceneCaptureCorrectionFocusVersion;
     private string? connectionPlacementOutcome;
     private string? sceneActionStatus;
     private V2ModalFocusRoute? pendingModalFocus;
@@ -147,8 +151,7 @@ else
         // stale completion intentionally changed no page state. Do not let a
         // source-room operation result redraw a newer destination room.
         if (disposed) return false;
-        if (!suppressStaleSceneDimensionsCompletionRender && !suppressStaleSceneImageCaptureCompletionRender && !suppressStaleRoomLogicRecheckCompletionRender && !suppressStaleCheckModalCompletionRender) return true;
-        suppressStaleSceneDimensionsCompletionRender = false;
+        if (!suppressStaleSceneImageCaptureCompletionRender && !suppressStaleRoomLogicRecheckCompletionRender && !suppressStaleCheckModalCompletionRender) return true;
         suppressStaleSceneImageCaptureCompletionRender = false;
         suppressStaleRoomLogicRecheckCompletionRender = false;
         suppressStaleCheckModalCompletionRender = false;
@@ -282,8 +285,27 @@ else
         }
         if (childInteractionOwner is not null && view is not null)
         {
-            try { await childInteractionOwner.InvokeVoidAsync("setRequirementsContext", view.RequirementsParserContext); }
+            var owner = childInteractionOwner;
+            var page = childInteractionOwnerGeneration;
+            var root = pageRoot;
+            try { await owner.InvokeVoidAsync("setRequirementsContext", view.RequirementsParserContext); }
             catch (JSDisconnectedException) { } catch (ObjectDisposedException) when (disposed) { }
+            if (!disposed && page == childInteractionOwnerGeneration && ReferenceEquals(owner, childInteractionOwner) &&
+                registeredFollowPage != page && archipelagoRegistrationAttempt is not { IsCompleted: false })
+            {
+                archipelagoCallback ??= DotNetObjectReference.Create(this);
+                var callback = archipelagoCallback;
+                // Record acquisition before issuing interop, not only after its
+                // acknowledgement: route/disposal must also retire failed attempts.
+                archipelagoRegistrationRoot = root;
+                try
+                {
+                    archipelagoRegistrationAttempt = JS.InvokeVoidAsync("archipelagoConnection.registerRoom", root, callback, page).AsTask();
+                    await archipelagoRegistrationAttempt;
+                    if (!disposed && page == childInteractionOwnerGeneration && ReferenceEquals(callback, archipelagoCallback)) registeredFollowPage = page;
+                }
+                catch (JSDisconnectedException) { } catch (ObjectDisposedException) when (disposed) { }
+            }
         }
         if (mapContextHeightOwner is null && view?.Header.IsArchived == false && mapContextVisibilityResolved && showMapContext)
         {
@@ -301,8 +323,10 @@ else
         var callbacks = new IDisposable?[] { subroomCallback, transitionCallback, connectionCallback, checkCallback };
         subroomCallback = null; transitionCallback = null; connectionCallback = null; checkCallback = null;
         Exception? disposalFailure = null;
-        try { ClearSceneTransientState(); ClearModalState(); refresh?.Dispose(); }
+        try { await RetireArchipelagoRegistrationAsync(); }
         catch (Exception ex) { disposalFailure = ex; }
+        try { ClearSceneTransientState(); ClearModalState(); refresh?.Dispose(); }
+        catch (Exception ex) { disposalFailure ??= ex; }
         try { if (mapLoads is not null) await mapLoads.DisposeAsync(); }
         catch (Exception ex) { disposalFailure ??= ex; }
         try { await DisposeMapContextHeightOwnerAsync(); }
@@ -343,6 +367,8 @@ else
         var callbacks = new IDisposable?[] { subroomCallback, transitionCallback, connectionCallback, checkCallback };
         subroomCallback = null; transitionCallback = null; connectionCallback = null; checkCallback = null;
         Exception? retirementFailure = null;
+        try { await RetireArchipelagoRegistrationAsync(); }
+        catch (Exception ex) { retirementFailure = ex; }
         if (owner is not null)
         {
             foreach (var kind in new[] { "subroom", "transition", "connection", "check" })
@@ -446,7 +472,7 @@ else
             var armed = placementRequest is not null;
             // The unavailable-dimensions status is the scene contract. Button
             // disablement still explains its own precise admission reason.
-            var status = view?.Scene?.HasValidBounds != true ? "scene dimensions unavailable" : sceneActionStatus ?? (armed ? PlacementStatus(placementRequest!) : unavailable ? reason : view?.Scene?.Image?.IsStale == true ? "needs recapture" : "");
+            var status = sceneActionStatus ?? view?.Scene?.BoundsImageDiagnostic ?? (armed ? PlacementStatus(placementRequest!) : unavailable ? reason : view?.Scene?.Image?.IsStale == true ? "needs recapture" : "");
             if (selectedSceneItem is not { } selected)
                 return new(false, false, false, false, false, reason, reason, reason, reason, reason, false, status);
             var data = SelectedSceneData(selected);
@@ -636,30 +662,7 @@ else
         if (modalState?.SubroomGeometryOperation is { } operation) modalState = modalState with { Content = draft, SubroomGeometryOperation = operation with { Draft = draft } };
         return Task.CompletedTask;
     }
-    private Task RequestSceneDimensionsAsync()=>PageEventAsync(RequestSceneDimensionsCoreAsync);
-    private async Task RequestSceneDimensionsCoreAsync()
-    {
-        if (disposed || modalState is not null) return;
-        var owner=CaptureCheckOwner();
-        await commandGate.WaitAsync();
-        try
-        {
-            if (!OwnsCheckPage(owner) || modalState is not null || refresh!.RequiresCheckRoomReload || meaningfulPendingDraft || view?.Header.IsArchived != false) return;
-            var header = view.Header;
-            var draft = new V2SceneDimensionsDialogView(FormatDimension(header.SceneUnitWidth), FormatDimension(header.SceneUnitHeight));
-            modalState = new(draft, "room-scene-dimensions", null, V2ModalRuntimeStage.ProposalOpen,
-                SceneDimensionsOperation: new(new(header.RoomId, header.UpdatedUtc, header.SceneUnitWidth, header.SceneUnitHeight), draft));
-            modalFocusRequested = true; StateHasChanged();
-        }
-        finally { commandGate.Release(); }
-    }
     private static string FormatDimension(double? value) => value?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "";
-    private Task SetSceneDimensionsDraft(V2SceneDimensionsDialogView draft)
-    {
-        if (modalState is { Stage: V2ModalRuntimeStage.ProposalOpen, SceneDimensionsOperation: { } operation })
-            modalState = modalState with { Content = draft, SceneDimensionsOperation = operation with { Draft = draft } };
-        return Task.CompletedTask;
-    }
     private Task RequestSceneImageCaptureAsync()=>PageEventAsync(RequestSceneImageCaptureCoreAsync);
     private async Task RequestSceneImageCaptureCoreAsync()
     {
@@ -680,15 +683,8 @@ else
                 return;
             }
             var scene = view?.Scene;
-            var preview = scene is { HasValidBounds: true, SceneUnitWidth: double width, SceneUnitHeight: double height }
-                ? new V2SceneImageCapturePreviewView(width, height, scene.Frames, scene.Markers) : null;
-            var summary = outcome.Message ?? "Scene image capture is ready.";
-            var scaleX = draft.ScaleXPercent.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            var scaleY = draft.ScaleYPercent.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            var panX = draft.PanXPercent.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            var panY = draft.PanYPercent.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            var content = new V2SceneImageCaptureDialogView(summary, scaleX, scaleY, panX, panY, true,
-                view?.Scene?.Image?.HasTransform == true ? "Apply recapture" : "Apply capture", preview);
+            var preview = scene is not null ? new V2SceneImageCapturePreviewView(CaptureViewport(scene, draft), scene.Frames, scene.Markers) : null;
+            var content = CaptureContent(draft, outcome.Message, preview);
             sceneActionStatus = outcome.Message;
             modalState = new(content, "scene-image-capture", null, V2ModalRuntimeStage.ProposalOpen, SceneImageCaptureOperation: new(content));
             modalFocusRequested = true;
@@ -727,11 +723,12 @@ else
     {
         if (disposed || modalState is not { Stage: V2ModalRuntimeStage.ProposalOpen, SceneImageCaptureOperation: { } operation } state) return;
         var owner=CaptureCheckOwner();var sourceRoom = owner.Room;
-        var outcome = await Commands.ResetSceneImageCaptureEstimateAsync(sourceRoom);
+        if (!TryParseSceneImageDraft(operation.Draft, out var current, false)) return;
+        var outcome = await Commands.ResetSceneImageCaptureEstimateAsync(sourceRoom, current);
         if (!OwnsCheckPage(owner) || modalState != state || refresh!.RequiresCheckRoomReload) return;
         if (outcome.Status == V2SceneImageCaptureCommandStatus.Committed && outcome.Draft is { } estimate)
         {
-            var fresh = operation.Draft with { AvailabilitySummary = outcome.Message ?? "Scene image capture is ready.", IsAvailable = true, ScaleXPercent = estimate.ScaleXPercent.ToString(System.Globalization.CultureInfo.InvariantCulture), ScaleYPercent = estimate.ScaleYPercent.ToString(System.Globalization.CultureInfo.InvariantCulture), PanXPercent = estimate.PanXPercent.ToString(System.Globalization.CultureInfo.InvariantCulture), PanYPercent = estimate.PanYPercent.ToString(System.Globalization.CultureInfo.InvariantCulture), BrowserResetVersion = operation.Draft.BrowserResetVersion + 1 };
+            var fresh = CaptureContent(estimate, outcome.Message, operation.Draft.Preview) with { BrowserResetVersion = operation.Draft.BrowserResetVersion + 1 };
             sceneActionStatus = outcome.Message;
             modalState = state with { Content = fresh, SceneImageCaptureOperation = operation with { Draft = fresh } };
         }
@@ -956,6 +953,14 @@ else
         return Task.CompletedTask;
     }
     private bool OwnsCurrentSceneOwner(Guid ownerRoomId, long ownerGeneration) => !disposed && ownerRoomId == RoomId && ownerGeneration == sceneOwnerGeneration;
+    private bool TakeScenePlacementFocus(Guid ownerRoomId, long ownerGeneration, SceneAnnotationPlacementRequest request)
+    {
+        if (!OwnsCurrentSceneOwner(ownerRoomId, ownerGeneration) || !ReferenceEquals(placementRequest, request)) return false;
+        var explicitArm = !ReferenceEquals(reconciledPlacementFocusRequest, request);
+        // Consume even when a dialog takes precedence: closing it is not an arm.
+        reconciledPlacementFocusRequest = request;
+        return explicitArm && !SceneDialogOpen;
+    }
     // Scene callbacks can wait behind another durable command. Recheck this one
     // page-owned boundary after acquiring that gate, rather than letting each
     // callback maintain a divergent stale-owner guard.
@@ -1306,6 +1311,9 @@ else
     private Task<V2ConnectionCommandOutcome> CommitConnectionWithRecoveryAsync(Guid sourceRoom,string name,Func<Task<V2ConnectionCommandOutcome>> command,bool sceneRelevant=false)
         => CommitChildWithRecoveryAsync(sourceRoom,()=>refresh!.CommitConnectionCommandAsync(sourceRoom,name,command,sceneRelevant),()=>new V2ConnectionCommandOutcome(V2ConnectionCommandStatus.Missing,"This room is not loaded."),SafePresentation,result=>result.Status==V2ConnectionCommandStatus.Unexpected?result.Message??"Unexpected connection command failure.":null);
     private const string UnexpectedChildPresentationMessage="An unexpected error has occurred; consult the detailed error modal and server logs.";
+    private Task<V2SceneImageCaptureCommandOutcome> CommitSceneImageWithRecoveryAsync(Guid sourceRoom,string name,Func<Task<V2SceneImageCaptureCommandOutcome>> command)
+        => CommitChildWithRecoveryAsync(sourceRoom,()=>refresh!.CommitSceneImageCommandAsync(sourceRoom,name,command),()=>new V2SceneImageCaptureCommandOutcome(V2SceneImageCaptureCommandStatus.Missing,"This room is not loaded."),SafePresentation,result=>result.Status==V2SceneImageCaptureCommandStatus.Unexpected?result.Message??"Unexpected scene image command failure.":null);
+    private static V2SceneImageCaptureCommandOutcome SafePresentation(V2SceneImageCaptureCommandOutcome result)=>result.Status==V2SceneImageCaptureCommandStatus.Unexpected?result with{Message=UnexpectedChildPresentationMessage}:result;
     private static V2CheckCommandOutcome SafePresentation(V2CheckCommandOutcome result)=>result.Status==V2CheckCommandStatus.Unexpected?result with{Message=UnexpectedChildPresentationMessage}:result;
     private static V2SubroomCommandOutcome SafePresentation(V2SubroomCommandOutcome result)=>result.Status==V2SubroomCommandStatus.Unexpected?result with{Message=UnexpectedChildPresentationMessage}:result;
     private static V2TransitionCommandOutcome SafePresentation(V2TransitionCommandOutcome result)=>result.Status==V2TransitionCommandStatus.Unexpected?result with{Message=UnexpectedChildPresentationMessage}:result;
@@ -1502,7 +1510,11 @@ else
         selectedSceneItem = new(V2SceneSelectedItemKind.Connection, canonical.EntityId);
         if (placementRequest is { Kind: "connection" } armed && armed.GroupMarkerEntityId == selected.EntityId &&
             rows.Any(row => row.EntityId == armed.EntityId && string.Equals(row.Alias.Trim(), canonical.Alias.Trim(), StringComparison.OrdinalIgnoreCase)))
+        {
             placementRequest = armed with { EntityId = canonical.EntityId, GroupMarkerEntityId = canonical.EntityId };
+            // Canonical identity reconciliation is not a new explicit arm intent.
+            if (ReferenceEquals(reconciledPlacementFocusRequest, armed)) reconciledPlacementFocusRequest = placementRequest;
+        }
     }
     private async Task<V2TransitionCommandOutcome> ExecuteTransitionAsync(string commandName, Func<Task<V2TransitionCommandOutcome>> command, string? initiatorId, string? pendingTargetId, bool permitsPendingDraft = false, bool sceneRelevant = false)
     {
@@ -1615,7 +1627,6 @@ else
         if (modalState?.DirectAnnotationRemoveOperation is { }) { await CompleteDirectAnnotationRemovalModalAsync(); return; }
         if (modalState?.SubroomGeometryOperation is { }) { await CompleteSubroomGeometryModalAsync(); return; }
         if (modalState?.SubroomRemoveOperation is { }) { await CompleteSubroomRemoveModalAsync(); return; }
-        if (modalState?.SceneDimensionsOperation is { }) { await CompleteSceneDimensionsModalAsync(); return; }
         if (modalState?.SceneImageCaptureOperation is { }) { await CompleteSceneImageCaptureModalAsync(); return; }
         if (modalState?.DeleteConfirmationIntent is not null) { await CompleteChildDeleteModalAsync(); return; }
         if (modalState?.TransitionOperation is null) { await BeginModalTestCommitAsync(); return; }
@@ -1973,77 +1984,15 @@ else
         }
         finally { commandGate.Release(); }
     }
-    private async Task CompleteSceneDimensionsModalAsync()
-    {
-        if (modalState is not { Stage: V2ModalRuntimeStage.ProposalOpen, SceneDimensionsOperation: { } operation } state) return;
-        var owner=CaptureCheckOwner();
-        if (!TryParseSceneDimensions(operation.Draft, out var draft, out var error))
-        {
-            var invalid = operation.Draft with { ValidationMessage = error };
-            modalState = state with { Content = invalid, SceneDimensionsOperation = operation with { Draft = invalid } };
-            StateHasChanged(); return;
-        }
-        modalState = state with { Stage = V2ModalRuntimeStage.Committing }; StateHasChanged(); await commandGate.WaitAsync();
-        try
-        {
-            if(!OwnsCheckPage(owner)||!ReferenceEquals(modalState?.Content,state.Content)||refresh!.RequiresCheckRoomReload||meaningfulPendingDraft)return;
-            // The SQLite command is completion-bound. Capture the operation's
-            // source page identity immediately before admitting it so a route
-            // switch cannot make the destination look like the source after
-            // the await resumes.
-            var sourceRoomId = operation.Baseline.RoomId;
-            var sourceGeneration = refresh?.RefreshGeneration;
-            var outcome = refresh is null || refresh.CurrentRoomId != RoomId
-                ? new V2RoomSceneDimensionsCommandOutcome(V2RoomSceneDimensionsCommandStatus.Missing, "This room is not loaded.")
-                : await refresh.CommitRoomSceneDimensionsCommandAsync(RoomId, "room-scene-dimensions", () => Commands.SaveRoomSceneDimensionsAsync(RoomId, operation.Baseline, draft));
-            // A completion-bound durable command may finish after this page has
-            // been disposed or switched rooms. Its database result is valid, but
-            // it must not restore old modal/focus/refresh state to this page.
-            if (!IsActiveSceneDimensionsOperation(sourceRoomId, sourceGeneration,
-                    outcome.Status == V2RoomSceneDimensionsCommandStatus.Committed))
-            {
-                suppressStaleSceneDimensionsCompletionRender = true;
-                return;
-            }
-            if (outcome.Status == V2RoomSceneDimensionsCommandStatus.Committed) { SetRefreshDiagnostic(); ResetHeaderDraft(); QueueModalFocus(state, V2ModalFocusOutcome.Initiator); ClearModalState(false); }
-            else if (outcome.Status == V2RoomSceneDimensionsCommandStatus.Unchanged) { QueueModalFocus(state, V2ModalFocusOutcome.Initiator); ClearModalState(false); }
-            else
-            {
-                if (refresh is not null && refresh.CurrentRoomId == RoomId) { var before = refresh.LastAppliedRefresh?.Sequence; if (!await refresh.RefreshAsync(RoomId) && refresh.LastAppliedRefresh?.Sequence != before) SetRefreshDiagnostic(); }
-                if(!OwnsCheckPage(owner)||!ReferenceEquals(modalState?.Content,state.Content))return;
-                QueueModalFocus(state, V2ModalFocusOutcome.Correction); ClearModalState(false);
-            }
-            StateHasChanged();
-        }
-        finally { commandGate.Release(); }
-    }
-    private bool IsActiveSceneDimensionsOperation(Guid sourceRoomId, long? sourceGeneration, bool committed) =>
-        !disposed
-        && RoomId == sourceRoomId
-        && displayedRoomId == sourceRoomId
-        && refresh is not null
-        && refresh.CurrentRoomId == sourceRoomId
-        // A committed dimensions command itself performs exactly one refresh,
-        // advancing the iterator once. Any other advance is a route/refresh
-        // supersession and invalidates the operation's page effects.
-        && refresh.RefreshGeneration == sourceGeneration + (committed ? 1 : 0);
-    private static bool TryParseSceneDimensions(V2SceneDimensionsDialogView text, out RoomSceneDimensionsDraft draft, out string error)
-    {
-        var widthBlank = string.IsNullOrWhiteSpace(text.Width); var heightBlank = string.IsNullOrWhiteSpace(text.Height);
-        if (widthBlank && heightBlank) { draft = new(null, null); error = ""; return true; }
-        if (widthBlank || heightBlank) { draft = new(null, null); error = "Enter both dimensions or leave both blank."; return false; }
-        if (!double.TryParse(text.Width, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var width) || !double.TryParse(text.Height, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var height) || !double.IsFinite(width) || !double.IsFinite(height) || width <= 0 || height <= 0)
-        { draft = new(null, null); error = "Dimensions must be finite positive values."; return false; }
-        draft = new(width, height); error = ""; return true;
-    }
-    private async Task CompleteSceneImageCaptureModalAsync()
+    private Task ClearSceneBoundsAsync() => PageEventAsync(() => CompleteSceneImageCaptureModalAsync(true));
+    private async Task CompleteSceneImageCaptureModalAsync(bool clearBounds = false)
     {
         if (modalState is not { Stage: V2ModalRuntimeStage.ProposalOpen, SceneImageCaptureOperation: { } operation } state) return;
         var owner=CaptureCheckOwner();
-        if (!TryParseSceneImageDraft(operation.Draft, out var draft))
+        if (!TryParseSceneImageDraft(operation.Draft, out var draft) && !clearBounds)
         {
-            var invalid = operation.Draft with { AvailabilitySummary = "Enter finite positive scales and finite pan values." };
-            modalState = state with { Content = invalid, SceneImageCaptureOperation = operation with { Draft = invalid } }; StateHasChanged(); return;
+            var invalid = operation.Draft with { AvailabilitySummary = "Enter finite ordered bounds and positive pixels per unit; the scene image also needs complete finite pixel offsets." };
+            modalState = state with { Content = invalid, SceneImageCaptureOperation = operation with { Draft = invalid } }; sceneCaptureCorrectionFocusVersion++; StateHasChanged(); return;
         }
         // Keep the V1-parity capture surface in place while generation runs; its
         // modal-local content renders progress in the established footer slot.
@@ -2051,30 +2000,56 @@ else
         try
         {
             if(!OwnsCheckPage(owner)||!ReferenceEquals(modalState?.Content,state.Content)||refresh!.RequiresCheckRoomReload||meaningfulPendingDraft)return;
-            var sourceRoom = owner.Room; var generation = refresh?.RefreshGeneration;
-            var outcome = refresh is null || refresh.CurrentRoomId != RoomId ? new V2SceneImageCaptureCommandOutcome(V2SceneImageCaptureCommandStatus.Missing, "This room is not loaded.") : await refresh.CommitSceneImageCommandAsync(RoomId, "scene-image-capture", () => Commands.ApplySceneImageCaptureAsync(RoomId, draft));
-            if (disposed || RoomId != sourceRoom || refresh?.CurrentRoomId != sourceRoom || refresh.RefreshGeneration != generation + (outcome.Status == V2SceneImageCaptureCommandStatus.Committed ? 1 : 0))
+            var sourceRoom = owner.Room; owner.Refresh = refresh!.RefreshGeneration;
+            var outcome = await CommitSceneImageWithRecoveryAsync(sourceRoom, clearBounds ? "scene-bounds-clear" : "scene-image-capture", () => clearBounds ? Commands.ClearRoomSceneBoundsAsync(sourceRoom, operation.Draft.Baseline) : Commands.ApplySceneImageCaptureAsync(sourceRoom, draft));
+            if (!OwnsAppliedChild(owner, outcome.Status == V2SceneImageCaptureCommandStatus.Committed, outcome.PresentationRefreshed, outcome.RequiresRoomReload))
             {
                 // Async event completion otherwise schedules an additional render on
                 // the current route after this completion-bound source command.
                 suppressStaleSceneImageCaptureCompletionRender = true;
                 return;
             }
+            if (outcome.RequiresRoomReload || modalState?.Content is V2CheckRoomReloadView) return;
             if (outcome.Status == V2SceneImageCaptureCommandStatus.Committed) { SetRefreshDiagnostic(); ResetHeaderDraft(); QueueModalFocus(state, V2ModalFocusOutcome.Initiator); ClearModalState(false); }
-            else { var failed = operation.Draft with { AvailabilitySummary = outcome.Message ?? "Scene image capture failed." }; modalState = state with { Content = failed, Stage = V2ModalRuntimeStage.ProposalOpen, SceneImageCaptureOperation = operation with { Draft = failed } }; QueueModalFocus(state, V2ModalFocusOutcome.Correction); }
+            else
+            {
+                var failed = operation.Draft with { AvailabilitySummary = outcome.Message ?? "Scene image capture failed.", Baseline = outcome.FreshBaseline ?? operation.Draft.Baseline, UpdatedUtc = outcome.FreshBaseline?.UpdatedUtc ?? operation.Draft.UpdatedUtc };
+                modalState = state with { Content = failed, Stage = V2ModalRuntimeStage.ProposalOpen, SceneImageCaptureOperation = operation with { Draft = failed } };
+                if (!clearBounds) sceneCaptureCorrectionFocusVersion++;
+                else QueueModalFocus(state, V2ModalFocusOutcome.Correction);
+            }
             StateHasChanged();
         }
         finally { commandGate.Release(); }
     }
-    private static bool TryParseSceneImageDraft(V2SceneImageCaptureDialogView text, out SceneImageCaptureDraft draft)
+    private static SceneViewportBounds CaptureViewport(SceneLayoutView scene, SceneImageCaptureDraft draft)
     {
-        double x = 0, y = 0, panX = 0, panY = 0;
-        var ok = double.TryParse(text.ScaleXPercent, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out x)
-            && double.TryParse(text.ScaleYPercent, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out y)
-            && double.TryParse(text.PanXPercent, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out panX)
-            && double.TryParse(text.PanYPercent, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out panY)
-            && double.IsFinite(x) && double.IsFinite(y) && double.IsFinite(panX) && double.IsFinite(panY) && x > 0 && y > 0;
-        draft = new(x, y, panX, panY); return ok;
+        // The modal inspects the white origin reference and cyan controls as well
+        // as effective geometry; this changes only its initial camera, not content.
+        var markers = scene.Markers.Concat(new[] {
+            new SceneMarkerView(Guid.Empty, "reference", "", null, 0, 0),
+            new SceneMarkerView(Guid.Empty, "minimum", "", null, draft.MinX, draft.MinY),
+            new SceneMarkerView(Guid.Empty, "maximum", "", null, draft.MaxX ?? 0, draft.MaxY ?? 0) }).ToArray();
+        return SceneViewportMath.Initial(scene with { Markers = markers });
+    }
+    private static V2SceneImageCaptureDialogView CaptureContent(SceneImageCaptureDraft d, string? information, V2SceneImageCapturePreviewView? preview) =>
+        new(information ?? "", FormatDimension(d.MinX), FormatDimension(d.MinY), FormatDimension(d.MaxX), FormatDimension(d.MaxY),
+            FormatDimension(d.PixelsPerUnitX), FormatDimension(d.PixelsPerUnitY), FormatDimension(d.PixelOffsetX), FormatDimension(d.PixelOffsetY), d.UseSceneImage, d.UpdatedUtc, d.Baseline, true, "Apply", preview);
+    private static bool TryParseSceneImageDraft(V2SceneImageCaptureDialogView text, out SceneImageCaptureDraft draft, bool requireUsable = true)
+    {
+        bool Parse(string value, out double? number)
+        {
+            number = null; if (string.IsNullOrWhiteSpace(value)) return true;
+            if (!double.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var n) || !double.IsFinite(n)) return false;
+            number = n; return true;
+        }
+        var ok = Parse(text.MinX, out var minX); ok &= Parse(text.MinY, out var minY);
+        ok &= Parse(text.MaxX, out var maxX); ok &= Parse(text.MaxY, out var maxY);
+        ok &= Parse(text.PixelsPerUnitX, out var sx); ok &= Parse(text.PixelsPerUnitY, out var sy);
+        ok &= Parse(text.PixelOffsetX, out var px); ok &= Parse(text.PixelOffsetY, out var py);
+        draft = new(minX ?? 0, minY ?? 0, maxX, maxY, sx, sy, px, py, text.UseSceneImage, text.UpdatedUtc, text.Baseline);
+        return ok && minX is not null && minY is not null && (!requireUsable ||
+            SceneBounds.TryGetSize(draft.MinX, draft.MinY, maxX, maxY, out _, out _) && SceneBounds.HasUsableScales(sx, sy) && (!text.UseSceneImage || SceneBounds.HasUsablePixelOffsets(px, py)));
     }
     private async Task CompleteChildDeleteModalAsync()
     {
@@ -2202,5 +2177,5 @@ else
             ? new(RoomFriendlyNameFocusId, null, V2ModalFocusOutcome.Correction)
             : new(state.InitiatorId, state.PendingTargetId, V2ModalFocusOutcome.Correction);
     }
-    private void ClearModalState(bool discardPendingFocus = true) { modalState = null; modalFocusRequested = false; if (discardPendingFocus) pendingModalFocus = null; }
+    private void ClearModalState(bool discardPendingFocus = true) { modalState = null; modalFocusRequested = false; sceneCaptureCorrectionFocusVersion = 0; if (discardPendingFocus) pendingModalFocus = null; }
 }

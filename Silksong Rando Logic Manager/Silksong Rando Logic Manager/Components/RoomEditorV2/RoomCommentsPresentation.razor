@@ -7,7 +7,7 @@
     <div class="document-comments" aria-label="Room comments" @onclick="BeginEdit">
         @if (editing)
         {
-            <textarea class="markdown-editor" aria-label="Room comments" readonly="@(!Editable)" @bind="draft" @bind:event="oninput" @onblur="Blur"></textarea>
+            <textarea data-v2-header-field="comments" class="markdown-editor" aria-label="Room comments" readonly="@(!Editable)" @bind="draft" @bind:event="oninput" @onblur="Blur"></textarea>
         }
         else
         {

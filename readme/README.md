@@ -143,20 +143,31 @@ conservatively and leaves ambiguous or existing links unchanged.
 
 ## Capture a Scene Image
 
-Scene-image capture requires an active room with valid scene dimensions, one
-resolved map link with usable bounds, and the configured area-map source image.
+An active room's combined bounds/image editor uses minimum and maximum scene
+coordinates, pixels-per-unit scales and original-source pixel offsets. Valid bounds
+and positive scales are required to Apply. The scene image also requires finite
+pixel offsets and built source preview/tiles; opaque black needs neither offsets
+nor source assets. Map links are optional.
 
-1. Open the room's scene pane and select `capture scene image`. After the first
-   capture, the action is `recapture scene image`.
+1. Open the room's scene pane and select `bounds and image`.
 2. Review the source image against the room bounds, subrooms, exits, connections,
    and checks.
-3. Adjust **scale X**, **scale Y**, **pan X**, and **pan Y**, or use `reset
-   estimate` to recalculate the map-derived starting position.
+3. Enter all four bounds and adjust **pixels/unit X/Y**, **pixel offset X/Y**, and
+   **Use scene image**. Cyan minimum edges can be dragged; maxima are numeric-only.
+   `reset recommendation` uses scales 6.35 and recommends pixel offsets from optional
+   calibrated map context or the fixed source center. Ctrl+drag positions the image;
+   numeric scale edits and Ctrl+wheel leave pixel offsets fixed. Editing bounds
+   never recenters the image. Offsets are in original 20500 x 15000 source pixels,
+   with X rightward and Y upward from the source bottom-left, not preview pixels.
 4. Select `apply` to generate the image behind the room's scene annotations.
 
-Changing the room's scene dimensions marks an existing image as needing
-recapture and hides it until it is captured again. This feature uses the
-configured area-map source image; it is not an arbitrary image-upload tool.
+Apply generates and saves bounds, mapping and mode together; Cancel leaves them
+unchanged. `clear bounds` resets minima to zero/maxima to blank, retains mapping,
+mode and file, and hides an existing image as needing recapture. Scene-dump maximum
+changes also stale existing images. Annotation coordinates never change. This
+uses one configured source, not arbitrary image uploads. Both scene-image and black
+round each effective size times its scale to the nearest integer, midpoint-to-even,
+with a one-pixel minimum and no 4096 cap.
 
 ## Create a Room Manually
 

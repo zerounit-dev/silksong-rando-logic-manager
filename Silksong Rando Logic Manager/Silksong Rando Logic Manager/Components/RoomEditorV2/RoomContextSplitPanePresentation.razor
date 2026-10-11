@@ -7,7 +7,7 @@
         <AreaMapPanePresentation View="Map" HostGeneration="MapOwnerGeneration" LinkedRoomActivated="LinkedRoomActivated" MapLinksChanged="MapLinksChanged" ModalStateChanged="MapLinkModalStateChanged" />
         <div class="room-context-divider" aria-hidden="true"></div>
     }
-    <SceneContextPanePresentation View="Scene" Placement="Placement" SelectedItem="SelectedItem" ActionBox="ActionBox" ActionRequested="ActionRequested" OwnerMounted="OwnerMounted" SelectionChanged="SelectionChanged" PlacementCommitted="PlacementCommitted" PlacementCancelled="PlacementCancelled" MarkerDragCommitted="MarkerDragCommitted" SceneNudgeCommitted="SceneNudgeCommitted" FrameGeometryCommitted="FrameGeometryCommitted" Capture="Capture" SceneDimensions="SceneDimensions" RoomId="RoomId" />
+    <SceneContextPanePresentation View="Scene" Placement="Placement" TakePlacementFocus="TakePlacementFocus" SelectedItem="SelectedItem" ActionBox="ActionBox" ActionRequested="ActionRequested" OwnerMounted="OwnerMounted" SelectionChanged="SelectionChanged" PlacementCommitted="PlacementCommitted" PlacementCancelled="PlacementCancelled" MarkerDragCommitted="MarkerDragCommitted" SceneNudgeCommitted="SceneNudgeCommitted" FrameGeometryCommitted="FrameGeometryCommitted" Capture="Capture" RoomId="RoomId" />
 </section>
     <div class="room-map-context-height-handle" data-v2-map-context-height-handle="true" aria-hidden="true"></div>
 </div>
@@ -16,6 +16,7 @@
     [Parameter, EditorRequired] public RoomContextPresentationView View { get; set; } = null!;
     [Parameter] public SceneLayoutView? Scene { get; set; }
     [Parameter] public SceneAnnotationPlacementRequest? Placement { get; set; }
+    [Parameter] public Func<Guid, long, SceneAnnotationPlacementRequest, bool>? TakePlacementFocus { get; set; }
     [Parameter] public V2SceneSelectedItem? SelectedItem { get; set; }
     [Parameter] public V2SceneActionBoxView? ActionBox { get; set; }
     [Parameter] public Func<Guid, long, V2SceneAction, Task>? ActionRequested { get; set; }
@@ -31,7 +32,6 @@
     [Parameter] public Guid? SelectMarkerAfterRefresh { get; set; }
     [Parameter] public Func<Task>? SceneMarkerSelected { get; set; }
     [Parameter] public EventCallback Capture { get; set; }
-    [Parameter] public EventCallback SceneDimensions { get; set; }
     [Parameter] public Guid RoomId { get; set; }
     [Parameter] public AreaMapSurfaceView? Map { get; set; }
     [Parameter] public EventCallback<AreaMapSurface.LinkedMapRoomIntent> LinkedRoomActivated { get; set; }

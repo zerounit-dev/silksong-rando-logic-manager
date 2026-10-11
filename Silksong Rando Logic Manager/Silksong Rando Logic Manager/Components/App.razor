@@ -6,6 +6,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <base href="/" />
     <link rel="stylesheet" href="@Assets["app.css"]" />
+    <link rel="stylesheet" href="@Assets["archipelago.css"]" />
+    <style id="archipelago-status" data-permanent></style>
     <link rel="stylesheet" href="@Assets["lib/fontawesome/css/all.min.css"]" />
     <link rel="stylesheet" href="@Assets["Silksong_Rando_Logic_Manager.styles.css"]" />
     <ImportMap />
@@ -28,12 +30,26 @@
 
 <body>
     <Routes />
+    <div id="archipelago-modal" class="confirmation-backdrop archipelago-backdrop" data-permanent hidden>
+        <section class="confirmation-modal archipelago-modal" role="dialog" aria-modal="true" aria-labelledby="archipelago-title" tabindex="-1">
+            <header><h2 id="archipelago-title">archipelago</h2><button type="button" class="archipelago-close" aria-label="Close archipelago" title="Close"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button></header>
+            <p id="archipelago-warning" class="archipelago-warning" role="alert" hidden></p>
+            <form autocomplete="off">
+                <div class="archipelago-endpoint"><label>server<input id="archipelago-server" type="text" autocomplete="off" spellcheck="false" /></label><label class="archipelago-port">port<input id="archipelago-port" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" /></label></div>
+                <label>slot name<input id="archipelago-slot" type="text" autocomplete="off" spellcheck="false" /></label>
+                <label>password<input id="archipelago-password" type="password" autocomplete="off" /></label>
+                <label class="archipelago-auto"><input id="archipelago-follow" type="checkbox" /> follow current room</label>
+                <footer><label class="archipelago-auto"><input id="archipelago-auto" type="checkbox" /> auto-reconnect</label><button id="archipelago-connect" type="submit">connect</button></footer>
+            </form>
+        </section>
+    </div>
     <ReconnectModal />
     <FatalCircuitFallback />
     <script src="@Assets["requirement-catalogue.js"]"></script>
     <script src="@Assets["map-navigation.js"]"></script>
     <script src="@Assets["fatal-circuit-fallback.js"]"></script>
     <script src="@Assets["_framework/blazor.web.js"]"></script>
+    <script id="archipelago-script" src="@Assets["archipelago.js"]" data-permanent></script>
 </body>
 
 </html>

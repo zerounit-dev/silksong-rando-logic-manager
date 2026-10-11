@@ -5,7 +5,7 @@
     <RoomActionRowPresentation NavigationContext="new RoomNavigationContextControlsView(View.IsArchived)" BackToMap="BackToMap" ToggleMapContext="ToggleMapContext" LifecycleContent="new RoomLifecycleContentControlsView(View.IsArchived, ShowArchivedChildren, RecheckRoomLogicBusy, View.CanExportZone)" RoomId="View.RoomId" ToggleArchivedChildren="ToggleArchivedChildren" LifecycleContentIntent="LifecycleContentIntent" Archive="Archive" Restore="Restore" PermanentDelete="PermanentDelete" CurrentRoomExport="CurrentRoomExport" ZoneExport="ZoneExport" />
     @if (!View.IsArchived && (!MapContextVisibilityResolved || ShowMapContext))
     {
-        <RoomContextSplitPanePresentation View="new RoomContextPresentationView(true)" Map="Map" MapOwnerGeneration="MapOwnerGeneration" Scene="Scene" Placement="Placement" SelectedItem="SelectedItem" ActionBox="ActionBox" ActionRequested="ActionRequested" OwnerMounted="OwnerMounted" SelectionChanged="SelectionChanged" PlacementCommitted="PlacementCommitted" PlacementCancelled="PlacementCancelled" MarkerDragCommitted="MarkerDragCommitted" SceneNudgeCommitted="SceneNudgeCommitted" FrameGeometryCommitted="FrameGeometryCommitted" Capture="Capture" SceneDimensions="SceneDimensions" RoomId="View.RoomId" LinkedRoomActivated="LinkedRoomActivated" MapLinksChanged="MapLinksChanged" MapLinkModalStateChanged="MapLinkModalStateChanged" />
+        <RoomContextSplitPanePresentation View="new RoomContextPresentationView(true)" Map="Map" MapOwnerGeneration="MapOwnerGeneration" Scene="Scene" Placement="Placement" TakePlacementFocus="TakePlacementFocus" SelectedItem="SelectedItem" ActionBox="ActionBox" ActionRequested="ActionRequested" OwnerMounted="OwnerMounted" SelectionChanged="SelectionChanged" PlacementCommitted="PlacementCommitted" PlacementCancelled="PlacementCancelled" MarkerDragCommitted="MarkerDragCommitted" SceneNudgeCommitted="SceneNudgeCommitted" FrameGeometryCommitted="FrameGeometryCommitted" Capture="Capture" RoomId="View.RoomId" LinkedRoomActivated="LinkedRoomActivated" MapLinksChanged="MapLinksChanged" MapLinkModalStateChanged="MapLinkModalStateChanged" />
     }
 </section>
 
@@ -14,6 +14,7 @@
     [Parameter] public SceneLayoutView? Scene { get; set; }
     [Parameter] public AreaMapSurfaceView? Map { get; set; }
     [Parameter] public SceneAnnotationPlacementRequest? Placement { get; set; }
+    [Parameter] public Func<Guid, long, SceneAnnotationPlacementRequest, bool>? TakePlacementFocus { get; set; }
     [Parameter] public V2SceneSelectedItem? SelectedItem { get; set; }
     [Parameter] public V2SceneActionBoxView? ActionBox { get; set; }
     [Parameter] public Func<Guid, long, V2SceneAction, Task>? ActionRequested { get; set; }
@@ -47,7 +48,6 @@
     [Parameter] public EventCallback Archive { get; set; }
     [Parameter] public EventCallback Restore { get; set; }
     [Parameter] public EventCallback PermanentDelete { get; set; }
-    [Parameter] public EventCallback SceneDimensions { get; set; }
     [Parameter] public EventCallback<RoomExportIntent> CurrentRoomExport { get; set; }
     [Parameter] public EventCallback<RoomExportIntent> ZoneExport { get; set; }
     [Parameter] public EventCallback<RoomHeaderDraft> DraftChanged { get; set; }

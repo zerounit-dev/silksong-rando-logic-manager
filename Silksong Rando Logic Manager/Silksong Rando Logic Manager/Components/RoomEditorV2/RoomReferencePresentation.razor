@@ -1,7 +1,7 @@
 @using Silksong_Rando_Logic_Manager.Components.RoomEditorV2.Contracts
 
 <label>
-    ref <textarea class="@SeverityClass(View.Severity)" aria-label="Room reference ID" rows="1" autocomplete="off" readonly="@(!Editable)" @oninput="Changed" @onblur="Save">@Value</textarea>
+    ref <textarea data-v2-header-field="reference" class="@SeverityClass(View.Severity)" aria-label="Room reference ID" rows="1" autocomplete="off" readonly="@(!Editable)" @oninput="Changed" @onblur="Save">@Value</textarea>
 </label>
 
 @code {

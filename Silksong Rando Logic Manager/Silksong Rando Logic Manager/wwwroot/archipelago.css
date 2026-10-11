@@ -1,0 +1,19 @@
+.sidebar-export-footer > archipelago-launcher { display: contents; }
+.sidebar-archipelago-control { display: inline-flex; align-items: center; justify-content: center; width: 100%; gap: .18rem; }
+.archipelago-backdrop[hidden] { display: none; }
+.archipelago-backdrop { z-index: 1000; }
+.confirmation-modal.archipelago-modal { width: min(24rem, calc(100vw - 2rem)); min-width: 0; max-height: calc(100dvh - 2rem); padding: .75rem; font-size: .72rem; }
+.archipelago-modal header { display: flex; align-items: center; justify-content: space-between; margin-bottom: .5rem; }
+.archipelago-modal header h2 { margin: 0; }
+.archipelago-modal .archipelago-close { padding: .1rem .2rem; border: 0; background: transparent; color: inherit; cursor: pointer; font: inherit; }
+.archipelago-modal form, .archipelago-modal form > label { display: grid; gap: .4rem; }
+.archipelago-modal label { display: grid; gap: .15rem; min-width: 0; }
+.archipelago-endpoint { display: grid; grid-template-columns: minmax(0, 1fr) 4.5rem; gap: .4rem; }
+.archipelago-modal input:not([type="checkbox"]) { width: 100%; min-width: 0; padding: .15rem .2rem; border: 0; border-bottom: 1px solid #aaa9a1; background: transparent; color: inherit; font: inherit; }
+.archipelago-modal input:focus-visible, .archipelago-modal button:focus-visible { outline: 1px solid #575650; outline-offset: 1px; }
+.archipelago-modal input:disabled { color: #67655e; }
+.archipelago-modal footer { display: flex; align-items: center; justify-content: space-between; gap: .5rem; margin-top: .4rem; }
+.archipelago-modal .archipelago-auto { display: flex; align-items: center; gap: .25rem; }
+.archipelago-modal footer button { min-height: 1.45rem; padding: .1rem .3rem; border: 1px solid #99978f; background: transparent; color: inherit; cursor: pointer; font: inherit; }
+.archipelago-modal footer button:disabled { color: #85837b; cursor: not-allowed; }
+.archipelago-modal .archipelago-warning { margin: 0 0 .5rem; color: #856404; overflow-wrap: anywhere; white-space: pre-wrap; }

@@ -4,9 +4,8 @@ using Silksong_Rando_Logic_Manager.Data;
 namespace Silksong_Rando_Logic_Manager.Services;
 
 public sealed class SceneImportService(IDbContextFactory<LogicDbContext> dbContextFactory,
-    RequirementValidationService requirementValidation)
+    RequirementValidationService requirementValidation, SceneImageFileService? sceneImages = null)
 {
-    private static readonly SceneImageTransformService SceneImageTransforms = new();
     private readonly RequirementValidationService requirementStatus = requirementValidation;
     public async Task<SceneImportPreview> PreviewAsync(SceneDumpReview review, CancellationToken cancellationToken = default)
     {
@@ -18,7 +17,7 @@ public sealed class SceneImportService(IDbContextFactory<LogicDbContext> dbConte
     internal static async Task<SceneImportPreview> PreviewAsync(LogicDbContext db, SceneDumpReview review, CancellationToken cancellationToken)
     {
         var rooms = await db.Rooms.AsNoTracking().Where(x => !x.IsArchived)
-            .Select(x => new SceneImportRoom(x.Id, x.FriendlyName, x.ReferenceId, x.InGameId, x.SceneUnitWidth, x.SceneUnitHeight)).ToListAsync(cancellationToken);
+            .Select(x => new SceneImportRoom(x.Id, x.FriendlyName, x.ReferenceId, x.InGameId, x.SceneMaxX, x.SceneMaxY)).ToListAsync(cancellationToken);
         var transitions = await db.RoomTransitions.AsNoTracking().Where(x => !x.IsArchived && !x.Room.IsArchived)
             .Select(x => new SceneImportSelectableRecord(x.Id, x.RoomId, SceneDumpClassification.Exit, x.FriendlyName, x.InGameId)).ToListAsync(cancellationToken);
         var checks = await db.CheckLocations.AsNoTracking().Where(x => !x.IsArchived && !x.Room.IsArchived)
@@ -250,28 +249,17 @@ public sealed class SceneImportService(IDbContextFactory<LogicDbContext> dbConte
         return candidate;
     }
 
-    private static void ApplySceneDimensions(Room room, SceneUnitSize? parsedDimensions, SceneUnitSize? replacementDimensions)
+    private void ApplySceneDimensions(Room room, SceneUnitSize? parsedDimensions, SceneUnitSize? replacementDimensions)
     {
-        var before = new Room
-        {
-            SceneUnitWidth = room.SceneUnitWidth,
-            SceneUnitHeight = room.SceneUnitHeight,
-            SceneImageScaleXPercent = room.SceneImageScaleXPercent,
-            SceneImageScaleYPercent = room.SceneImageScaleYPercent,
-            SceneImagePanXPercent = room.SceneImagePanXPercent,
-            SceneImagePanYPercent = room.SceneImagePanYPercent
-        };
         if (parsedDimensions is not { } parsed)
         {
             if (replacementDimensions is not null) throw new InvalidOperationException("Scene dimensions can only be replaced from a valid parsed scene size.");
             return;
         }
 
-        if (room.SceneUnitWidth is null && room.SceneUnitHeight is null)
+        if (room.SceneMaxX is null && room.SceneMaxY is null)
         {
-            room.SceneUnitWidth = parsed.Width;
-            room.SceneUnitHeight = parsed.Height;
-            MarkSceneImageStale(before, room);
+            SetMaxima(room, parsed.Width, parsed.Height);
             return;
         }
 
@@ -280,7 +268,7 @@ public sealed class SceneImportService(IDbContextFactory<LogicDbContext> dbConte
             return;
         }
 
-        if (room.SceneUnitWidth is not { } currentWidth || room.SceneUnitHeight is not { } currentHeight ||
+        if (room.SceneMaxX is not { } currentWidth || room.SceneMaxY is not { } currentHeight ||
             !double.IsFinite(currentWidth) || !double.IsFinite(currentHeight) || currentWidth <= 0 || currentHeight <= 0 ||
             currentWidth == parsed.Width && currentHeight == parsed.Height)
         {
@@ -292,18 +280,19 @@ public sealed class SceneImportService(IDbContextFactory<LogicDbContext> dbConte
             throw new InvalidOperationException("Replacement scene dimensions must be finite positive values.");
         }
 
-        room.SceneUnitWidth = replacementDimensions.Width;
-        room.SceneUnitHeight = replacementDimensions.Height;
-        MarkSceneImageStale(before, room);
+        SetMaxima(room, replacementDimensions.Width, replacementDimensions.Height);
     }
 
-    private static void MarkSceneImageStale(Room before, Room after)
+    private void SetMaxima(Room room, double maxX, double maxY)
     {
-        if (SceneImageTransforms.ShouldMarkStale(before, after)) after.IsSceneImageStale = true;
+        if (!SceneBounds.TryGetSize(room.SceneMinX, room.SceneMinY, maxX, maxY, out _, out _))
+            throw new InvalidOperationException("Imported scene maxima must exceed the retained minima and produce finite positive dimensions.");
+        if ((room.SceneMaxX != maxX || room.SceneMaxY != maxY) && sceneImages?.Exists(room.Id) == true) room.IsSceneImageStale = true;
+        room.SceneMaxX = maxX; room.SceneMaxY = maxY;
     }
 }
 
-public sealed record SceneImportRoom(Guid Id, string FriendlyName, string ReferenceId, string? InGameId, double? SceneUnitWidth, double? SceneUnitHeight);
+public sealed record SceneImportRoom(Guid Id, string FriendlyName, string ReferenceId, string? InGameId, double? SceneMaxX, double? SceneMaxY);
 public sealed record SceneImportPreview(IReadOnlyList<SceneImportRoom> MatchingRooms, IReadOnlyList<SceneImportObjectMatch> ObjectMatches, IReadOnlyList<SceneImportSelectableRecord> Transitions, IReadOnlyList<SceneImportSelectableRecord> Checks, IReadOnlyList<SceneImportEnemyName> EnemyNames);
 public sealed record SceneImportEnemyName(Guid Id, string OutputValue, string Name);
 public sealed record SceneImportObjectMatch(Guid ObjectId, SceneDumpClassification Classification, string? GameId, IReadOnlyList<SceneImportRecordMatch> Matches);

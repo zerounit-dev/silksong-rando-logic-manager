@@ -25,8 +25,7 @@
                 case V2PermanentDeleteDialogView delete: <V2PermanentDeleteDialogContent View="delete" Cancel="Cancel" Confirm="Apply" Disabled="@(Stage == V2ModalRuntimeStage.Committing)" /> break;
                 case V2InGameMetadataDialogView metadata when MetadataDraft is not null: <V2InGameMetadataDialogContent View="metadata" Draft="MetadataDraft" Disabled="@(Stage == V2ModalRuntimeStage.Committing)" DraftChanged="MetadataDraftChanged" Cancel="Cancel" Apply="Apply" /> break;
                 case V2InGameMetadataDialogView metadata when CheckMetadataDraft is not null: <V2CheckInGameMetadataDialogContent View="metadata" Draft="CheckMetadataDraft" Disabled="@(Stage == V2ModalRuntimeStage.Committing)" DraftChanged="CheckMetadataDraftChanged" Cancel="Cancel" Apply="Apply" /> break;
-                case V2SceneDimensionsDialogView dimensions: <V2SceneDimensionsDialogContent View="dimensions" Disabled="@(Stage == V2ModalRuntimeStage.Committing)" DraftChanged="SceneDimensionsDraftChanged" Cancel="Cancel" Apply="Apply" /> break;
-                case V2SceneImageCaptureDialogView capture: <V2SceneImageCaptureDialogContent View="capture" Disabled="@(Stage == V2ModalRuntimeStage.Committing)" DraftChanged="SceneImageCaptureDraftChanged" Reset="SceneImageCaptureReset" Cancel="Cancel" Apply="Apply" /> break;
+                case V2SceneImageCaptureDialogView capture: <V2SceneImageCaptureDialogContent View="capture" Disabled="@(Stage == V2ModalRuntimeStage.Committing)" CorrectionFocusVersion="SceneCaptureCorrectionFocusVersion" DraftChanged="SceneImageCaptureDraftChanged" Reset="SceneImageCaptureReset" Clear="SceneBoundsClear" Cancel="Cancel" Apply="Apply" /> break;
                 case V2SceneImageGenerationProgressView progress: <section data-scene-image-generation-progress="true" role="status" aria-live="assertive"><h2 id="v2-page-modal-title">generating scene image</h2><p id="v2-page-modal-description">@progress.Message</p></section> break;
                 case V2CheckDisableDialogView checkDisable: <V2CheckDisableDialogContent View="checkDisable" /> break;
                 case V2ConnectionRemoveDialogView connectionRemove: <V2ConnectionRemoveDialogContent View="connectionRemove" Cancel="Cancel" Confirm="Apply" Disabled="@(Stage == V2ModalRuntimeStage.Committing)" /> break;
@@ -45,13 +44,14 @@
     [Parameter] public EventCallback Apply { get; set; }
     [Parameter] public EventCallback DoNotUpdate { get; set; }
     [Parameter] public bool FocusRequested { get; set; }
+    [Parameter] public long SceneCaptureCorrectionFocusVersion { get; set; }
     [Parameter] public V2ModalRuntimeStage? Stage { get; set; }
     [Parameter] public TransitionInGameMetadataDraft? MetadataDraft { get; set; }
     [Parameter] public EventCallback<TransitionInGameMetadataDraft> MetadataDraftChanged { get; set; }
     [Parameter] public CheckInGameMetadataDraft? CheckMetadataDraft { get; set; }
     [Parameter] public EventCallback<CheckInGameMetadataDraft> CheckMetadataDraftChanged { get; set; }
     [Parameter] public EventCallback<V2SubroomGeometryDialogView> SubroomGeometryDraftChanged { get; set; }
-    [Parameter] public EventCallback<V2SceneDimensionsDialogView> SceneDimensionsDraftChanged { get; set; }
+    [Parameter] public EventCallback SceneBoundsClear { get; set; }
     [Parameter] public EventCallback<V2SceneImageCaptureDialogView> SceneImageCaptureDraftChanged { get; set; }
     [Parameter] public EventCallback SceneImageCaptureReset { get; set; }
     [Parameter] public EventCallback ManageRequirementCatalogue { get; set; }

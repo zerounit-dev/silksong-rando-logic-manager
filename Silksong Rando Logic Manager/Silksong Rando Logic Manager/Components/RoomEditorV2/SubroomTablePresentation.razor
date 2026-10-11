@@ -139,6 +139,13 @@
     {
         if(ChildTableDraftAdapters.InstallGenuineEdit(row.Interaction, ChildTableDraftAdapters.Install(row.Draft, field, value, row.EntityId is null)))Boundary(row).GenuineEdit();
     }
+    public bool FollowBlocked => !PageOwned || active.Concat(archived).Any(row => Boundary(row).HoldsPresentation || row.State == RowState.Failed || row.Interaction.HasRetainedCorrection || row.EntityId is null && Meaningful(row));
+    public bool AdmitsFollowBoundary(ArchipelagoFollowBoundary native)
+    {
+        if (FollowBlocked || !Guid.TryParse(native.Client, out var id) || !ChildTableBrowserFacts.TryField(native.Field, out _) || !fields.Contains(native.Field)) return false;
+        var row = active.SingleOrDefault(row => row.ClientDraftId == id);
+        return row is not null && (row.EntityId is not null || native.Value.Length == 0);
+    }
     private Task Blur(Row row, string? correctionField = null)
     {
         var sourceRoom=RoomId;var generation=routeGeneration;var create=Create;var save=Save;var publish=RefreshApplied;

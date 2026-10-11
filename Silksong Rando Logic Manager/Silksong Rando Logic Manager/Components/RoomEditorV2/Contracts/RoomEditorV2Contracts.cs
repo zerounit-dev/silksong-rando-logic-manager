@@ -7,11 +7,13 @@ public enum V2ReferenceState { None, Resolved, Unresolved, Ambiguous, OutOfSync,
 public enum V2InverseState { None, Zero, One, Multiple }
 
 public sealed record RoomHeaderView(Guid RoomId, string FriendlyName, string ReferenceId, string? InGameId,
-    string? Contributors, string? Comments, double? SceneUnitWidth, double? SceneUnitHeight, bool HasSceneImageTransform,
+    string? Contributors, string? Comments, double SceneMinX, double SceneMinY, double? SceneMaxX, double? SceneMaxY, bool HasSceneImageTransform,
     bool IsSceneImageStale, bool IsArchived, bool CanExportZone, DateTime UpdatedUtc, V2Severity FriendlyNameSeverity,
     V2Severity ReferenceIdSeverity, V2Severity InGameIdSeverity)
 {
     public AppliedRoomStatus AppliedStatus { get; init; } = AppliedRoomStatus.Neutral;
+    public double? SceneUnitWidth => SceneBounds.TryGetSize(SceneMinX, SceneMinY, SceneMaxX, SceneMaxY, out var w, out _) ? w : null;
+    public double? SceneUnitHeight => SceneBounds.TryGetSize(SceneMinX, SceneMinY, SceneMaxX, SceneMaxY, out _, out var h) ? h : null;
 }
 /// <summary>Independent, non-persistence presentation contracts for header children.</summary>
 public sealed record RoomTitleView(string FriendlyName, V2Severity Severity, bool IsArchived, AppliedRoomStatus AppliedStatus = AppliedRoomStatus.Neutral);
@@ -74,36 +76,29 @@ public sealed record TransitionInGameMetadataDraft(string? InGameId, double? InG
 public sealed record CheckInGameMetadataDraft(string? InGameId, double? InGamePositionX, double? InGamePositionY,
     double? InGamePositionZ, double? LocalPositionX, double? LocalPositionY, double? LocalPositionZ,
     double? AnnotationSceneUnitX, double? AnnotationSceneUnitY);
-/// <summary>Typed local text draft for the exact scene-dimensions dialog.</summary>
-public sealed record V2SceneDimensionsDialogView(string Width, string Height, string? ValidationMessage = null) : V2PageModalContentView;
-public sealed record RoomSceneDimensionsDurableBaseline(Guid RoomId, DateTime UpdatedUtc, double? Width, double? Height);
-public sealed record RoomSceneDimensionsDraft(double? Width, double? Height);
-public enum V2RoomSceneDimensionsCommandStatus { Committed, Unchanged, Conflict, Missing, ExpectedFailure, Unexpected }
-public sealed record V2RoomSceneDimensionsCommandOutcome(V2RoomSceneDimensionsCommandStatus Status, string? Message = null,
-    RoomSceneDimensionsDurableBaseline? FreshBaseline = null, RoomSceneDimensionsDraft? RetainedDraft = null);
 /// <summary>Typed capture dialog state.  It is a page draft, never a Room entity.</summary>
-public sealed record V2SceneImageCaptureDialogView(string AvailabilitySummary, string ScaleXPercent, string ScaleYPercent,
-    string PanXPercent, string PanYPercent, bool IsAvailable, string ApplyLabel = "Apply capture",
-    V2SceneImageCapturePreviewView? Preview = null, long BrowserResetVersion = 0) : V2PageModalContentView;
+public sealed record V2SceneImageCaptureDialogView(string AvailabilitySummary, string MinX, string MinY, string MaxX, string MaxY,
+    string PixelsPerUnitX, string PixelsPerUnitY, string PixelOffsetX, string PixelOffsetY, bool UseSceneImage, DateTime UpdatedUtc, SceneImageCaptureBaseline Baseline,
+    bool IsAvailable, string ApplyLabel = "Apply", V2SceneImageCapturePreviewView? Preview = null, long BrowserResetVersion = 0) : V2PageModalContentView;
 /// <summary>Typed, read-only scene projection used only by the page-owned capture draft.</summary>
-public sealed record V2SceneImageCapturePreviewView(double Width, double Height,
+public sealed record V2SceneImageCapturePreviewView(SceneViewportBounds InitialViewport,
     IReadOnlyList<SceneSubroomFrameView> Frames, IReadOnlyList<SceneMarkerView> Markers);
 /// <summary>Browser-local preview values transferred once into the typed capture draft at Apply.</summary>
-public sealed record V2SceneImageCapturePreviewValues(string ScaleXPercent, string ScaleYPercent,
-    string PanXPercent, string PanYPercent);
+public sealed record V2SceneImageCapturePreviewValues(string MinX, string MinY, string MaxX, string MaxY,
+    string PixelsPerUnitX, string PixelsPerUnitY, string PixelOffsetX, string PixelOffsetY, bool UseSceneImage);
 /// <summary>Non-dismissible page-owned state while the approved slower image generation is completion-bound.</summary>
 public sealed record V2SceneImageGenerationProgressView(string Message = "Generating scene image…") : V2PageModalContentView;
 public sealed record V2SceneImageCaptureModalOperation(V2SceneImageCaptureDialogView Draft);
 public enum V2SceneImageCaptureCommandStatus { Committed, ExpectedFailure, Missing, Unexpected }
 public sealed record V2SceneImageCaptureCommandOutcome(V2SceneImageCaptureCommandStatus Status, string? Message = null,
-    SceneImageCaptureDraft? Draft = null);
+    SceneImageCaptureDraft? Draft = null, SceneImageCaptureBaseline? FreshBaseline = null,
+    bool PresentationRefreshed = false, bool RequiresRoomReload = false);
 public sealed record V2CheckDisableDialogView(string FriendlyName) : V2PageModalContentView;
 public sealed record V2ConnectionRemoveDialogView(string Alias) : V2PageModalContentView;
 public sealed record V2DirectAnnotationRemoveDialogView(string RecordKind, string FriendlyName) : V2PageModalContentView;
 public sealed record V2SubroomGeometryDialogView(string FriendlyName, double? X, double? Y, double? Width, double? Height) : V2PageModalContentView;
 public sealed record V2SubroomGeometryModalOperation(SubroomDurableBaseline Baseline, V2SubroomGeometryDialogView Draft);
 public sealed record V2SubroomRemoveModalOperation(SubroomDurableBaseline Baseline);
-public sealed record V2SceneDimensionsModalOperation(RoomSceneDimensionsDurableBaseline Baseline, V2SceneDimensionsDialogView Draft);
 public sealed record V2SubroomRemoveDialogView(string FriendlyName) : V2PageModalContentView;
 /// <summary>Read-only catalogue reference supplied by the page to the syntax guide.</summary>
 public sealed record V2RequirementSyntaxGuideDialogView(RequirementCatalogueReferenceView Reference) : V2PageModalContentView;
@@ -213,7 +208,6 @@ public sealed record V2ModalRuntimeState(V2PageModalContentView Content, string 
     V2DirectAnnotationRemoveModalOperation? DirectAnnotationRemoveOperation = null,
     V2SubroomGeometryModalOperation? SubroomGeometryOperation = null,
     V2SubroomRemoveModalOperation? SubroomRemoveOperation = null,
-    V2SceneDimensionsModalOperation? SceneDimensionsOperation = null,
     V2SceneImageCaptureModalOperation? SceneImageCaptureOperation = null);
 /// <summary>Page-only typed transition modal work. It carries service proposals, never EF rows.</summary>
 public abstract record V2TransitionModalOperation;
@@ -317,11 +311,14 @@ public sealed record EnemiesTableView(IReadOnlyList<CheckRowView> ActiveRows, IR
 public sealed record SceneImageDisplayView(bool HasTransform, bool IsStale, bool ImageExists, long ImageVersion = 0)
 { public bool IsAvailable => HasTransform && !IsStale && ImageExists; }
 /// <summary>Read-only scene projection. Coordinates remain lower-left/y-up scene units.</summary>
-public sealed record SceneLayoutView(bool HasValidBounds, double? SceneUnitWidth, double? SceneUnitHeight,
+public sealed record SceneLayoutView(bool HasValidBounds, double SceneMinX, double SceneMinY, double? SceneMaxX, double? SceneMaxY,
     IReadOnlyList<SceneSubroomFrameView> Frames, IReadOnlyList<SceneMarkerView> Markers,
     SceneImageDisplayView? Image = null, IReadOnlyList<SceneRelationshipThreadView>? Threads = null)
 {
+    public double? SceneUnitWidth => SceneBounds.TryGetSize(SceneMinX, SceneMinY, SceneMaxX, SceneMaxY, out var w, out _) ? w : null;
+    public double? SceneUnitHeight => SceneBounds.TryGetSize(SceneMinX, SceneMinY, SceneMaxX, SceneMaxY, out _, out var h) ? h : null;
     public IReadOnlyList<SceneRelationshipThreadView> RelationshipThreads => Threads ?? [];
+    public string? BoundsImageDiagnostic { get; init; }
 }
 public sealed record SceneSubroomFrameView(Guid EntityId, string Label, string? Title, double X, double Y, double Width, double Height);
 public sealed record SceneMarkerView(Guid EntityId, string Kind, string Label, string? Title, double X, double Y)

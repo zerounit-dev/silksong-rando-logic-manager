@@ -1,0 +1,22 @@
+.scene-image-capture-preview > g[data-v2-scene-capture-frame="true"],
+.scene-image-capture-preview > g[data-v2-scene-capture-marker] {
+    opacity: .25;
+}
+
+.scene-image-capture-field-group {
+    min-width: 0;
+    max-width: 100%;
+    box-sizing: border-box;
+}
+
+.scene-image-capture-axis-pair {
+    display: grid;
+    flex: 0 0 auto;
+    gap: .25rem;
+}
+
+.scene-image-capture-axis-pair label {
+    display: grid;
+    grid-template-columns: auto 5.5rem;
+    white-space: nowrap;
+}

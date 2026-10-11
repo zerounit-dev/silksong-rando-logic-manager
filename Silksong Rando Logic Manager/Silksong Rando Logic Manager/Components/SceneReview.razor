@@ -172,7 +172,7 @@
     private bool CanImportEnemiesOnly => CanImport && review is not null && Flatten(review.RootObjects).Any(node => node.Classification == SceneDumpClassification.Enemy);
     private List<SceneDumpObject> VisibleRows => visibleRows;
     private SceneImportRoom? EffectiveTargetRoom => targetRoomId is { } id ? preview?.MatchingRooms.SingleOrDefault(room => room.Id == id) : preview?.MatchingRooms.Count == 1 ? preview.MatchingRooms[0] : null;
-    private SceneUnitSize? CurrentDimensions => EffectiveTargetRoom is { SceneUnitWidth: { } width, SceneUnitHeight: { } height } ? new SceneUnitSize(width, height) : null;
+    private SceneUnitSize? CurrentDimensions => EffectiveTargetRoom is { SceneMaxX: { } width, SceneMaxY: { } height } ? new SceneUnitSize(width, height) : null;
     private bool ShowReplacementDimensions => review?.SceneUnitSize is { } parsed && CurrentDimensions is { } current && (current.Width != parsed.Width || current.Height != parsed.Height);
     private SceneUnitSize? ReplacementDimensions => ShowReplacementDimensions && replacementWidth is { } width && replacementHeight is { } height ? new SceneUnitSize(width, height) : null;
     private SceneReviewSpatialProjection SpatialPreview => spatialPreview;

@@ -14,17 +14,23 @@ public sealed class Room : ArchivableEntity
 
     public string? Comments { get; set; }
 
-    public double? SceneUnitWidth { get; set; }
+    public double SceneMinX { get; set; }
 
-    public double? SceneUnitHeight { get; set; }
+    public double SceneMinY { get; set; }
 
-    public double? SceneImageScaleXPercent { get; set; }
+    public double? SceneMaxX { get; set; }
 
-    public double? SceneImageScaleYPercent { get; set; }
+    public double? SceneMaxY { get; set; }
 
-    public double? SceneImagePanXPercent { get; set; }
+    public double? SceneImagePixelsPerUnitX { get; set; }
 
-    public double? SceneImagePanYPercent { get; set; }
+    public double? SceneImagePixelsPerUnitY { get; set; }
+
+    public double? SceneImagePixelOffsetX { get; set; }
+
+    public double? SceneImagePixelOffsetY { get; set; }
+
+    public bool UseSceneImage { get; set; } = true;
 
     public bool IsSceneImageStale { get; set; }
 
