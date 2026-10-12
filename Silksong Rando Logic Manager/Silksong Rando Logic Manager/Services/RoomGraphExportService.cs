@@ -19,18 +19,20 @@ public sealed class RoomGraphExportService(IDbContextFactory<LogicDbContext> con
             .Select(x => new ItemRow(x.Id, x.Name, x.Category, x.OutputValue, x.Aliases, x.Notes, x.SortOrder)).ToListAsync(cancellationToken);
         var enemies = await db.RequirementEnemyTypes.AsNoTracking().OrderBy(x => x.SortOrder).ThenBy(x => x.Id)
             .Select(x => new ItemRow(x.Id, x.Name, x.Category, x.OutputValue, x.Aliases, x.Notes, x.SortOrder)).ToListAsync(cancellationToken);
+        var crests = await db.RequirementCrests.AsNoTracking().OrderBy(x => x.SortOrder).ThenBy(x => x.Id)
+            .Select(x => new ItemRow(x.Id, x.Name, x.Category, x.OutputValue, x.Aliases, x.Notes, x.SortOrder)).ToListAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
 
         var globalFailures = new List<RoomGraphExportFailure>();
         var typeLegend = RoomExportStructure.BuildTypeLegend(globalFailures);
-        var catalogue = BuildCatalogue(predicates, items, countables, enemies, globalFailures);
+        var catalogue = BuildCatalogue(predicates, items, countables, enemies, crests, globalFailures);
         var structure = RoomExportStructure.Project(snapshot, globalFailures);
         var context = catalogue is null ? null : new RoomGraphTranslationContext(catalogue.Predicates, catalogue.Items,
             structure.Rooms.Select(x => new RoomGraphRequirementRoom(x.Row.Id, x.Row.ReferenceId)).ToArray(),
             structure.Rooms.SelectMany(room => room.Locations.OrderBy(x => x.Row.SortOrder)
                 .ThenBy(x => CanonicalValue(x.Row.Name), StringComparer.Ordinal).ThenBy(x => x.Row.Id))
                 .Select(x => new RoomGraphRequirementCheck(x.Row.Id, x.Row.RoomId, x.Row.Name, string.IsNullOrEmpty(x.Id) ? null : x.Id)).ToArray(),
-            catalogue.Countables, catalogue.Enemies);
+            catalogue.Countables, catalogue.Enemies, catalogue.Crests);
         var rooms = structure.Rooms.Select(room =>
         {
             var transitions = room.Transitions.Select(x =>
@@ -79,7 +81,7 @@ public sealed class RoomGraphExportService(IDbContextFactory<LogicDbContext> con
         : RoomGraphRequirementTranslator.Translate(raw, roomId, context);
 
     private static Catalogue? BuildCatalogue(IReadOnlyList<PredicateRow> predicateRows, IReadOnlyList<ItemRow> itemRows,
-        IReadOnlyList<ItemRow> countableRows, IReadOnlyList<ItemRow> enemyRows, List<RoomGraphExportFailure> failures)
+        IReadOnlyList<ItemRow> countableRows, IReadOnlyList<ItemRow> enemyRows, IReadOnlyList<ItemRow> crestRows, List<RoomGraphExportFailure> failures)
     {
         var initialFailureCount = failures.Count;
         var predicateInputs = new List<RequirementCataloguePredicateValidation>();
@@ -115,7 +117,8 @@ public sealed class RoomGraphExportService(IDbContextFactory<LogicDbContext> con
             failures.Add(new($"check-consuming requirement predicate output must emit exactly 'dependency:{{check}}'; correct: {string.Join(", ", invalidCheckOutputs)}"));
         var countables = BuildTypedValues(countableRows, "countable", failures);
         var enemies = BuildTypedValues(enemyRows, "enemy type", failures);
-        return failures.Count == initialFailureCount ? new(predicates, items, countables, enemies) : null;
+        var crests = BuildTypedValues(crestRows, "crest", failures);
+        return failures.Count == initialFailureCount ? new(predicates, items, countables, enemies, crests) : null;
     }
 
     private static IReadOnlyList<RoomGraphItemDefinition> BuildTypedValues(IReadOnlyList<ItemRow> rows, string kind, List<RoomGraphExportFailure> failures)
@@ -133,7 +136,7 @@ public sealed class RoomGraphExportService(IDbContextFactory<LogicDbContext> con
         return result;
     }
 
-    private sealed record Catalogue(IReadOnlyList<RoomGraphPredicateDefinition> Predicates, IReadOnlyList<RoomGraphItemDefinition> Items, IReadOnlyList<RoomGraphItemDefinition> Countables, IReadOnlyList<RoomGraphItemDefinition> Enemies);
+    private sealed record Catalogue(IReadOnlyList<RoomGraphPredicateDefinition> Predicates, IReadOnlyList<RoomGraphItemDefinition> Items, IReadOnlyList<RoomGraphItemDefinition> Countables, IReadOnlyList<RoomGraphItemDefinition> Enemies, IReadOnlyList<RoomGraphItemDefinition> Crests);
     private sealed record PredicateRow(Guid Id, string Name, string? Category, string InputSyntax, string OutputSyntax, string Aliases, string Notes, int SortOrder);
     private sealed record ItemRow(Guid Id, string Name, string? Category, string OutputValue, string Aliases, string Notes, int SortOrder);
 }

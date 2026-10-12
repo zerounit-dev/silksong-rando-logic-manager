@@ -12,6 +12,9 @@ public static class RequirementAtomFormatter
             throw new ArgumentException(error, nameof(outputSyntax));
         }
 
+        if (RequirementOutputTemplate.HasBracketedOns1Placeholder(inputSyntax, outputSyntax))
+            throw new ArgumentException("Output placeholders must not use input list brackets.", nameof(outputSyntax));
+
         var required = RequirementCatalogueLanguage.GetSupportedOutputArguments(inputSyntax);
         var placeholders = tokens.OfType<RequirementOutputPlaceholderToken>().Select(token => token.Value).ToArray();
         if (placeholders.Distinct().Count() != placeholders.Length || placeholders.Any(placeholder => !required.Contains(placeholder)) || required.Any(placeholder => !placeholders.Contains(placeholder)))
@@ -47,6 +50,9 @@ public static class RequirementAtomFormatter
         RequirementOutputPlaceholder.Check => Required(arguments.CheckGraphId, "check graph ID"),
         RequirementOutputPlaceholder.Enemy => Required(arguments.EnemyOutputValue, "enemy output value"),
         RequirementOutputPlaceholder.Countable => Required(arguments.CountableOutputValue, "countable output value"),
+        RequirementOutputPlaceholder.Crest => inputSyntax is RequirementInputSyntax.OptionalCrestThenPredicateThenDirection or RequirementInputSyntax.RequiredDifficultyThenOptionalCrestThenPredicate
+            ? string.IsNullOrWhiteSpace(arguments.CrestOutputValue) ? "none" : arguments.CrestOutputValue
+            : Required(arguments.CrestOutputValue, "crest output value"),
         _ => throw new ArgumentOutOfRangeException(nameof(placeholder))
     };
 

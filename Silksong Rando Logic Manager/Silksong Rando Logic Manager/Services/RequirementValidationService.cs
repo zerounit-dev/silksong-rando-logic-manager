@@ -52,6 +52,7 @@ public sealed class RequirementValidationService(
             var items = await LoadItemsAsync(db, cancellationToken);
             var countables = await LoadCountablesAsync(db, cancellationToken);
             var enemies = await LoadEnemiesAsync(db, cancellationToken);
+            var crests = await LoadCrestsAsync(db, cancellationToken);
             var rooms = await db.Rooms.AsNoTracking().Where(row => !row.IsArchived)
                 .Select(row => new RequirementValidationRoom(row.Id, row.ReferenceId)).ToListAsync(cancellationToken);
             var activeRoomIds = rooms.Select(row => row.Id).ToArray();
@@ -59,7 +60,7 @@ public sealed class RequirementValidationService(
             var transitions = await db.RoomTransitions.Where(row => !row.IsArchived && activeRoomIds.Contains(row.RoomId)).ToListAsync(cancellationToken);
             var connections = await db.SubroomConnections.Where(row => !row.IsArchived && activeRoomIds.Contains(row.RoomId)).ToListAsync(cancellationToken);
             var context = new RequirementValidationContext(predicates, items, rooms,
-                checks.Select(row => new RequirementValidationCheck(row.Id, row.RoomId, row.FriendlyName)).ToArray(), countables, enemies);
+                checks.Select(row => new RequirementValidationCheck(row.Id, row.RoomId, row.FriendlyName)).ToArray(), countables, enemies, crests);
 
             var results = new List<RequirementValidationRowResult>(transitions.Count + connections.Count + checks.Count);
             foreach (var row in transitions)
@@ -160,11 +161,12 @@ public sealed class RequirementValidationService(
         var items = await LoadItemsAsync(db, cancellationToken);
         var countables = await LoadCountablesAsync(db, cancellationToken);
         var enemies = await LoadEnemiesAsync(db, cancellationToken);
+        var crests = await LoadCrestsAsync(db, cancellationToken);
         var rooms = await db.Rooms.AsNoTracking().Where(row => !row.IsArchived)
             .Select(row => new RequirementValidationRoom(row.Id, row.ReferenceId)).ToListAsync(cancellationToken);
         var checks = await db.CheckLocations.AsNoTracking().Where(row => !row.IsArchived && !row.Room.IsArchived)
             .Select(row => new RequirementValidationCheck(row.Id, row.RoomId, row.FriendlyName)).ToListAsync(cancellationToken);
-        return new(predicates, items, rooms, checks, countables, enemies);
+        return new(predicates, items, rooms, checks, countables, enemies, crests);
     }
 
     internal bool? ValidateSafely(RequirementValidationContext context, Guid roomId, Guid rowId,
@@ -203,6 +205,10 @@ public sealed class RequirementValidationService(
         db.RequirementEnemyTypes.AsNoTracking().OrderBy(row => row.SortOrder).ThenBy(row => row.Id)
             .Select(row => new RequirementValidationItem(row.Id, row.Aliases)).ToListAsync(token);
 
+    private static Task<List<RequirementValidationItem>> LoadCrestsAsync(LogicDbContext db, CancellationToken token) =>
+        db.RequirementCrests.AsNoTracking().OrderBy(row => row.SortOrder).ThenBy(row => row.Id)
+            .Select(row => new RequirementValidationItem(row.Id, row.Aliases)).ToListAsync(token);
+
     private static string? ClassifySqlite(Exception exception)
     {
         var sqlite = exception as SqliteException ?? exception.InnerException as SqliteException;
@@ -229,7 +235,8 @@ internal sealed class RequirementValidationContext
         IEnumerable<RequirementValidationRoom> rooms,
         IEnumerable<RequirementValidationCheck> checks,
         IEnumerable<RequirementValidationItem> countables,
-        IEnumerable<RequirementValidationItem> enemies)
+        IEnumerable<RequirementValidationItem> enemies,
+        IEnumerable<RequirementValidationItem> crests)
     {
         Predicates = predicates.ToImmutableArray();
         Items = items.ToImmutableArray();
@@ -237,9 +244,10 @@ internal sealed class RequirementValidationContext
         Checks = checks.ToImmutableArray();
         Countables = countables.ToImmutableArray();
         Enemies = enemies.ToImmutableArray();
+        Crests = crests.ToImmutableArray();
         try
         {
-            Prepared = ManagedRequirementValidator.Prepare(Predicates, Items, Rooms, Checks, Countables, Enemies);
+            Prepared = ManagedRequirementValidator.Prepare(Predicates, Items, Rooms, Checks, Countables, Enemies, Crests);
         }
         catch (Exception exception)
         {
@@ -253,6 +261,7 @@ internal sealed class RequirementValidationContext
     internal ImmutableArray<RequirementValidationCheck> Checks { get; }
     internal ImmutableArray<RequirementValidationItem> Countables { get; }
     internal ImmutableArray<RequirementValidationItem> Enemies { get; }
+    internal ImmutableArray<RequirementValidationItem> Crests { get; }
     private ManagedRequirementValidator.PreparedContext? Prepared { get; }
     private ExceptionDispatchInfo? PreparationFailure { get; }
 
@@ -277,7 +286,8 @@ internal static class ManagedRequirementValidator
         ImmutableArray<RequirementValidationRoom> rooms,
         ImmutableArray<RequirementValidationCheck> checks,
         ImmutableArray<RequirementValidationItem> countableRows,
-        ImmutableArray<RequirementValidationItem> enemyRows)
+        ImmutableArray<RequirementValidationItem> enemyRows,
+        ImmutableArray<RequirementValidationItem> crestRows)
     {
         var predicates = predicateRows.SelectMany(predicate =>
         {
@@ -299,7 +309,8 @@ internal static class ManagedRequirementValidator
         EnsureUnique(items, "item");
         var countables = PrepareTypedAliases(countableRows, "countable");
         var enemies = PrepareTypedAliases(enemyRows, "enemy type");
-        return new(predicates, items, rooms, checks, countables, enemies);
+        var crests = PrepareTypedAliases(crestRows, "crest");
+        return new(predicates, items, rooms, checks, countables, enemies, crests);
     }
 
     private static ImmutableArray<string> PrepareTypedAliases(ImmutableArray<RequirementValidationItem> rows, string kind)
@@ -328,7 +339,8 @@ internal static class ManagedRequirementValidator
         ImmutableArray<RequirementValidationRoom> Rooms,
         ImmutableArray<RequirementValidationCheck> Checks,
         ImmutableArray<string> Countables,
-        ImmutableArray<string> Enemies);
+        ImmutableArray<string> Enemies,
+        ImmutableArray<string> Crests);
 
     private sealed class Parser(string source, Guid owningRoomId, PreparedContext context)
     {
@@ -368,7 +380,17 @@ internal static class ManagedRequirementValidator
                 if (atomic)
                 {
                     var start = position;
-                    while (position < source.Length && source[position] is not '(' and not ')' && !WordAt("AND") && !WordAt("OR")) position++;
+                    var bracketDepth = 0;
+                    while (position < source.Length)
+                    {
+                        var character = source[position];
+                        if (bracketDepth == 0 && (character is '(' or ')' || WordAt("AND") || WordAt("OR"))) break;
+                        if (character == '[') bracketDepth++;
+                        if (character == ']') bracketDepth--;
+                        if (bracketDepth < 0) return false;
+                        position++;
+                    }
+                    if (bracketDepth != 0) return false;
                     if (!ValidateAtom(source[start..position])) return false;
                 }
                 else
@@ -403,6 +425,12 @@ internal static class ManagedRequirementValidator
             var candidates = new List<bool>();
             foreach (var predicate in context.Predicates)
             {
+                if (RequirementOperandSyntax.HasAlternatives(predicate.Syntax))
+                {
+                    AddOperandCandidates(text, predicate, candidates);
+                    continue;
+                }
+                if (text.IndexOfAny(['[', ']', ',']) >= 0) continue;
                 switch (predicate.Syntax)
                 {
                     case RequirementInputSyntax.PredicateOnly:
@@ -413,18 +441,6 @@ internal static class ManagedRequirementValidator
                         break;
                     case RequirementInputSyntax.RequiredDifficultyThenPredicate:
                         if (HasLeadingValue(normalized, predicate.NormalizedAlias, Difficulties)) candidates.Add(true);
-                        break;
-                    case RequirementInputSyntax.PredicateThenDirection:
-                        if (TryRemainder(normalized, predicate.NormalizedAlias, out var direction) && Directions.Contains(direction)) candidates.Add(true);
-                        break;
-                    case RequirementInputSyntax.PredicateThenOptionalDirection:
-                        var directionPrefix = PrefixLength(text, predicate.Alias);
-                        if (directionPrefix >= 0)
-                        {
-                            // Inspect the source tail before identification: punctuation-only text is not omission.
-                            var directionTail = text[directionPrefix..].Trim();
-                            if (directionTail.Length == 0 || Directions.Contains(RequirementCatalogueLanguage.NormalizeIdentification(directionTail))) candidates.Add(true);
-                        }
                         break;
                     case RequirementInputSyntax.PredicateThenItem:
                         if (TryRemainder(normalized, predicate.NormalizedAlias, out var item))
@@ -438,12 +454,6 @@ internal static class ManagedRequirementValidator
                     case RequirementInputSyntax.PredicateThenCheck:
                         var prefix = PrefixLength(text, predicate.Alias);
                         if (prefix >= 0 && TryDependency(text[prefix..], owningRoomId, out var resolved)) candidates.Add(resolved);
-                        break;
-                    case RequirementInputSyntax.RequiredDifficultyThenPredicateThenEnemy:
-                        var split = normalized.IndexOf(' ');
-                        if (split > 0 && Difficulties.Contains(normalized[..split]) &&
-                            TryRemainder(normalized[(split + 1)..], predicate.NormalizedAlias, out var enemy))
-                            candidates.AddRange(context.Enemies.Where(alias => alias == enemy).Select(_ => true));
                         break;
                     case RequirementInputSyntax.PredicateThenQuantityThenCountable:
                         var countPrefix = PrefixLength(text, predicate.Alias);
@@ -460,6 +470,41 @@ internal static class ManagedRequirementValidator
                 }
             }
             return candidates.Count == 1 && candidates[0];
+        }
+
+        private void AddOperandCandidates(string text, PreparedPredicate predicate, List<bool> candidates)
+        {
+            var slots = RequirementOperandSyntax.Describe(predicate.Syntax);
+            // Scoped to this managed predicate alias, never to outputs or the whole expression.
+            var interpretations = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var parts in RequirementOperandSyntax.Partitions(text, slots))
+            {
+                var complete = true;
+                var identities = new List<string>();
+                for (var index = 0; index < slots.Count && complete; index++)
+                {
+                    var slot = slots[index];
+                    if (!RequirementOperandSyntax.TryValues(parts[index], slot, out var values)) { complete = false; break; }
+                    identities.Add(string.Join('\u001f', values.Select(RequirementCatalogueLanguage.NormalizeIdentification)));
+                    foreach (var value in values)
+                    {
+                        var identity = RequirementCatalogueLanguage.NormalizeIdentification(value);
+                        complete = slot.Role switch
+                        {
+                            "predicate" => identity == predicate.NormalizedAlias,
+                            "difficulty" => Difficulties.Contains(identity),
+                            "direction" => parts[index].Length == 0 && slot.Optional || Directions.Contains(identity),
+                            "enemy" => context.Enemies.Count(alias => alias == identity) == 1,
+                            "crest" => parts[index].Length == 0 && slot.Optional || context.Crests.Count(alias => alias == identity) == 1,
+                            _ => throw new InvalidOperationException("Unexpected operand in an approved list-bearing shape.")
+                        };
+                        if (!complete) break;
+                    }
+                }
+                // Identity contains only letters/digits/spaces; separators retain slot and ordered-entry boundaries.
+                // Different allocations of ignored punctuation are one interpretation, not list deduplication.
+                if (complete && interpretations.Add(string.Join('\u001e', identities))) candidates.Add(true);
+            }
         }
 
         private bool TryDependency(string remainder, Guid roomId, out bool resolved)

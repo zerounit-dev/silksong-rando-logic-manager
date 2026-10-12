@@ -19,6 +19,7 @@ public sealed class LogicDbContext(DbContextOptions<LogicDbContext> options) : D
     public DbSet<MapOverlay> MapOverlays => Set<MapOverlay>();
     public DbSet<RequirementPredicate> RequirementPredicates => Set<RequirementPredicate>();
     public DbSet<RequirementItem> RequirementItems => Set<RequirementItem>();
+    public DbSet<RequirementCrest> RequirementCrests => Set<RequirementCrest>();
     public DbSet<RequirementCountable> RequirementCountables => Set<RequirementCountable>();
     public DbSet<RequirementEnemyType> RequirementEnemyTypes => Set<RequirementEnemyType>();
 
@@ -63,6 +64,7 @@ public sealed class LogicDbContext(DbContextOptions<LogicDbContext> options) : D
         ConfigureMapOverlay(modelBuilder.Entity<MapOverlay>());
         ConfigureRequirementPredicate(modelBuilder.Entity<RequirementPredicate>());
         ConfigureRequirementItem(modelBuilder.Entity<RequirementItem>());
+        ConfigureRequirementCrest(modelBuilder.Entity<RequirementCrest>());
         ConfigureRequirementCountable(modelBuilder.Entity<RequirementCountable>());
         ConfigureRequirementEnemyType(modelBuilder.Entity<RequirementEnemyType>());
     }
@@ -232,6 +234,15 @@ public sealed class LogicDbContext(DbContextOptions<LogicDbContext> options) : D
     }
 
     private static void ConfigureRequirementCountable(EntityTypeBuilder<RequirementCountable> entity)
+    {
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Name).IsRequired();
+        entity.Property(x => x.OutputValue).IsRequired();
+        entity.Property(x => x.Aliases).IsRequired();
+        entity.Property(x => x.Notes).IsRequired();
+    }
+
+    private static void ConfigureRequirementCrest(EntityTypeBuilder<RequirementCrest> entity)
     {
         entity.HasKey(x => x.Id);
         entity.Property(x => x.Name).IsRequired();

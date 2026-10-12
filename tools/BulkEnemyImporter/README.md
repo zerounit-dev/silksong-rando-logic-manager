@@ -95,6 +95,14 @@ Unsupported criteria retain presence/incompleteness, not guessed facts or absenc
 No unresolved placeholder, FSM interpreter, catalogue mapping, new warnings or authored-field
 changes on Updates.
 
+EPN4 adds a separate names-only `FSM Boolean flags: name, otherName` section after
+the Spawn section, separated by LF; empty sections are omitted. Guarded finite
+literal reads on self/actual ancestors count as documentary context (including
+exact `blackThreadWorld`, omitted from printing), not proven governing requirements.
+They prevent the no-context Invalid default; writes/malformed new reads do not.
+Canonical instructions/replan/reparse bind the exact combined Notes as before.
+No branch interpretation, authored repair or PLAN/APPLY authorization is implied.
+
 EPN3 (`documentation/ENEMY_GOVERNING_CONDITIONS_IMPLEMENTATION_PLAN.md`) supersedes
 EPN2: reliable actor hierarchy=false plus reliable self/ancestor self=false gets exactly
 `Invalid` ONLY with no governing condition or relevant uncertainty on the whole chain.
@@ -107,6 +115,16 @@ missing/unknown flags do not invent causes/contradictions. Active unconditional 
 SW1 world proof/indication and all authored Update fields remain unchanged. Invalid
 is freeform text with normal catalogue-dependent validation, not a new enum/atom or
 proof game activation is impossible. No actor removal/backfill/FSM/composite inference.
+
+EPN6 removes the unrequested EPN5 persistence Notes section. Shared Notes joins
+only nonempty Spawn then FSM sections by LF. Exact attached PersistentBoolItem on
+self/actual ancestors still supplies context for either value; direct scalar
+validation retains incompleteness when contents are blank/missing/malformed.
+Persistence-only context produces blank Notes, not Invalid. Reliable no-context disabled
+defaults now additionally require no persistence context/incompleteness. Shared
+proposal/replan/reparse/Create strings agree; retained Updates are not repaired.
+See `documentation/ENEMY_PERSISTENCE_STATE_CONTRACT.md` and its printing successor
+`documentation/ENEMY_PERSISTENCE_NOTES_REMOVAL_PLAN.md`; no PLAN/APPLY is authorized.
 
 Missing-room placeholders are ordinary active Unknown checks named exactly
 `import enemies`, TODO, explicitly unverified, blank Requirements/null validation,

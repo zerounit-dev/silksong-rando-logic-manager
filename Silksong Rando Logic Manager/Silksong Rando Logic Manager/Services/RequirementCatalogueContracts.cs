@@ -12,7 +12,11 @@ public enum RequirementInputSyntax
     RequiredDifficultyThenPredicateThenEnemy,
     PredicateThenQuantityThenCountable,
     PredicateThenCountableThenQuantity,
-    PredicateThenOptionalDirection
+    PredicateThenOptionalDirection,
+    CrestThenPredicateThenDirection,
+    RequiredDifficultyThenCrestThenPredicate,
+    OptionalCrestThenPredicateThenDirection,
+    RequiredDifficultyThenOptionalCrestThenPredicate
 }
 
 public sealed record RequirementInputSyntaxOption(RequirementInputSyntax Value, string PersistedValue, string DisplayLabel);
@@ -56,7 +60,8 @@ public sealed record RequirementAtomFormatArguments(
     int? Quantity = null,
     string? CheckGraphId = null,
     string? EnemyOutputValue = null,
-    string? CountableOutputValue = null);
+    string? CountableOutputValue = null,
+    string? CrestOutputValue = null);
 
 public sealed record RequirementPredicateView(
     Guid Id,
@@ -81,11 +86,16 @@ public sealed record RequirementItemView(
 
 public sealed record RequirementCatalogueManagerView(
     IReadOnlyList<RequirementPredicateView> Predicates,
+    IReadOnlyList<RequirementCrestView> Crests,
     IReadOnlyList<RequirementItemView> Items,
     IReadOnlyList<RequirementCountableView> Countables,
     IReadOnlyList<RequirementEnemyTypeView> EnemyTypes);
 
 public sealed record RequirementCountableView(
+    Guid Id, string Name, string? Category, string OutputValue, string Notes,
+    int SortOrder, string Aliases, IReadOnlyList<string> ParsedAliases);
+
+public sealed record RequirementCrestView(
     Guid Id, string Name, string? Category, string OutputValue, string Notes,
     int SortOrder, string Aliases, IReadOnlyList<string> ParsedAliases);
 
@@ -98,6 +108,14 @@ public sealed record RequirementPredicateReferenceView(
     string Name,
     string? Category,
     string InputSyntax,
+    string Notes,
+    string Aliases,
+    IReadOnlyList<string> ParsedAliases);
+
+public sealed record RequirementCrestReferenceView(
+    Guid Id,
+    string Name,
+    string? Category,
     string Notes,
     string Aliases,
     IReadOnlyList<string> ParsedAliases);
@@ -128,6 +146,7 @@ public sealed record RequirementEnemyTypeReferenceView(
 
 public sealed record RequirementCatalogueReferenceView(
     IReadOnlyList<RequirementPredicateReferenceView> Predicates,
+    IReadOnlyList<RequirementCrestReferenceView> Crests,
     IReadOnlyList<RequirementItemReferenceView> Items,
     IReadOnlyList<CheckLocationTypeDefinition> LocationTypes,
     IReadOnlyList<RequirementCountableReferenceView> Countables,
@@ -135,6 +154,7 @@ public sealed record RequirementCatalogueReferenceView(
 
 public sealed record RequirementCategorySuggestionsView(
     IReadOnlyList<string> PredicateCategories,
+    IReadOnlyList<string> CrestCategories,
     IReadOnlyList<string> ItemCategories,
     IReadOnlyList<string> CountableCategories,
     IReadOnlyList<string> EnemyTypeCategories);
@@ -167,10 +187,15 @@ public sealed record ReorderRequirementItem(Guid Id, int TargetIndex);
 public sealed record ApplyRequirementCountable(
     Guid? Id, string? Name, string? Category, string? AliasDraft, string? OutputValue, string? Notes);
 
+public sealed record ApplyRequirementCrest(
+    Guid? Id, string? Name, string? Category, string? AliasDraft, string? OutputValue, string? Notes);
+
 public sealed record ApplyRequirementEnemyType(
     Guid? Id, string? Name, string? Category, string? AliasDraft, string? OutputValue, string? Notes);
 
 public sealed record DeleteRequirementCountable(Guid Id);
+public sealed record DeleteRequirementCrest(Guid Id);
+public sealed record ReorderRequirementCrest(Guid Id, int TargetIndex);
 public sealed record DeleteRequirementEnemyType(Guid Id);
 public sealed record ReorderRequirementCountable(Guid Id, int TargetIndex);
 public sealed record ReorderRequirementEnemyType(Guid Id, int TargetIndex);

@@ -642,13 +642,52 @@ window.createV2MapContextHeightOwner = (root) => {
     };
 };
 
-// One owner per mounted Scene Review preview. No room preference or .NET calls.
+// One modal-local owner: resize/hover stay local; native search belongs to Blazor.
 const sceneReviewResizeOwnerKey = Symbol("scene-review-preview-resize-owner");
-window.createSceneReviewPreviewResizeOwner = (host) => {
+window.createSceneReviewPreviewResizeOwner = (host, modal) => {
     const handle = host?.querySelector?.("[data-scene-preview-resize-edge]");
-    if (!(host instanceof HTMLElement) || !(handle instanceof HTMLElement)) throw new Error("Scene Review preview is not mounted.");
-    host[sceneReviewResizeOwnerKey]?.dispose();
-    let disposed = false, ratio = 9, drag = null;
+    if (!(host instanceof HTMLElement) || !(handle instanceof HTMLElement) || !(modal instanceof HTMLElement) ||
+        !modal.isConnected || !modal.contains(host)) throw new Error("Scene Review preview is not mounted.");
+    modal[sceneReviewResizeOwnerKey]?.dispose();
+    let disposed = false, ratio = 5, drag = null, pointer = null;
+    const live = () => !disposed && modal.isConnected && modal[sceneReviewResizeOwnerKey] === owner;
+    const overlay = () => host.querySelector("[data-scene-preview-hover]");
+    const clearHover = () => { const circle = overlay(); if (circle) circle.style.display = "none"; };
+    const rowAt = target => target instanceof Element ? target.closest("[data-scene-hover-id]") : null;
+    const reconcile = () => {
+        if (!live()) return;
+        const circle = overlay();
+        const controls = modal.querySelector(".scene-workbench-controls");
+        if (!pointer || drag || host.hidden || controls?.disabled) { clearHover(); return; }
+        // Hit-test the current rendered row, not a retained/recycled node identity.
+        // The document supplies a point lookup only; all event/query ownership is local.
+        const row = rowAt(modal.ownerDocument.elementFromPoint(pointer.x, pointer.y));
+        if (!circle || !row || !modal.contains(row) || row.closest("[hidden]") || !row.getClientRects().length) { clearHover(); return; }
+        const xText = row.dataset.sceneHoverX, yText = row.dataset.sceneHoverY;
+        const x = Number(xText), y = Number(yText), radius = Number(circle.dataset.sceneHoverRadius);
+        if (!row.dataset.sceneHoverId || !xText || !yText || !Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(radius) || radius <= 0) { clearHover(); return; }
+        for (const [name, value] of [["cx", x], ["cy", y], ["r", radius]]) {
+            const text = String(value);
+            if (circle.getAttribute(name) !== text) circle.setAttribute(name, text);
+        }
+        circle.style.display = "";
+    };
+    const hoverMove = event => {
+        if (!live() || !event.isPrimary) return;
+        pointer = { x: event.clientX, y: event.clientY };
+        reconcile();
+    };
+    const hoverOut = event => {
+        if (!live() || !event.isPrimary) return;
+        // Descendant-to-descendant transitions within one row keep its decoration.
+        if (rowAt(event.target) && rowAt(event.target) === rowAt(event.relatedTarget)) return;
+        pointer = event.relatedTarget instanceof Node && modal.contains(event.relatedTarget) ? { x: event.clientX, y: event.clientY } : null;
+        reconcile();
+    };
+    const hoverLeave = () => { pointer = null; clearHover(); };
+    // Virtualize renders independently of the parent OnAfterRender. Observe only
+    // this modal's structural/fact changes, never the attributes we decorate.
+    const hoverObserver = new MutationObserver(reconcile);
     const apply = value => host.style.setProperty("--scene-review-ratio-term", String(value));
     const clamp = value => Math.min(9, Math.max(5, value));
     const release = pointerId => {
@@ -673,12 +712,13 @@ window.createSceneReviewPreviewResizeOwner = (host) => {
         apply(ratio); release(previous.pointerId);
     };
     const down = event => {
-        if (disposed || drag || event.button !== 0 || !event.isPrimary) return;
+        if (!live() || drag || event.button !== 0 || !event.isPrimary || modal.querySelector(".scene-workbench-controls")?.disabled || host.hidden) return;
         const bounds = host.getBoundingClientRect();
         if (bounds.width <= 0) return;
         event.preventDefault();
         handle.setPointerCapture(event.pointerId);
         drag = { pointerId: event.pointerId, y: event.clientY, height: bounds.height, width: bounds.width };
+        hoverLeave();
         window.addEventListener("keydown", escape);
     };
     handle.addEventListener("pointerdown", down);
@@ -686,20 +726,41 @@ window.createSceneReviewPreviewResizeOwner = (host) => {
     handle.addEventListener("pointerup", end);
     handle.addEventListener("pointercancel", cancel);
     handle.addEventListener("lostpointercapture", cancel);
-    apply(9);
+    apply(5);
     const owner = {
+        reconcile,
         dispose() {
             if (disposed) return;
-            cancel(); disposed = true;
-            handle.removeEventListener("pointerdown", down);
-            handle.removeEventListener("pointermove", move);
-            handle.removeEventListener("pointerup", end);
-            handle.removeEventListener("pointercancel", cancel);
-            handle.removeEventListener("lostpointercapture", cancel);
-            if (host[sceneReviewResizeOwnerKey] === owner) delete host[sceneReviewResizeOwnerKey];
+            try { cancel(); }
+            finally {
+                disposed = true;
+                window.removeEventListener("keydown", escape);
+                hoverLeave();
+                hoverObserver.disconnect();
+                modal.removeEventListener("pointerover", hoverMove);
+                modal.removeEventListener("pointermove", hoverMove);
+                modal.removeEventListener("pointerout", hoverOut);
+                modal.removeEventListener("pointerleave", hoverLeave);
+                modal.removeEventListener("pointercancel", hoverLeave);
+                modal.removeEventListener("scroll", reconcile, true);
+                handle.removeEventListener("pointerdown", down);
+                handle.removeEventListener("pointermove", move);
+                handle.removeEventListener("pointerup", end);
+                handle.removeEventListener("pointercancel", cancel);
+                handle.removeEventListener("lostpointercapture", cancel);
+                if (modal[sceneReviewResizeOwnerKey] === owner) delete modal[sceneReviewResizeOwnerKey];
+            }
         }
     };
-    host[sceneReviewResizeOwnerKey] = owner;
+    modal[sceneReviewResizeOwnerKey] = owner;
+    modal.addEventListener("pointerover", hoverMove);
+    modal.addEventListener("pointermove", hoverMove);
+    modal.addEventListener("pointerout", hoverOut);
+    modal.addEventListener("pointerleave", hoverLeave);
+    modal.addEventListener("pointercancel", hoverLeave);
+    modal.addEventListener("scroll", reconcile, true);
+    hoverObserver.observe(modal, { childList: true, subtree: true, attributes: true,
+        attributeFilter: ["hidden", "disabled", "data-scene-hover-id", "data-scene-hover-x", "data-scene-hover-y", "data-scene-hover-radius"] });
     return owner;
 };
 
@@ -812,7 +873,7 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
       const existing = root[v2ChildInteractionOwnerKey];
       if(existing?.isLive?.())throw new Error("A V2 child interaction owner is already installed for this page root.");
       existing?.dispose?.();
-       const owners = {}, configs = {}, tabSources = new WeakSet(), feedback = new Map(); let drag = null, disposed = false, requirementsContext = initialRequirementsContext ?? { rooms: [], checks: [], predicates: [], items: [], countables: [], enemies: [] }, activeRequirement = null, suppressedRequirementBlur = null, closingRequirement = false, pointerRequirementCaret = null;
+       const owners = {}, configs = {}, tabSources = new WeakSet(), feedback = new Map(); let drag = null, disposed = false, requirementsContext = initialRequirementsContext ?? { rooms: [], checks: [], predicates: [], items: [], countables: [], enemies: [], crests: [] }, activeRequirement = null, suppressedRequirementBlur = null, closingRequirement = false, pointerRequirementCaret = null;
      const config = kind => configs[kind];
      const control = x => x instanceof HTMLInputElement || x instanceof HTMLTextAreaElement || x instanceof HTMLSelectElement;
       const requirementEditor = x => x instanceof HTMLTextAreaElement && x.matches("[data-v2-requirements-editor]");
@@ -826,7 +887,15 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
             const matches=lookup.get(key);
             matches.uniqueDefinition=matches.length===1?definition:matches.uniqueDefinition===definition?definition:null;
         };
-         const compileRequirementsLookups = context => { const roomsByReference=new Map(),checksByName=new Map(),checksByRoom=new Map(),itemAliases=new Map(),countableAliases=new Map(),enemyAliases=new Map(),predicateAliasesByFirstToken=new Map();for(const room of context.rooms||[])addRequirementLookup(roomsByReference,identify(room.referenceId),room);for(const check of context.checks||[]){const name=identify(check.friendlyName);addRequirementLookup(checksByName,name,check);let roomChecks=checksByRoom.get(check.roomId);if(!roomChecks){roomChecks=new Map();checksByRoom.set(check.roomId,roomChecks);}addRequirementLookup(roomChecks,name,check);}for(const item of context.items||[])for(const alias of item.aliases||[])addFriendlyNameAliasLookup(itemAliases,identify(alias),item);for(const countable of context.countables||[])for(const alias of countable.aliases||[])addFriendlyNameAliasLookup(countableAliases,identify(alias),countable);for(const enemy of context.enemies||[])for(const alias of enemy.aliases||[])addFriendlyNameAliasLookup(enemyAliases,identify(alias),enemy);for(const predicate of context.predicates||[])for(const alias of predicate.aliases||[]){const normalized=identify(alias),tokens=normalized?normalized.split(" "):[];if(tokens.length)addRequirementLookup(predicateAliasesByFirstToken,tokens[0],{predicate,tokens});}return {roomsByReference,checksByName,checksByRoom,itemAliases,countableAliases,enemyAliases,predicateAliasesByFirstToken}; };
+         const compileRequirementsLookups = context => {
+             const roomsByReference=new Map(),checksByName=new Map(),checksByRoom=new Map(),itemAliases=new Map(),countableAliases=new Map(),enemyAliases=new Map(),crestAliases=new Map(),predicateAliasesByFirstToken=new Map(),predicateAliases=[];
+             for(const room of context.rooms||[])addRequirementLookup(roomsByReference,identify(room.referenceId),room);
+             for(const check of context.checks||[]){const name=identify(check.friendlyName);addRequirementLookup(checksByName,name,check);let roomChecks=checksByRoom.get(check.roomId);if(!roomChecks){roomChecks=new Map();checksByRoom.set(check.roomId,roomChecks);}addRequirementLookup(roomChecks,name,check);}
+             for(const [rows,map] of [[context.items,itemAliases],[context.countables,countableAliases],[context.enemies,enemyAliases],[context.crests,crestAliases]])
+                 for(const row of rows||[])for(const alias of row.aliases||[])addFriendlyNameAliasLookup(map,identify(alias),row);
+             for(const predicate of context.predicates||[])for(const alias of predicate.aliases||[]){const normalized=identify(alias),tokens=normalized?normalized.split(" "):[];if(tokens.length){const candidate={predicate,tokens,normalizedAlias:normalized};addRequirementLookup(predicateAliasesByFirstToken,tokens[0],candidate);predicateAliases.push(candidate);}}
+             return {roomsByReference,checksByName,checksByRoom,itemAliases,countableAliases,enemyAliases,crestAliases,predicateAliasesByFirstToken,predicateAliases};
+         };
        let requirementsLookups=compileRequirementsLookups(requirementsContext);
         const friendlyNameEditor = field => field instanceof HTMLTextAreaElement && field.matches("[data-v2-friendly-name-space]");
         const renderFriendlyName = field => {
@@ -875,7 +944,8 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
           const codePointAt=(text,index)=>index>=text.length?"":String.fromCodePoint(text.codePointAt(index));
           const identifierCodePoint=value=>/[\p{L}\p{Nd}]/u.test(value);
           const wordAt=(word,index)=>source.slice(index,index+word.length)===word&&!identifierCodePoint(codePointBefore(source,index))&&!identifierCodePoint(codePointAt(source,index+word.length));
-            const syntax = { only:"{predicate}", optional:"{difficulty?} {predicate}", required:"{difficulty} {predicate}", direction:"{predicate} {direction}", optionalDirection:"{predicate} {direction?}", item:"{predicate} {item}", check:"{predicate} {check}", quantity:"{predicate} {quantity}", enemy:"{difficulty} {predicate} {enemy}", countable:"{predicate} {quantity} {countable}", countableFirst:"{predicate} {countable} {quantity}" };
+              const syntax = { only:"{predicate}", optional:"{difficulty?} {predicate}", required:"{difficulty} {predicate}", direction:"{predicate} [{direction}]", optionalDirection:"{predicate} [{direction?}]", item:"{predicate} {item}", check:"{predicate} {check}", quantity:"{predicate} {quantity}", enemy:"{difficulty} {predicate} [{enemy}]", countable:"{predicate} {quantity} {countable}", countableFirst:"{predicate} {countable} {quantity}", crestDirection:"[{crest}] {predicate} {direction}", difficultyCrest:"{difficulty} [{crest}] {predicate}", optionalCrestDirection:"[{crest?}] {predicate} {direction}", difficultyOptionalCrest:"{difficulty} [{crest?}] {predicate}" };
+          const operandShapes=new Map(Object.values(syntax).filter(pattern=>pattern.includes("[")).map(pattern=>[pattern,pattern.split(" ").map(marker=>({role:marker.replace(/[\[\]{}?]/gu,""),optional:marker.includes("?"),list:marker.startsWith("[")}))]));
           const difficulty = new Set(["easy","medium","hard"]), direction = new Set(["left","right","up","down"]);
            const tokenizeAtom = text => { const chunks=[...text.matchAll(/\S+/gu)].map(match=>({start:match.index,end:match.index+match[0].length,identity:identify(match[0])})),meaningful=chunks.filter(chunk=>chunk.identity);return {text,chunks,meaningful}; };
              const matchingCandidates = tokens => { if(!tokens.length)return [];const matches=(requirementsLookups.predicateAliasesByFirstToken.get(tokens[0].identity)||[]).map(candidate=>({candidate,difficultyEnabled:false,invalidDifficulty:false}));if(tokens.length>1)for(const candidate of requirementsLookups.predicateAliasesByFirstToken.get(tokens[1].identity)||[]){const input=candidate.predicate.inputSyntax;if(difficulty.has(tokens[0].identity)&&(input===syntax.optional||input===syntax.required||input===syntax.enemy))matches.push({candidate,difficultyEnabled:true,invalidDifficulty:false});else if(!difficulty.has(tokens[0].identity)&&(input===syntax.required||input===syntax.enemy))matches.push({candidate,difficultyEnabled:false,invalidDifficulty:true});}return matches; };
@@ -883,6 +953,103 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
             const argumentStart = (text,prefixEnd) => prefixEnd+(text.slice(prefixEnd).length-text.slice(prefixEnd).trimStart().length);
           const scoped = (raw, prefixEnd) => { const rest=raw.slice(prefixEnd).trimStart(), words=[]; for(let index=0;index<rest.length;){const word=wordAtIn(rest,"IN",index)?"IN":wordAtIn(rest,"THE",index)?"THE":wordAtIn(rest,"GLOBAL",index)?"GLOBAL":null;if(word){words.push({word,index});index+=word.length;}else index++;} if(words.some(x=>x.word==="GLOBAL"))return { state:"unknown" }; if(words.length===0)return { state:"local", name:rest }; if(words.length!==1)return { state:"malformed" }; const qualifier=words[0]; if(qualifier.word==="THE"&&qualifier.index===0)return rest.slice(3).trim()?{state:"the",name:rest.slice(3).trimStart(),qualifier}:{state:"malformed"}; if(qualifier.word==="IN"&&qualifier.index>0&&rest.slice(qualifier.index+2).trim())return {state:"in",name:rest.slice(0,qualifier.index).trimEnd(),room:rest.slice(qualifier.index+2).trimStart(),qualifier}; return {state:"malformed"}; };
           const wordAtIn=(text,word,index)=>text.slice(index,index+word.length)===word&&!identifierCodePoint(codePointBefore(text,index))&&!identifierCodePoint(codePointAt(text,index+word.length));
+          const validListStructure = text => {
+              let opening=-1;
+              for(let index=0;index<text.length;index++){
+                  const character=text[index];
+                  if(character==="["){if(opening>=0)return false;opening=index;}
+                  else if(character==="]"){
+                      if(opening<0)return false;
+                      const entries=text.slice(opening+1,index).split(",");
+                      if(entries.some(entry=>!entry.trim()))return false;
+                      opening=-1;
+                  }else if(character===","&&opening<0)return false;
+                  else if(opening>=0&&(character==="("||character===")"||wordAtIn(text,"AND",index)||wordAtIn(text,"OR",index)))return false;
+              }
+              return opening<0;
+          };
+          const operandPartitions = (text,slots) => {
+              const cuts=[];let bracket=false;
+              for(let index=0;index<text.length;index++){
+                  if(text[index]==="[")bracket=true;else if(text[index]==="]")bracket=false;
+                  if(!bracket&&/\s/u.test(text[index])&&index>0&&!/\s/u.test(text[index-1]))cuts.push(index);
+              }
+              const result=[];
+              const split=(start,slot,prefix)=>{
+                  while(start<text.length&&/\s/u.test(text[start]))start++;
+                  if(slot===slots.length-1){if(start<text.length||slots[slot].optional)result.push([...prefix,{start,end:text.length}]);return;}
+                  for(const end of cuts)if(end>start)split(end,slot+1,[...prefix,{start,end}]);
+                  // Punctuation-only raw suffix is not optional-direction omission.
+                  if(slot===slots.length-2&&slots.at(-1).optional&&start<text.length&&identify(text.match(/\S+$/u)?.[0]||""))result.push([...prefix,{start,end:text.length},{start:text.length,end:text.length}]);
+              };
+               split(0,0,[]);
+               // Only the approved leading optional Crest may be absent; all present boundaries still compete.
+                if(slots.length===3&&slots[0].role==="crest"&&slots[0].optional&&slots[0].list&&slots[1].role==="predicate"&&!slots[1].optional&&!slots[1].list&&slots[2].role==="direction"&&!slots[2].optional&&!slots[2].list)
+                    split(0,1,[{start:0,end:0}]);
+                // The fifteenth descriptor alone admits an empty middle Crest. Keep every
+                // full difficulty/predicate boundary and exact raw ranges, without skipping text.
+                if(slots.length===3&&slots[0].role==="difficulty"&&!slots[0].optional&&!slots[0].list&&slots[1].role==="crest"&&slots[1].optional&&slots[1].list&&slots[2].role==="predicate"&&!slots[2].optional&&!slots[2].list)
+                    for(const end of cuts){
+                        let start=end;while(start<text.length&&/\s/u.test(text[start]))start++;
+                        if(start<text.length)result.push([{start:0,end},{start:end,end},{start,end:text.length}]);
+                    }
+                return result;
+          };
+          const operandValues = (text,part,slot) => {
+              const raw=text.slice(part.start,part.end);
+              if(!raw)return slot.optional?[]:null;
+              if(!/[\[\],]/u.test(raw))return [part];
+              if(!slot.list||!raw.startsWith("[")||!raw.endsWith("]")||/[\[\]]/u.test(raw.slice(1,-1)))return null;
+              const entries=[];let start=part.start+1;
+              for(const entry of raw.slice(1,-1).split(",")){
+                  const leading=entry.length-entry.trimStart().length,trailing=entry.length-entry.trimEnd().length;
+                  entries.push({start:start+leading,end:start+entry.length-trailing});start+=entry.length+1;
+              }
+              return entries;
+          };
+          const operandCandidates = text => {
+              const complete=[];let incomplete=false,malformed=false;
+              for(const candidate of requirementsLookups.predicateAliases){
+                  const slots=operandShapes.get(candidate.predicate.inputSyntax);if(!slots)continue;
+                  // Per managed alias, not across definitions/aliases or formatted outputs.
+                  const interpretations=new Map();
+                  // Recognition guidance only; complete interpretation always uses all raw boundaries below.
+                  const tokens=tokenizeAtom(text).meaningful;
+                  if(tokens.some((_,start)=>matchedPrefix(tokens,candidate,start)))incomplete=true;
+                  for(const parts of operandPartitions(text,slots)){
+                      const predicateIndex=slots.findIndex(slot=>slot.role==="predicate"),predicateRaw=text.slice(parts[predicateIndex].start,parts[predicateIndex].end);
+                      if(/[\[\],]/u.test(predicateRaw)||identify(predicateRaw)!==candidate.normalizedAlias)continue;
+                      incomplete=true;let valid=true;const roles=[],identities=[];
+                      for(let index=0;index<slots.length&&valid;index++){
+                          const slot=slots[index];if(slot.role==="predicate")continue;
+                          const values=operandValues(text,parts[index],slot);
+                          if(values===null){valid=false;if(/[\[\],]/u.test(text.slice(parts[index].start,parts[index].end)))malformed=true;break;}
+                          identities.push(values.map(value=>identify(text.slice(value.start,value.end))));
+                          for(const value of values){
+                              const identity=identify(text.slice(value.start,value.end));
+                              if(slot.role==="difficulty")valid=difficulty.has(identity);
+                              else if(slot.role==="direction")valid=direction.has(identity);
+                              else {const map=slot.role==="crest"?requirementsLookups.crestAliases:requirementsLookups.enemyAliases;valid=(map.get(identity)?.length??0)===1;}
+                              if(!valid)break;
+                              roles.push({...value,className:`requirements-${slot.role}`});
+                          }
+                      }
+                      if(valid){
+                          // Arrays retain slot/entry boundaries, order and repeated authored alternatives.
+                          const key=JSON.stringify(identities),existing=interpretations.get(key);
+                          if(!existing)interpretations.set(key,{type:"non-check",roles});
+                          else for(let index=0;index<roles.length;index++){
+                              // Equivalent allocations differ only at ignored boundary punctuation. Color their
+                              // common exact operand span; leave the boundary in raw ordinary foreground, no winner.
+                              existing.roles[index].start=Math.max(existing.roles[index].start,roles[index].start);
+                              existing.roles[index].end=Math.min(existing.roles[index].end,roles[index].end);
+                          }
+                      }
+                  }
+                  complete.push(...interpretations.values());
+              }
+              return {complete,incomplete,malformed};
+          };
            const renderDependency = (raw, candidate) => { const prefix=raw.slice(0,candidate.prefixEnd), rest=raw.slice(candidate.prefixEnd), leading=rest.slice(0,rest.length-rest.trimStart().length), operand=rest.trimStart(); add(prefix);add(leading); if(candidate.scope.state==="the"){add("THE","requirements-syntax");const name=operand.slice(3),space=name.slice(0,name.length-name.trimStart().length),value=name.trim(),trailing=name.slice(name.trimEnd().length);add(space);add(value,candidate.className);add(trailing);return;} if(candidate.scope.state==="in"){const q=candidate.scope.qualifier.index,name=operand.slice(0,q),room=operand.slice(q+2),nameSpace=name.slice(0,name.length-name.trimStart().length),roomSpace=room.slice(0,room.length-room.trimStart().length),roomTrailing=room.slice(room.trimEnd().length);add(nameSpace);add(name.trim(),candidate.className);add(name.slice(name.length-(name.length-name.trimEnd().length)));add("IN","requirements-syntax");add(roomSpace);add(room.trim(),candidate.className);add(roomTrailing);return;} add(operand,candidate.className); };
            const renderNonCheck = (raw, candidate) => {
                if(!candidate.roles){if(!candidate.className){add(raw);return;}add(raw.slice(0,candidate.argumentStart));add(raw.slice(candidate.argumentStart,candidate.argumentEnd),candidate.className);add(raw.slice(candidate.argumentEnd));return;}
@@ -901,16 +1068,18 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
            };
            const completeNonCheck = (tokenized,chunkStart=0,chunkEnd=tokenized.chunks.length) => {
                const end=tokenized.chunks[chunkEnd-1]?.end,tokens=tokenized.meaningful.filter(token=>token.start>=tokenized.chunks[chunkStart]?.start&&token.end<=end);
+               const raw=tokenized.text.slice(tokenized.chunks[chunkStart]?.start,end).trim();
+               if(!validListStructure(raw))return false;
+               if(operandCandidates(raw).complete.length>0)return true;
+               if(/[\[\],]/u.test(raw))return false;
                for(const entry of matchingCandidates(tokens)){
-                   const input=entry.candidate.predicate.inputSyntax;if(input===syntax.check)continue;
+                   const input=entry.candidate.predicate.inputSyntax;if(input===syntax.check||operandShapes.has(input))continue;
                    const shifted=entry.difficultyEnabled||entry.invalidDifficulty,match=matchedPrefix(tokens,entry.candidate,shifted?1:0);if(!match)continue;
                    const exact=match.next===tokens.length,rest=tokens.slice(match.next).map(token=>token.identity).join(" ");
-                   if(input===syntax.enemy){if(entry.difficultyEnabled&&(requirementsLookups.enemyAliases.get(rest)?.length??0)>0)return true;continue;}
                    if(input===syntax.countable&&!shifted){const argument=countableArgument(tokenized.text,match.prefixEnd,end);if(argument&&(requirementsLookups.countableAliases.get(argument.identity)?.length??0)>0)return true;continue;}
                    if(input===syntax.countableFirst&&!shifted){const argument=countableFirstArgument(tokenized.text,match.prefixEnd,end);if(argument&&(requirementsLookups.countableAliases.get(argument.identity)?.length??0)>0)return true;continue;}
                     if(input===syntax.only&&!shifted&&exact)return true;if(input===syntax.optional&&exact)return true;if(input===syntax.required&&entry.difficultyEnabled&&exact)return true;if(shifted)continue;
-                    if(input===syntax.optionalDirection&&(tokenized.text.slice(match.prefixEnd,end).trim().length===0||direction.has(rest)))return true;
-                   if(input===syntax.direction&&direction.has(rest))return true;if(input===syntax.quantity&&/^[1-9][0-9]*$/u.test(rest))return true;if(input===syntax.item&&(requirementsLookups.itemAliases.get(rest)?.length??0)>0)return true;
+                   if(input===syntax.quantity&&/^[1-9][0-9]*$/u.test(rest))return true;if(input===syntax.item&&(requirementsLookups.itemAliases.get(rest)?.length??0)>0)return true;
                }return false;
            };
            const adjacentCompleteOperands = tokenized => { for(let split=1;split<tokenized.chunks.length;split++)if(completeNonCheck(tokenized,0,split)&&completeNonCheck(tokenized,split,tokenized.chunks.length))return true;return false; };
@@ -921,34 +1090,28 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
                const countableEnd=start+match[1].length,quantityStart=countableEnd+match[2].length;
                return {identity:identify(match[1]),roles:[{start,end:countableEnd,className:"requirements-countable"},{start:quantityStart,end:start+tail.length,className:"requirements-quantity"}]};
            };
-           const atom=(raw)=>{const text=raw.trim(); if(!text){mark(raw);return false;} const tokenized=tokenizeAtom(text),tokens=tokenized.meaningful,complete=[],incomplete=[]; let malformedScope=false, forbiddenGlobal=false;
-              for(const entry of matchingCandidates(tokens)){const input=entry.candidate.predicate.inputSyntax,shifted=entry.difficultyEnabled||entry.invalidDifficulty,start=shifted?1:0,match=matchedPrefix(tokens,entry.candidate,start);if(!match)continue;const exact=match.next===tokens.length,restNorm=tokens.slice(match.next).map(token=>token.identity).join(" ");
+           const atom=(raw)=>{const text=raw.trim(); if(!text||!validListStructure(text)){mark(raw);return false;} const tokenized=tokenizeAtom(text),tokens=tokenized.meaningful,operands=operandCandidates(text),complete=[...operands.complete],incomplete=operands.incomplete?[true]:[]; let malformedScope=false, forbiddenGlobal=false;
+              for(const entry of matchingCandidates(tokens)){const input=entry.candidate.predicate.inputSyntax;if(operandShapes.has(input)||/[\[\],]/u.test(text))continue;const shifted=entry.difficultyEnabled||entry.invalidDifficulty,start=shifted?1:0,match=matchedPrefix(tokens,entry.candidate,start);if(!match)continue;const exact=match.next===tokens.length,restNorm=tokens.slice(match.next).map(token=>token.identity).join(" ");
                 if(input===syntax.only&&!shifted&&exact)complete.push({type:"plain"});
                  if(input===syntax.optional||input===syntax.required){if(exact&&((input===syntax.optional&&!entry.difficultyEnabled)||entry.difficultyEnabled)){const sourceDifficulty=tokenized.chunks[0];complete.push(entry.difficultyEnabled&&difficulty.has(sourceDifficulty.identity)?{type:"non-check",argumentStart:sourceDifficulty.start,argumentEnd:sourceDifficulty.end,className:"requirements-difficulty"}:{type:"plain"});}else if(exact&&!entry.difficultyEnabled)incomplete.push(true);}
-                 if(input===syntax.enemy){
-                     if(entry.difficultyEnabled){const modifier=tokens[0],tailStart=argumentStart(text,match.prefixEnd);for(const enemy of requirementsLookups.enemyAliases.get(restNorm)||[])complete.push({type:"non-check",roles:[{start:modifier.start,end:modifier.end,className:"requirements-difficulty"},{start:tailStart,end:text.length,className:"requirements-enemy"}]});}
-                     incomplete.push(true);continue;
-                 }
                  if(input===syntax.countable&&!shifted){const argument=countableArgument(text,match.prefixEnd);if(argument)for(const countable of requirementsLookups.countableAliases.get(argument.identity)||[])complete.push({type:"non-check",roles:argument.roles});incomplete.push(true);continue;}
                  if(input===syntax.countableFirst&&!shifted){const argument=countableFirstArgument(text,match.prefixEnd);if(argument)for(const countable of requirementsLookups.countableAliases.get(argument.identity)||[])complete.push({type:"non-check",roles:argument.roles});incomplete.push(true);continue;}
                 if(shifted)continue;
-                if(input===syntax.optionalDirection){const tail=text.slice(match.prefixEnd).trim();if(!tail)complete.push({type:"plain"});else if(direction.has(restNorm)){const start=argumentStart(text,match.prefixEnd);complete.push({type:"non-check",argumentStart:start,argumentEnd:text.length,className:"requirements-direction"});}else incomplete.push(true);}
-               if(input===syntax.direction){if(direction.has(restNorm)){const start=argumentStart(text,match.prefixEnd);complete.push({type:"non-check",argumentStart:start,argumentEnd:text.length,className:"requirements-direction"});}else incomplete.push(true);}
                if(input===syntax.quantity){if(/^[1-9][0-9]*$/u.test(restNorm)){const start=argumentStart(text,match.prefixEnd);complete.push({type:"non-check",argumentStart:start,argumentEnd:text.length,className:"requirements-quantity"});}else incomplete.push(true);}
                if(input===syntax.item){for(const item of requirementsLookups.itemAliases.get(restNorm)||[]){const start=argumentStart(text,match.prefixEnd);complete.push({type:"non-check",argumentStart:start,argumentEnd:text.length,className:"requirements-item"});}incomplete.push(true);}
                if(input===syntax.check){const scope=scoped(text,match.prefixEnd);if(scope.state==="malformed"){malformedScope=true;continue;}if(scope.state==="unknown"){forbiddenGlobal=true;continue;}if(!scope.name?.trim()){incomplete.push(true);continue;}let targetRoom=roomId, className="requirements-local";if(scope.state==="the"){targetRoom=null;className="requirements-global";}if(scope.state==="in"){const rooms=requirementsLookups.roomsByReference.get(identify(scope.room))||[];if(rooms.length!==1){complete.push({type:"dependency",prefixEnd:match.prefixEnd,scope,className:"requirements-unresolved"});continue;}targetRoom=rooms[0].roomId;className="requirements-in";}const checkName=identify(scope.name),matches=targetRoom===null?(requirementsLookups.checksByName.get(checkName)||[]):(requirementsLookups.checksByRoom.get(targetRoom)?.get(checkName)||[]);complete.push({type:"dependency",prefixEnd:match.prefixEnd,scope,className:matches.length===1?className:"requirements-unresolved"});}
              }
-             if(complete.length===1){const candidate=complete[0];if(candidate.type==="dependency")renderDependency(raw,candidate);else if(candidate.type==="non-check")renderNonCheck(raw,candidate);else add(raw);return true;}if(complete.length>1){add(raw,"requirements-unresolved");return true;}if(malformedScope){mark(raw);return false;}if(forbiddenGlobal){mark(raw,"requirements-unknown");return false;}if(incomplete.length){mark(raw,"requirements-incomplete");return false;}if(adjacentCompleteOperands(tokenized)){mark(raw);return false;}mark(raw,"requirements-unknown");return false;};
+             if(complete.length===1){const candidate=complete[0];if(candidate.type==="dependency")renderDependency(raw,candidate);else if(candidate.type==="non-check")renderNonCheck(raw,candidate);else add(raw);return true;}if(complete.length>1){add(raw,"requirements-unresolved");return true;}if(malformedScope||operands.malformed){mark(raw);return false;}if(forbiddenGlobal){mark(raw,"requirements-unknown");return false;}if(incomplete.length){mark(raw,"requirements-incomplete");return false;}if(adjacentCompleteOperands(tokenized)){mark(raw);return false;}mark(raw,"requirements-unknown");return false;};
         const expression=(end=false,depth=0)=>{let expect=true, operators=new Set(), lastKnown=false, saw=false, lastOperator=null;
           while(at<source.length){if(end&&source[at]===")"){if(expect){if(lastOperator!==null)spans[lastOperator][1]="requirements-malformed";mark(")");}else add(")",`requirements-paren-depth-${(depth - 1) % 4}`);at++;return !expect;} if(!end&&source[at]===")"){mark(")");at++;expect=false;continue;} if(/\s/u.test(source[at])){const start=at;while(at<source.length&&/\s/u.test(source[at]))at++;add(source.slice(start,at));continue;}
             if(source[at]==="("){if(!expect&&lastKnown){const start=at++;let escaped=false,nested=false;while(at<source.length&&source[at]!==")"){if(source[at]==="\\")escaped=true;if(source[at]==="(")nested=true;at++;}if(at>=source.length||escaped||nested){mark(source.slice(start,at));return false;}add(source.slice(start,++at),"requirements-annotation");lastKnown=false;continue;}if(!expect){mark("(");at++;continue;}const opening=spans.length;add("(",`requirements-paren-depth-${depth % 4}`);at++;if(!expression(true,depth+1))spans[opening][1]="requirements-malformed";lastKnown=false;expect=false;saw=true;continue;}
               const operator=wordAt("AND",at)?"AND":wordAt("OR",at)?"OR":null;if(operator){if(expect)mark(operator);else{operators.add(operator);lastOperator=spans.length;add(operator,operators.size>1?"requirements-malformed":"requirements-syntax");if(operators.size>1)danger=true;expect=true;}at+=operator.length;lastKnown=false;continue;}
-            const start=at;while(at<source.length&&source[at]!=="("&&source[at]!==")"&&!wordAt("AND",at)&&!wordAt("OR",at))at++;const raw=source.slice(start,at);if(!raw){at++;continue;}if(!expect){mark(raw);continue;}lastKnown=atom(raw);expect=false;saw=true;}
+            const start=at;let bracketDepth=0;while(at<source.length){const character=source[at];if(bracketDepth===0&&(character==="("||character===")"||wordAt("AND",at)||wordAt("OR",at)))break;if(character==="[")bracketDepth++;if(character==="]")bracketDepth--;at++;}const raw=source.slice(start,at);if(!raw){at++;continue;}if(!expect){mark(raw);continue;}lastKnown=atom(raw);expect=false;saw=true;}
            if(end){if(lastOperator!==null)spans[lastOperator][1]="requirements-malformed";mark("", "requirements-malformed");return false;}if(expect&&saw){danger=true;if(lastOperator!==null)spans[lastOperator][1]="requirements-malformed";}return !expect;};
          try { if(!source.trim()){add(source);return {spans,danger:false};} expression(); return {spans,danger}; } catch { throw new Error("Requirements highlighter failed."); }
       };
         const rawRequirements = (layer,value) => { const target=layer?.querySelector?.("[data-v2-requirements-highlight]");if(target){target.replaceChildren();target.textContent=value;}layer?.removeAttribute?.("data-v2-requirements-highlight-ready");layer?.classList?.remove("requirements-parser-danger");if(layer?.matches?.(".requirements-inline-layer"))layer.closest("td")?.classList.remove("requirements-parser-danger"); };
-           const renderArchivedRequirements = element => { const target=element.matches("[data-v2-requirements-highlight]")?element:element.querySelector("[data-v2-requirements-highlight]"); if(!target)return; const source=target.textContent||"",savedContext=requirementsContext,savedLookups=requirementsLookups;try{requirementsContext={rooms:[],checks:[],predicates:savedContext.predicates||[],items:savedContext.items||[],countables:savedContext.countables||[],enemies:savedContext.enemies||[]};requirementsLookups={roomsByReference:new Map(),checksByName:new Map(),checksByRoom:new Map(),itemAliases:savedLookups.itemAliases,countableAliases:savedLookups.countableAliases,enemyAliases:savedLookups.enemyAliases,predicateAliasesByFirstToken:savedLookups.predicateAliasesByFirstToken};target.replaceChildren();const result=parseRequirementsV2(source,null);for(const [text,cls] of result.spans)setText(target,text,cls);}catch{target.replaceChildren();target.textContent=source;target.removeAttribute("data-v2-requirements-highlight-ready");target.classList.remove("requirements-parser-danger");target.closest("td")?.classList.remove("requirements-parser-danger");}finally{requirementsContext=savedContext;requirementsLookups=savedLookups;} };
+           const renderArchivedRequirements = element => { const target=element.matches("[data-v2-requirements-highlight]")?element:element.querySelector("[data-v2-requirements-highlight]"); if(!target)return; const source=target.textContent||"",savedContext=requirementsContext,savedLookups=requirementsLookups;try{requirementsContext={...savedContext,rooms:[],checks:[]};requirementsLookups={...savedLookups,roomsByReference:new Map(),checksByName:new Map(),checksByRoom:new Map()};target.replaceChildren();const result=parseRequirementsV2(source,null);for(const [text,cls] of result.spans)setText(target,text,cls);}catch{target.replaceChildren();target.textContent=source;target.removeAttribute("data-v2-requirements-highlight-ready");target.classList.remove("requirements-parser-danger");target.closest("td")?.classList.remove("requirements-parser-danger");}finally{requirementsContext=savedContext;requirementsLookups=savedLookups;} };
         const renderRequirements = (layer, value, roomId) => { try { const target=layer?.querySelector?.("[data-v2-requirements-highlight]");if(!target)return;target.replaceChildren();const result=parseRequirementsV2(value,roomId);for(const [text,cls] of result.spans)setText(target,text,cls);layer.setAttribute("data-v2-requirements-highlight-ready","");layer.classList.toggle("requirements-parser-danger",result.danger);if(layer.matches(".requirements-inline-layer"))layer.closest("td")?.classList.toggle("requirements-parser-danger",result.danger);}catch{rawRequirements(layer,value);} };
         const growInlineRequirement = editor => { if(!requirementEditor(editor))return;editor.style.height="0px";editor.style.height=`${editor.scrollHeight}px`; };
         const renderInlineRequirement = editor => { if(!requirementEditor(editor))return;const layer=editor.closest(".requirements-editor-layer");renderRequirements(layer,editor.value,editor.dataset.v2RequirementsRoom);growInlineRequirement(editor); };
@@ -1185,7 +1348,7 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
             beforeFocus:()=>{if(!disposed)reconcileBoundaryFacts();},
             register:(reference,kind,descriptor)=>{if(!disposed&&typeof kind==="string"&&descriptor&&["method","blur","drop","row","table","grip","field","client","directionPrefix","before","tail","tailRow"].every(key=>typeof descriptor[key]==="string"&&descriptor[key])){pointerRequirementCaret=null;if(activeRequirement&&kindOf(activeRequirement.inline)===kind)closeRequirements(false);clear(kind);if(drag?.kind===kind)drag=null;configs[kind]=Object.freeze({...descriptor});owners[kind]=reference;reconcileAttention();}},
             unregister:kind=>{pointerRequirementCaret=null;if(activeRequirement&&kindOf(activeRequirement.inline)===kind)closeRequirements(false);clear(kind);if(drag?.kind===kind)drag=null;delete owners[kind];delete configs[kind];reconcileAttention();},
-              setRequirementsContext:context=>{requirementsContext=context??{rooms:[],checks:[],predicates:[],items:[],countables:[],enemies:[]};requirementsLookups=compileRequirementsLookups(requirementsContext);reconcileBoundaryFacts();reconcileRequirement();root.querySelectorAll("textarea[data-v2-requirements-editor]").forEach(renderInlineRequirement);root.querySelectorAll(".requirements-preview").forEach(renderArchivedRequirements);reconcileFriendlyNames();reconcileAttention();},
+              setRequirementsContext:context=>{requirementsContext=context??{rooms:[],checks:[],predicates:[],items:[],countables:[],enemies:[],crests:[]};requirementsLookups=compileRequirementsLookups(requirementsContext);reconcileBoundaryFacts();reconcileRequirement();root.querySelectorAll("textarea[data-v2-requirements-editor]").forEach(renderInlineRequirement);root.querySelectorAll(".requirements-preview").forEach(renderArchivedRequirements);reconcileFriendlyNames();reconcileAttention();},
             commitActiveRequirement:async()=>{let field;if(activeRequirement){const state=activeRequirement;closeRequirements(true);field=root.querySelector(`#${CSS.escape(state.id)}`);}else{const focused=document.activeElement;if(!requirementEditor(focused)||!root.contains(focused))return true;field=focused;}const kind=kindOf(field),c=kind&&config(kind),owner=kind&&owners[kind];if(!requirementEditor(field)||!c||!owner?.invokeMethodAsync||!field.dataset[c.client])return false;suppressedRequirementBlur=field;field.blur();if(suppressedRequirementBlur===field)suppressedRequirementBlur=null;try{return await owner.invokeMethodAsync(c.blur,field.dataset[c.client],field.dataset[c.field],null,field.value)!==false;}catch{return false;}},
             focus:id=>{if(!disposed)window.focusEditorField(id);},
             clear,

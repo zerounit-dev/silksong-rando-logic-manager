@@ -1,0 +1,267 @@
+@implements IDisposable
+@inject SceneReviewProjectionService ReviewProjection
+
+<div @ref="previewElement" class="scene-preview" hidden="@Hidden" aria-label="Read-only scene position preview">
+    <svg viewBox="@PreviewViewBox" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Visible scene object positions">
+        @if (View.Frame is { } frame)
+        {
+            @if (View.ImageUrl is { } image)
+            {
+                <image href="@image" x="@N(frame.X)" y="@N(frame.Y)" width="@N(frame.Width)" height="@N(frame.Height)" preserveAspectRatio="none" class="scene-review-image" />
+            }
+            <rect x="@N(frame.X)" y="@N(frame.Y)" width="@N(frame.Width)" height="@N(frame.Height)" class="scene-review-bounds" />
+        }
+        @foreach (var point in spatialPreview.Points)
+        {
+            <circle @key="point.Id" class="scene-preview-point scene-preview-@ClassificationText(point.Classification)" cx="@N(point.X)" cy="@N(point.Y)" r="@N(PreviewPointRadius)" />
+        }
+        <circle class="scene-preview-hover" data-scene-preview-hover data-scene-hover-radius="@N(PreviewHoverRadius)" style="display: none" />
+    </svg>
+    <div class="scene-preview-fit" role="group" aria-label="Preview fit">
+        <button type="button" class="@(!fitVisibleDots ? "active" : null)" aria-pressed="@(!fitVisibleDots)" @onclick="(() => SetFit(false))">Scene</button>
+        <button type="button" class="@(fitVisibleDots ? "active" : null)" aria-pressed="@fitVisibleDots" @onclick="(() => SetFit(true))">Visible dots</button>
+    </div>
+    <div class="scene-preview-resize-edge" data-scene-preview-resize-edge aria-hidden="true"></div>
+</div>
+
+<div class="scene-review-tools" hidden="@Hidden">
+    <input class="scene-search" placeholder="search object names" @bind:get="search" @bind:set="SetSearch" @bind:event="oninput" autocomplete="off" aria-label="Search scene object names" />
+    <div class="scene-review-filters" aria-label="Filter scene classifications">
+        @foreach (var option in Enum.GetValues<SceneReviewFilter>())
+        {
+            <button type="button" class="@(filter == option ? "active" : null)" aria-pressed="@(filter == option)" @onclick="(() => SetFilter(option))">@option.ToString().ToLowerInvariant()</button>
+        }
+    </div>
+    <label class="scene-show-filler"><input type="checkbox" checked="@showFiller" @onchange="SetShowFiller" /> show filler</label>
+    <label class="scene-show-filler"><input type="checkbox" checked="@candidatesOnly" @onchange="SetCandidatesOnly" /> Candidates only</label>
+</div>
+@if (Error is not null)
+{
+    <p class="scene-upload-error" role="alert">@Error</p>
+}
+<div class="scene-review-scroll" hidden="@Hidden">
+    <table class="scene-review-table">
+        <thead><tr><th>Object / hierarchy</th><th>Position</th><th>Persistence</th><th>Autoclassification</th><th>Classification</th><th>Disposition</th></tr></thead>
+        <tbody>
+            <Virtualize TItem="SceneDumpObject" Items="@visibleRows" Context="node" SpacerElement="tr">
+                @{ var point = View.Points.GetValueOrDefault(node.Id); }
+                <tr @key="node.Id" class="@RowClass(node)" data-scene-hover-id="@node.Id" data-scene-hover-x="@(point is null ? null : N(point.X))" data-scene-hover-y="@(point is null ? null : N(point.Y))">
+                    <td><span class="scene-tree-name" style="padding-left: @(node.Depth * 1.15)rem"><button class="scene-expand" type="button" disabled="@(node.Children.Count == 0)" title="@(expanded.Contains(node.Id) ? "Collapse" : "Expand")" @onclick="(() => ToggleExpansion(node.Id))"><i class="fa-solid @(node.Children.Count == 0 ? "fa-minus" : expanded.Contains(node.Id) ? "fa-chevron-down" : "fa-chevron-right")" aria-hidden="true"></i></button>@node.Name @if (node.ShowAct3Indication) { <span class="scene-act3">Act 3</span> }</span></td>
+                    <td>@Position(node.WorldPosition)</td>
+                    <td>@Persistence(node)</td>
+                    <td class="scene-candidate-cell">@OriginalLabel(node) @if (View.OriginalCandidates.Contains(node.Id)) { <i class="fa-solid fa-circle-info" title="@OriginalEvidence(node)" aria-label="Candidate evidence: @OriginalEvidence(node)"></i> }</td>
+                    <td class="scene-classification">
+                        @if (MatchedClassification(node) is { } matched) { <i class="fa-solid fa-circle-check" title="Matches an existing @ClassificationText(matched) record" aria-hidden="true"></i> }
+                        @if (HasCrossTypeMatches(node)) { <i class="fa-solid fa-circle-info" title="Matches existing transition and check records" aria-hidden="true"></i> }
+                        <select value="@node.Classification" @onchange="(args => ChangeClassification(node, args.Value?.ToString()))"><option value="@SceneDumpClassification.Exit">exit</option><option value="@SceneDumpClassification.Check">check</option><option value="@SceneDumpClassification.Enemy">enemy</option><option value="@SceneDumpClassification.Other">other</option></select>
+                    </td>
+                    @if (SceneDumpIdentity.IsImportable(node.Classification))
+                    {
+                        var draft = View.Drafts[node.Id];
+                        <td><div class="scene-target-choice"><select class="@(draft.ExistingRecordId is null ? "scene-target-unmatched" : null)" value="@TargetValue(draft)" @onchange="(args => ChangeDisposition(node, args.Value?.ToString()))"><option value="unresolved" disabled>Unresolved</option><option value="">Create new</option>@foreach (var record in View.Records[node.Classification]) { <option value="@record.Id" title="@record.InGameId">@record.FriendlyName (@MiddleId(record.InGameId, node.Classification == SceneDumpClassification.Enemy))</option> }</select><i class="fa-solid fa-circle-info" role="img" title="@MatchExplanation(draft)" aria-label="@MatchExplanation(draft)"></i></div>@if (DuplicateTarget(node)) { <span class="scene-decision-error" role="alert">Duplicate target</span> }</td>
+                    }
+                    else
+                    {
+                        <td></td>
+                    }
+                </tr>
+            </Virtualize>
+        </tbody>
+    </table>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public SceneReviewExploreView View { get; set; } = default!;
+    [Parameter, EditorRequired] public Func<SceneDumpReview, bool> AcceptReview { get; set; } = default!;
+    [Parameter] public bool Hidden { get; set; }
+    [Parameter] public string? Error { get; set; }
+    [Parameter] public EventCallback<SceneReviewClassificationChange> ClassificationChanged { get; set; }
+    [Parameter] public EventCallback<SceneReviewDispositionChange> DispositionChanged { get; set; }
+
+    private SceneDumpReview? preparedReview;
+    private int preparedRevision;
+    private PreparedNode[] roots = [];
+    private readonly HashSet<Guid> expanded = [];
+    private string search = string.Empty;
+    private SceneReviewFilter filter;
+    private bool showFiller, candidatesOnly, retired;
+    private List<SceneDumpObject> visibleRows = [];
+    private ElementReference previewElement;
+    private bool fitVisibleDots;
+    private IReadOnlyList<SceneReviewPoint> shownPoints = [];
+    private SceneReviewSpatialProjection spatialPreview = new([], null, new(-1, -1, 2, 2));
+    private string PreviewViewBox => $"{N(spatialPreview.Bounds.X)} {N(spatialPreview.Bounds.Y)} {N(spatialPreview.Bounds.Width)} {N(spatialPreview.Bounds.Height)}";
+    private double PreviewPointRadius => Math.Max(spatialPreview.Bounds.Width, spatialPreview.Bounds.Height) * .008;
+    private double PreviewHoverRadius => Math.Max(spatialPreview.Bounds.Width, spatialPreview.Bounds.Height) * .015;
+    private bool CanInteract => !retired && preparedReview == View.Review && AcceptReview(View.Review);
+
+    public bool TryGetPreviewElement(SceneDumpReview currentReview, out ElementReference element)
+    {
+        element = previewElement;
+        return !retired && preparedReview == currentReview && !string.IsNullOrEmpty(element.Id);
+    }
+
+    protected override void OnParametersSet()
+    {
+        if (retired) return;
+        var newReview = preparedReview != View.Review;
+        if (!newReview && preparedRevision == View.ClassificationRevision)
+        {
+            RebuildSpatialPreview();
+            return;
+        }
+        preparedReview = View.Review;
+        preparedRevision = View.ClassificationRevision;
+        if (newReview)
+        {
+            search = string.Empty;
+            fitVisibleDots = false;
+            filter = SceneReviewFilter.All;
+            showFiller = candidatesOnly = false;
+            expanded.Clear();
+            InitializeExpansion(View.Review.RootObjects, []);
+        }
+        roots = PrepareSiblings(View.Review.RootObjects);
+        RebuildVisibleRows();
+    }
+
+    // Prepare a separate presentation tree. Source sibling/capture order is
+    // untouched; stable LINQ ties keep that order in the prepared tree as well.
+    private static PreparedNode[] PrepareSiblings(IEnumerable<SceneDumpObject> nodes) => nodes
+        .Select(node =>
+        {
+            var children = PrepareSiblings(node.Children);
+            var priority = node.Classification switch
+            {
+                SceneDumpClassification.Exit => 0,
+                SceneDumpClassification.Check => 1,
+                SceneDumpClassification.Enemy => 2,
+                _ when node.CandidateReasons.Count > 0 => 3,
+                _ => 4
+            };
+            foreach (var child in children) priority = Math.Min(priority, child.Priority);
+            return new PreparedNode(node, children, priority);
+        })
+        .OrderBy(node => node.Priority).ThenBy(node => node.Source.Name, StringComparer.OrdinalIgnoreCase).ToArray();
+
+    private void InitializeExpansion(IEnumerable<SceneDumpObject> nodes, IReadOnlyCollection<Guid> ancestors)
+    {
+        foreach (var node in nodes)
+        {
+            if (IsPromoted(node)) expanded.UnionWith(ancestors);
+            InitializeExpansion(node.Children, ancestors.Append(node.Id).ToArray());
+        }
+    }
+
+    private void SetSearch(string? value)
+    {
+        if (!CanInteract) return;
+        search = value ?? string.Empty;
+        RebuildVisibleRows();
+    }
+    private void SetFit(bool value) { if (!CanInteract) return; fitVisibleDots = value; RebuildSpatialPreview(); }
+    private void RebuildSpatialPreview() => spatialPreview = ReviewProjection.ProjectWorkbench(shownPoints, View.Frame, fitVisibleDots);
+    private void SetFilter(SceneReviewFilter value) { if (!CanInteract) return; filter = value; RebuildVisibleRows(); }
+    private void SetShowFiller(ChangeEventArgs args) { if (!CanInteract) return; showFiller = args.Value is true; RebuildVisibleRows(); }
+    private void SetCandidatesOnly(ChangeEventArgs args) { if (!CanInteract) return; candidatesOnly = args.Value is true; RebuildVisibleRows(); }
+    private void ToggleExpansion(Guid id)
+    {
+        if (!CanInteract) return;
+        if (!expanded.Add(id)) expanded.Remove(id);
+        RebuildVisibleRows();
+    }
+
+    private void RebuildVisibleRows()
+    {
+        var term = search.Trim();
+        foreach (var root in roots) ComputeMatches(root, term);
+        var filtered = candidatesOnly || filter != SceneReviewFilter.All || term.Length > 0;
+        var rows = new List<SceneDumpObject>();
+        foreach (var root in roots) EmitRows(root, filtered, rows);
+        visibleRows = rows;
+        var visibleIds = rows.Select(node => node.Id).ToHashSet();
+        shownPoints = visibleIds.Where(View.Points.ContainsKey).Select(id => View.Points[id]).ToArray();
+        RebuildSpatialPreview();
+    }
+    private bool ComputeMatches(PreparedNode node, string term)
+    {
+        var descendantMatches = false;
+        // Do not short-circuit: every node receives its current match fact once,
+        // including collapsed/offscreen children needed by the emission pass.
+        foreach (var child in node.Children) descendantMatches |= ComputeMatches(child, term);
+        var source = node.Source;
+        var directMatches = (showFiller || !source.IsFiller) &&
+            (!candidatesOnly || View.OriginalCandidates.Contains(source.Id)) && MatchesFilter(source) &&
+            (term.Length == 0 || source.Name.Contains(term, StringComparison.OrdinalIgnoreCase));
+        node.Matches = directMatches || ((showFiller || source.HasKeptDescendant) && descendantMatches);
+        return node.Matches;
+    }
+    private void EmitRows(PreparedNode node, bool filtered, List<SceneDumpObject> rows)
+    {
+        if (!node.Matches) return;
+        rows.Add(node.Source);
+        if (filtered || expanded.Contains(node.Source.Id))
+            foreach (var child in node.Children) EmitRows(child, filtered, rows);
+    }
+    private bool MatchesFilter(SceneDumpObject node) => filter switch
+    {
+        SceneReviewFilter.Unclassified => node.Classification == SceneDumpClassification.Other,
+        SceneReviewFilter.Classified => SceneDumpIdentity.IsImportable(node.Classification),
+        SceneReviewFilter.Exits => node.Classification == SceneDumpClassification.Exit,
+        SceneReviewFilter.Checks => node.Classification == SceneDumpClassification.Check,
+        SceneReviewFilter.Enemies => node.Classification == SceneDumpClassification.Enemy,
+        _ => true
+    };
+
+    private Task ChangeClassification(SceneDumpObject node, string? value) => CanInteract &&
+        Enum.TryParse<SceneDumpClassification>(value, out var classification) && Enum.IsDefined(classification)
+        ? ClassificationChanged.InvokeAsync(new(View.Review, node, classification)) : Task.CompletedTask;
+    private Task ChangeDisposition(SceneDumpObject node, string? value) => CanInteract
+        ? DispositionChanged.InvokeAsync(new(View.Review, node, Guid.TryParse(value, out var id) ? id : null)) : Task.CompletedTask;
+
+    private SceneImportObjectMatch? Match(SceneDumpObject node) => View.Matches.FirstOrDefault(match => match.ObjectId == node.Id);
+    private SceneDumpClassification? MatchedClassification(SceneDumpObject node)
+    {
+        var types = Match(node)?.Matches.Select(x => x.Classification).Distinct().ToArray() ?? [];
+        return types.Length == 1 ? types[0] : null;
+    }
+    private bool HasCrossTypeMatches(SceneDumpObject node) => (Match(node)?.Matches.Select(x => x.Classification).Distinct().Count() ?? 0) > 1;
+    private bool DuplicateTarget(SceneDumpObject node) => View.Drafts[node.Id].ExistingRecordId is { } id &&
+        Flatten(View.Review.RootObjects).Where(item => SceneDumpIdentity.IsImportable(item.Classification)).Count(item => View.Drafts[item.Id].ExistingRecordId == id) > 1;
+    private static IEnumerable<SceneDumpObject> Flatten(IEnumerable<SceneDumpObject> nodes) => nodes.SelectMany(node => new[] { node }.Concat(Flatten(node.Children)));
+    private static bool IsPromoted(SceneDumpObject node) => node.Classification != SceneDumpClassification.Other || node.CandidateReasons.Count > 0;
+    private static string RowClass(SceneDumpObject node) => node.IsFiller || !IsPromoted(node) ? "scene-muted-row" : string.Empty;
+    private string OriginalLabel(SceneDumpObject node) => View.OriginalClassifications[node.Id] != SceneDumpClassification.Other ? ClassificationText(View.OriginalClassifications[node.Id]) : View.OriginalCandidates.Contains(node.Id) ? "candidate" : "-";
+    private string OriginalEvidence(SceneDumpObject node) => string.Join("; ", new[] { OriginalLabel(node) }.Concat(node.CandidateReasons));
+    private static string ClassificationText(SceneDumpClassification classification) => classification switch { SceneDumpClassification.Exit => "exit", SceneDumpClassification.Check => "check", SceneDumpClassification.Enemy => "enemy", _ => "other" };
+    private static string TargetValue(SceneReviewImportDraft draft) => draft.Unresolved ? "unresolved" : draft.ExistingRecordId?.ToString() ?? string.Empty;
+    private static string MatchExplanation(SceneReviewImportDraft draft) => draft.MatchReason.Length > 0 ? draft.MatchReason : "No unique eligible match; Create new review default";
+    private static string MiddleId(string? value, bool enemy) => value is null ? "-" : !enemy || value.Length <= 48 ? value : value[..23] + "…" + value[^23..];
+    private static string Position(ScenePosition? position) => position is null ? "-" : $"{Value(position.X)}, {Value(position.Y)}" + (position.Z is { } raw && raw != 0 ? $", { (Math.Abs(raw) < .005 ? raw.ToString("G", System.Globalization.CultureInfo.InvariantCulture) : Value(raw))}" : string.Empty);
+    private static string Value(double? value) => value?.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) ?? "-";
+    private static string N(double value) => value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    private static string Persistence(SceneDumpObject node)
+    {
+        var persistent = node.Components.FirstOrDefault(x => x.Type.StartsWith("Persistent", StringComparison.Ordinal));
+        return persistent is null ? "-" : $"{persistent.Type}: {(string.IsNullOrWhiteSpace(persistent.ItemDataId) ? "[no ID]" : persistent.ItemDataId)}";
+    }
+
+    public void Dispose()
+    {
+        retired = true;
+        preparedReview = null;
+        roots = [];
+        visibleRows = [];
+        shownPoints = [];
+        expanded.Clear();
+        search = string.Empty;
+    }
+    private sealed class PreparedNode(SceneDumpObject source, PreparedNode[] children, int priority)
+    {
+        public SceneDumpObject Source { get; } = source;
+        public PreparedNode[] Children { get; } = children;
+        public int Priority { get; } = priority;
+        public bool Matches { get; set; }
+    }
+    private enum SceneReviewFilter { All, Unclassified, Classified, Exits, Checks, Enemies }
+}

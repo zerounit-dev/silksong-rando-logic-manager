@@ -67,15 +67,15 @@ public sealed partial class SceneDumpParser
     }
 
     // Exact finite owned schemas. No retained JSON, expression tree or recursive proximity matching.
-    private HashSet<string> WorldMembers(WorldDataEvidence world, Action<string> read)
+    private HashSet<string> WorldMembers(WorldDataEvidence world, Action<string> read, WorldDataEvidence? documentaryHeader = null)
     {
         var seen = new HashSet<string>(StringComparer.Ordinal);
-        if (!json.TryConsume('{')) { world.Invalid = true; WorldSkip(world); return seen; }
+        if (!json.TryConsume('{')) { world.Invalid = true; if (documentaryHeader is not null) documentaryHeader.Invalid = true; WorldSkip(world); return seen; }
         while (!json.TryConsume('}'))
         {
             var property = json.ReadPropertyName();
             json.Expect(':');
-            if (!seen.Add(property) || property == "error") { world.Invalid = true; world.HasExportError = true; }
+            if (!seen.Add(property) || property == "error") { world.Invalid = true; world.HasExportError = true; if (documentaryHeader is not null) documentaryHeader.Invalid = true; }
             read(property);
             json.TryConsume(',');
         }

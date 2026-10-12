@@ -46,7 +46,7 @@ public static class SceneEnemySpawnNotesResolver
                 }
             }
         }
-        foreach (var root in review.RootObjects) Resolve(root, [], false, true, null, false, false, false);
+        foreach (var root in review.RootObjects) Resolve(root, [], [], false, false, false, false, true, null, false, false, false);
 
         void Record(SceneDumpObject owner, SceneDumpObject target, SceneEnemyConditionEvidence evidence, IReadOnlyList<SceneBooleanTest> facts, bool badReference)
         {
@@ -56,13 +56,23 @@ public static class SceneEnemySpawnNotesResolver
             conditions.AddRange(facts.Where(test => test.Field != "blackThreadWorld").Select(test => (owner.Id == target.Id, test)));
         }
 
-        void Resolve(SceneDumpObject node, IReadOnlyList<SceneBooleanTest> outer, bool conditionsAbove, bool isRoot,
+        void Resolve(SceneDumpObject node, IReadOnlyList<SceneBooleanTest> outer, IReadOnlyList<string> outerReads,
+            bool conditionsAbove, bool uncertaintyAbove,
+            bool persistenceAbove, bool incompletePersistenceAbove, bool isRoot,
             bool? parentHierarchy, bool disabledSelfAbove, bool disabledHierarchyAbove, bool contradictoryAbove)
         {
             // Actor then nearest-to-outer governed ancestry; no sibling/descendant borrowing.
             node.SpawnConditions = inbound.TryGetValue(node.Id, out var own)
                 ? own.OrderByDescending(item => item.Direct).Select(item => item.Fact).Concat(outer).Distinct().ToArray() : outer;
-            var hasConditionsOrUncertainty = conditionsAbove || presence.Contains(node.Id) || uncertain.Contains(node.Id);
+            node.HasGoverningConditions = conditionsAbove || presence.Contains(node.Id);
+            node.HasIncompleteConditionEvidence = uncertaintyAbove || uncertain.Contains(node.Id);
+            node.FsmBooleanNames = (node.HasReliableWorldComponents ? node.Components.SelectMany(component => component.FsmBooleanNames) : [])
+                .Concat(outerReads).Distinct(StringComparer.Ordinal).ToArray();
+            node.HasPersistenceContext = persistenceAbove || node.Components.Any(component => component.HasPersistenceContext);
+            node.HasIncompletePersistenceEvidence = incompletePersistenceAbove ||
+                node.Components.Any(component => component.HasIncompletePersistenceEvidence);
+            var hasConditionsOrUncertainty = node.HasGoverningConditions || node.HasIncompleteConditionEvidence || node.FsmBooleanNames.Count > 0 ||
+                node.HasPersistenceContext || node.HasIncompletePersistenceEvidence;
             // Preserve the approved whole-chain reliable-activity contradiction algebra.
             var self = node.HasReliableActivity ? node.ActiveSelf : null;
             var hierarchy = node.HasReliableActivity ? node.ActiveInHierarchy : null;
@@ -73,7 +83,8 @@ public static class SceneEnemySpawnNotesResolver
                 ? self == false ? "Disabled; no activation found." : "Disabled ancestor; no activation found."
                 : string.Empty;
             foreach (var child in node.Children)
-                Resolve(child, node.SpawnConditions, hasConditionsOrUncertainty, false, hierarchy, disabledSelfAbove || self == false,
+                Resolve(child, node.SpawnConditions, node.FsmBooleanNames, node.HasGoverningConditions,
+                    node.HasIncompleteConditionEvidence, node.HasPersistenceContext, node.HasIncompletePersistenceEvidence, false, hierarchy, disabledSelfAbove || self == false,
                     disabledHierarchyAbove || hierarchy == false, contradictory);
         }
     }
@@ -82,8 +93,16 @@ public static class SceneEnemySpawnNotesResolver
         ? "Invalid" : ScenePlacementWorldResolver.EnemyRequirements(node);
 
     public static string EnemyNotes(SceneDumpObject node) => node.InactiveEnemyReason.Length > 0 ? node.InactiveEnemyReason
-        : node.SpawnConditions.Count == 0 ? string.Empty
+        : string.Join('\n', new[] { SpawnNotes(node), FsmNotes(node) }.Where(section => section.Length > 0));
+
+    public static string SpawnNotes(SceneDumpObject node) => node.SpawnConditions.Count == 0 ? string.Empty
         : "Spawn conditions: " + string.Join(", ", node.SpawnConditions.Select(test => $"{test.Field}={(test.Value ? "true" : "false")}"));
+
+    public static string FsmNotes(SceneDumpObject node)
+    {
+        var names = node.FsmBooleanNames.Where(name => name != "blackThreadWorld").ToArray();
+        return names.Length == 0 ? string.Empty : "FSM Boolean flags: " + string.Join(", ", names);
+    }
 
     private static SceneDumpObject? Target(SceneWorldReference? reference, Dictionary<int, SceneDumpObject[]> identities)
     {

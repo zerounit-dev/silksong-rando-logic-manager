@@ -50,6 +50,8 @@ public sealed class RoomEditorV2LogicLoader(IDbContextFactory<LogicDbContext> co
             .Select(x => new RequirementsParserCountableView(RequirementCatalogueLanguage.ParseAliases(x.Aliases))).ToListAsync(cancellationToken);
         var enemies = await db.RequirementEnemyTypes.AsNoTracking().OrderBy(x => x.SortOrder).ThenBy(x => x.Id)
             .Select(x => new RequirementsParserEnemyView(RequirementCatalogueLanguage.ParseAliases(x.Aliases))).ToListAsync(cancellationToken);
+        var crests = await db.RequirementCrests.AsNoTracking().OrderBy(x => x.SortOrder).ThenBy(x => x.Id)
+            .Select(x => new RequirementsParserCrestView(RequirementCatalogueLanguage.ParseAliases(x.Aliases))).ToListAsync(cancellationToken);
         var view = RoomEditorV2Mapper.Map(header, suggestions, roomCandidates, subrooms, transitions, connections, checks, transitionFacts, checkFacts);
         var status = await statusService.LoadAsync(db, [roomId], cancellationToken);
         view = view with { Header = view.Header with { AppliedStatus = status.GetValueOrDefault(roomId) } };
@@ -59,7 +61,7 @@ public sealed class RoomEditorV2LogicLoader(IDbContextFactory<LogicDbContext> co
                 suggestions.Select(x => new RequirementsParserRoomView(x.Id, x.ReferenceId)).ToArray(),
                 checkFacts.NameConflicts.Select(x => new RequirementsParserCheckView(x.RoomId, x.FriendlyName)).ToArray(),
                 predicates,
-                items, countables, enemies)
+                items, countables, enemies, crests)
         };
         return includeScene && sceneLoader is not null
             ? view with { Scene = await sceneLoader.LoadAsync(db, roomId, cancellationToken) }

@@ -155,6 +155,19 @@ namespace Silksong_Rando_Logic_Manager.Data.Migrations
                     b.ToTable("RequirementCountables");
                 });
 
+            modelBuilder.Entity("Silksong_Rando_Logic_Manager.Data.RequirementCrest", b =>
+                {
+                    b.Property<Guid>("Id").ValueGeneratedOnAdd().HasColumnType("TEXT");
+                    b.Property<string>("Name").IsRequired().HasColumnType("TEXT");
+                    b.Property<string>("Category").HasColumnType("TEXT");
+                    b.Property<string>("OutputValue").IsRequired().HasColumnType("TEXT");
+                    b.Property<string>("Aliases").IsRequired().HasColumnType("TEXT");
+                    b.Property<string>("Notes").IsRequired().HasColumnType("TEXT");
+                    b.Property<int>("SortOrder").HasColumnType("INTEGER");
+                    b.HasKey("Id");
+                    b.ToTable("RequirementCrests");
+                });
+
             modelBuilder.Entity("Silksong_Rando_Logic_Manager.Data.RequirementEnemyType", b =>
                 {
                     b.Property<Guid>("Id").ValueGeneratedOnAdd().HasColumnType("TEXT");

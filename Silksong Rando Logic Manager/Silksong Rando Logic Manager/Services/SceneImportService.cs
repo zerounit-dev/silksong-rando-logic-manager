@@ -10,18 +10,31 @@ public sealed class SceneImportService(IDbContextFactory<LogicDbContext> dbConte
     public async Task<SceneImportPreview> PreviewAsync(SceneDumpReview review, CancellationToken cancellationToken = default)
     {
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
-        return await PreviewAsync(db, review, cancellationToken);
+        var preview = await PreviewAsync(db, review, cancellationToken);
+        return preview with { MatchingRooms = preview.MatchingRooms.Select(room => room with
+        { ImageUrl = room.ImageEligible && sceneImages?.Exists(room.Id) == true ? $"/data/scenes/{room.Id:D}.webp?v={room.ImageVersion}" : null }).ToArray() };
     }
 
     // BI1 keeps preview reads in the same logical snapshot as its database fingerprint.
     internal static async Task<SceneImportPreview> PreviewAsync(LogicDbContext db, SceneDumpReview review, CancellationToken cancellationToken)
     {
         var rooms = await db.Rooms.AsNoTracking().Where(x => !x.IsArchived)
-            .Select(x => new SceneImportRoom(x.Id, x.FriendlyName, x.ReferenceId, x.InGameId, x.SceneMaxX, x.SceneMaxY)).ToListAsync(cancellationToken);
+            .Select(x => new SceneImportRoom(x.Id, x.FriendlyName, x.ReferenceId, x.InGameId, x.SceneMaxX, x.SceneMaxY)
+            { SceneMinX = x.SceneMinX, SceneMinY = x.SceneMinY, ScaleX = x.SceneImagePixelsPerUnitX, ScaleY = x.SceneImagePixelsPerUnitY,
+                OffsetX = x.SceneImagePixelOffsetX, OffsetY = x.SceneImagePixelOffsetY, UseSceneImage = x.UseSceneImage,
+                IsStale = x.IsSceneImageStale, ImageVersion = x.UpdatedUtc.Ticks }).ToListAsync(cancellationToken);
         var transitions = await db.RoomTransitions.AsNoTracking().Where(x => !x.IsArchived && !x.Room.IsArchived)
-            .Select(x => new SceneImportSelectableRecord(x.Id, x.RoomId, SceneDumpClassification.Exit, x.FriendlyName, x.InGameId)).ToListAsync(cancellationToken);
+            .OrderBy(x => x.SortOrder).ThenBy(x => x.Id)
+            .Select(x => new SceneImportSelectableRecord(x.Id, x.RoomId, SceneDumpClassification.Exit, x.FriendlyName, x.InGameId)
+            { X = x.InGamePositionX, Y = x.InGamePositionY, Z = x.InGamePositionZ }).ToListAsync(cancellationToken);
         var checks = await db.CheckLocations.AsNoTracking().Where(x => !x.IsArchived && !x.Room.IsArchived)
-            .Select(x => new SceneImportSelectableRecord(x.Id, x.RoomId, SceneDumpClassification.Check, x.FriendlyName, x.InGameId)).ToListAsync(cancellationToken);
+            .OrderBy(x => x.SortOrder).ThenBy(x => x.Id)
+            .Select(x => new SceneImportSelectableRecord(x.Id, x.RoomId, SceneDumpClassification.Check, x.FriendlyName, x.InGameId)
+            { X = x.InGamePositionX, Y = x.InGamePositionY, Z = x.InGamePositionZ, LocationType = x.LocationType,
+                Requirements = x.Requirements, Notes = x.Notes,
+                EnemyEquivalence = new(x.RequirementsParseSucceeded, x.IsTodo, x.IsVerified, x.EnableAnnotation,
+                    x.AnnotationSceneUnitX, x.AnnotationSceneUnitY, x.SubroomReferenceText, x.ResolvedSubroomId,
+                    x.LocalPositionX, x.LocalPositionY, x.LocalPositionZ) }).ToListAsync(cancellationToken);
         var enemyNames = await db.RequirementEnemyTypes.AsNoTracking()
             .Select(x => new SceneImportEnemyName(x.Id, x.OutputValue, x.Name)).ToListAsync(cancellationToken);
         var sceneRooms = rooms.Where(x => Matches(x.InGameId, review.SceneName)).ToArray();
@@ -54,9 +67,13 @@ public sealed class SceneImportService(IDbContextFactory<LogicDbContext> dbConte
         IReadOnlyList<SceneImportInstruction> instructions, CancellationToken cancellationToken = default) =>
         ImportCoreAsync(review, targetRoomId, instructions, null, true, cancellationToken);
 
+    public Task<SceneImportResult> ApplyWorkbenchAsync(SceneDumpReview review, SceneWorkbenchCommand command, CancellationToken cancellationToken = default) =>
+        ImportCoreAsync(review, command.TargetRoomId, command.Rows.Where(row => row.Apply && !row.Unresolved).Select(row => row.Instruction).ToArray(),
+            command.ReplacementDimensions, false, cancellationToken, command);
+
     private async Task<SceneImportResult> ImportCoreAsync(SceneDumpReview review, Guid? targetRoomId,
         IReadOnlyList<SceneImportInstruction> instructions, SceneUnitSize? replacementDimensions,
-        bool existingRoomEnemiesOnly, CancellationToken cancellationToken)
+        bool existingRoomEnemiesOnly, CancellationToken cancellationToken, SceneWorkbenchCommand? workbench = null)
     {
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
@@ -71,7 +88,7 @@ public sealed class SceneImportService(IDbContextFactory<LogicDbContext> dbConte
         if (targetRoomId is { } selectedRoomId)
         {
             targetRoom = matchingRooms.SingleOrDefault(x => x.Id == selectedRoomId)
-                ?? throw new InvalidOperationException("The selected target room is no longer an active scene-name match.");
+                ?? throw AdmissionFailure("The selected target room is no longer an active scene-name match.");
         }
         else if (matchingRooms.Length == 0)
         {
@@ -91,14 +108,65 @@ public sealed class SceneImportService(IDbContextFactory<LogicDbContext> dbConte
         }
         else
         {
-            throw new InvalidOperationException("Select one of the matching active rooms before importing.");
+            throw AdmissionFailure("Select one of the matching active rooms before importing.");
         }
 
-        if (!existingRoomEnemiesOnly) ApplySceneDimensions(targetRoom, review.SceneUnitSize, replacementDimensions);
+        var nodes = Flatten(review.RootObjects).ToDictionary(node => node.Id);
+        var editedRequirements = new List<CheckLocation>();
+        if (workbench is not null)
+        {
+            if (workbench.Rows.Select(row => row.Instruction.ObjectId).Distinct().Count() != workbench.Rows.Count)
+                throw new SceneWorkbenchValidationException("Each incoming object must appear only once.");
+            var assigned = workbench.Rows.Where(row => row.Instruction.ExistingRecordId is not null).ToArray();
+            if (assigned.GroupBy(row => row.Instruction.ExistingRecordId).Any(group => group.Count() > 1))
+                throw new SceneWorkbenchValidationException("An existing target is assigned more than once. Correct both incoming rows, including unchecked Apply rows.");
+            foreach (var row in workbench.Rows)
+            {
+                var instruction = row.Instruction;
+                if (!nodes.TryGetValue(instruction.ObjectId, out var node) || !SceneDumpIdentity.IsImportable(node.Classification))
+                    throw new SceneWorkbenchValidationException("Incoming rows must be current transitions, checks or enemies.");
+                if (instruction.ExistingRecordId is { } id)
+                {
+                    var valid = node.Classification == SceneDumpClassification.Exit
+                        ? transitions.Any(item => item.Id == id && item.RoomId == targetRoom.Id)
+                        : checks.Any(item => item.Id == id && item.RoomId == targetRoom.Id &&
+                            CheckLocationTypeCatalogue.IsEnemy(item.LocationType) == (node.Classification == SceneDumpClassification.Enemy));
+                    if (!valid || instruction.Mode != SceneImportMode.Update)
+                        throw new SceneWorkbenchValidationException("A selected target is no longer active in this room/category. Choose another target.");
+                }
+                else if (instruction.Mode != SceneImportMode.Create)
+                    throw new SceneWorkbenchValidationException("Choose an existing target or Create new.");
+            }
+            var assignedIds = assigned.Select(row => row.Instruction.ExistingRecordId!.Value).ToHashSet();
+            foreach (var archive in workbench.Archives.Distinct())
+            {
+                if (!SceneDumpIdentity.IsImportable(archive.Classification))
+                    throw new SceneWorkbenchValidationException("Archive targets must be transitions, checks or enemies.");
+                if (assignedIds.Contains(archive.RecordId)) continue;
+                if (archive.Classification == SceneDumpClassification.Exit)
+                {
+                    var item = transitions.SingleOrDefault(item => item.Id == archive.RecordId && item.RoomId == targetRoom.Id)
+                        ?? throw new SceneWorkbenchValidationException("An archive target is no longer active in this room.");
+                    item.IsArchived = true;
+                }
+                else
+                {
+                    var item = checks.SingleOrDefault(item => item.Id == archive.RecordId && item.RoomId == targetRoom.Id &&
+                        CheckLocationTypeCatalogue.IsEnemy(item.LocationType) == (archive.Classification == SceneDumpClassification.Enemy))
+                        ?? throw new SceneWorkbenchValidationException("An archive target is no longer active in this room/category.");
+                    item.IsArchived = true;
+                }
+            }
+        }
+        if (!existingRoomEnemiesOnly && (workbench is null || workbench.ApplyBounds))
+        {
+            try { ApplySceneDimensions(targetRoom, review.SceneUnitSize, replacementDimensions); }
+            catch (InvalidOperationException exception) when (workbench is not null)
+            { throw new SceneWorkbenchValidationException(exception.Message); }
+        }
 
         var importedTransitions = new List<RoomTransition>();
         var importedChecks = new List<CheckLocation>();
-        var nodes = Flatten(review.RootObjects).ToDictionary(node => node.Id);
         if (instructions.Select(instruction => instruction.ObjectId).Distinct().Count() != instructions.Count) throw new InvalidOperationException("Each scene object may be imported once.");
         foreach (var instruction in instructions)
         {
@@ -118,6 +186,13 @@ public sealed class SceneImportService(IDbContextFactory<LogicDbContext> dbConte
                     var check = checks.SingleOrDefault(item => item.Id == instruction.ExistingRecordId && item.RoomId == targetRoom.Id)
                         ?? throw new InvalidOperationException("The selected check update target is not an active record in the target room.");
                     ApplyMetadata(check, node, SceneDumpIdentity.GameId(node));
+                    if (workbench is not null && node.Classification == SceneDumpClassification.Enemy)
+                    {
+                        var submitted = workbench.Rows.Single(row => row.Instruction.ObjectId == node.Id);
+                        if (check.Requirements != submitted.Requirements) editedRequirements.Add(check);
+                        check.Requirements = submitted.Requirements;
+                        check.Notes = submitted.Notes;
+                    }
                 }
             }
             else if (instruction.Mode != SceneImportMode.Create)
@@ -129,7 +204,7 @@ public sealed class SceneImportService(IDbContextFactory<LogicDbContext> dbConte
                 var point = node.Components.SingleOrDefault(x => x.Type == "TransitionPoint");
                 var destinationRoom = point is null ? null : rooms.Where(x => Matches(x.InGameId, point.TargetScene)).ToArray();
                 var destinationTransitions = destinationRoom?.Length == 1
-                    ? transitions.Where(x => x.RoomId == destinationRoom[0].Id && Matches(x.InGameId, point!.EntryPoint)).ToArray()
+                    ? transitions.Where(x => !x.IsArchived && x.RoomId == destinationRoom[0].Id && Matches(x.InGameId, point!.EntryPoint)).ToArray()
                     : [];
                 var transition = new RoomTransition
                 {
@@ -179,6 +254,12 @@ public sealed class SceneImportService(IDbContextFactory<LogicDbContext> dbConte
                         SortOrder = await NextSortOrderAsync(db.CheckLocations.Where(x => x.RoomId == targetRoom.Id && !x.IsArchived), cancellationToken) + importedChecks.Count
                     };
                     importedChecks.Add(check);
+                    if (workbench is not null && node.Classification == SceneDumpClassification.Enemy)
+                    {
+                        var submitted = workbench.Rows.Single(row => row.Instruction.ObjectId == node.Id);
+                        check.Requirements = submitted.Requirements;
+                        check.Notes = submitted.Notes;
+                    }
                     checks.Add(check);
             }
         }
@@ -191,7 +272,7 @@ public sealed class SceneImportService(IDbContextFactory<LogicDbContext> dbConte
         foreach (var transition in importedTransitions)
             transition.RequirementsParseSucceeded = requirementStatus.ValidateSafely(requirementContext, transition.RoomId,
                 transition.Id, RequirementBearingRowKind.Transition, transition.Requirements);
-        foreach (var check in importedChecks)
+        foreach (var check in importedChecks.Concat(editedRequirements))
             check.RequirementsParseSucceeded = requirementStatus.ValidateSafely(requirementContext, check.RoomId,
                 check.Id, RequirementBearingRowKind.Check, check.Requirements);
         using (db.SuppressAuditMetadata()) await db.SaveChangesAsync(cancellationToken);
@@ -201,6 +282,9 @@ public sealed class SceneImportService(IDbContextFactory<LogicDbContext> dbConte
         }
         await transaction.CommitAsync(cancellationToken);
         return new SceneImportResult(targetRoom.Id, importedTransitions.Select(x => x.Id).ToArray(), importedChecks.Select(x => x.Id).ToArray());
+
+        InvalidOperationException AdmissionFailure(string message) => workbench is null
+            ? new InvalidOperationException(message) : new SceneWorkbenchValidationException(message);
     }
 
     public static SceneImportObjectMatch MatchObject(SceneDumpObject node, IEnumerable<SceneImportSelectableRecord> transitions, IEnumerable<SceneImportSelectableRecord> checks)
@@ -294,12 +378,45 @@ public sealed class SceneImportService(IDbContextFactory<LogicDbContext> dbConte
     }
 }
 
-public sealed record SceneImportRoom(Guid Id, string FriendlyName, string ReferenceId, string? InGameId, double? SceneMaxX, double? SceneMaxY);
+public sealed record SceneImportRoom(Guid Id, string FriendlyName, string ReferenceId, string? InGameId, double? SceneMaxX, double? SceneMaxY)
+{
+    public double SceneMinX { get; init; }
+    public double SceneMinY { get; init; }
+    public double? ScaleX { get; init; }
+    public double? ScaleY { get; init; }
+    public double? OffsetX { get; init; }
+    public double? OffsetY { get; init; }
+    public bool UseSceneImage { get; init; }
+    public bool IsStale { get; init; }
+    public long ImageVersion { get; init; }
+    public string? ImageUrl { get; init; }
+    public bool ImageEligible => !IsStale && SceneBounds.TryGetSize(SceneMinX, SceneMinY, SceneMaxX, SceneMaxY, out _, out _) &&
+        SceneBounds.HasUsableScales(ScaleX, ScaleY) && (!UseSceneImage || SceneBounds.HasUsablePixelOffsets(OffsetX, OffsetY));
+}
 public sealed record SceneImportPreview(IReadOnlyList<SceneImportRoom> MatchingRooms, IReadOnlyList<SceneImportObjectMatch> ObjectMatches, IReadOnlyList<SceneImportSelectableRecord> Transitions, IReadOnlyList<SceneImportSelectableRecord> Checks, IReadOnlyList<SceneImportEnemyName> EnemyNames);
 public sealed record SceneImportEnemyName(Guid Id, string OutputValue, string Name);
 public sealed record SceneImportObjectMatch(Guid ObjectId, SceneDumpClassification Classification, string? GameId, IReadOnlyList<SceneImportRecordMatch> Matches);
 public sealed record SceneImportRecordMatch(Guid RecordId, Guid RoomId, SceneDumpClassification Classification);
-public sealed record SceneImportSelectableRecord(Guid Id, Guid RoomId, SceneDumpClassification Classification, string FriendlyName, string? InGameId);
+public sealed record SceneImportSelectableRecord(Guid Id, Guid RoomId, SceneDumpClassification Classification, string FriendlyName, string? InGameId)
+{
+    public double? X { get; init; }
+    public double? Y { get; init; }
+    public double? Z { get; init; }
+    public string? LocationType { get; init; }
+    public string Requirements { get; init; } = string.Empty;
+    public string Notes { get; init; } = string.Empty;
+    public SceneEnemyTargetEquivalence? EnemyEquivalence { get; init; }
+    public bool IsEnemy => CheckLocationTypeCatalogue.IsEnemy(LocationType);
+}
+// Modal matching facts only; never a persisted identity or bulk artifact contract.
+public sealed record SceneEnemyTargetEquivalence(bool? RequirementsParseSucceeded, bool IsTodo, bool? IsVerified,
+    bool EnableAnnotation, double? AnnotationX, double? AnnotationY, string? SubroomReferenceText,
+    Guid? ResolvedSubroomId, double? LocalX, double? LocalY, double? LocalZ);
+public sealed record SceneWorkbenchRow(SceneImportInstruction Instruction, bool Apply, bool Unresolved, string Requirements, string Notes);
+public sealed record SceneWorkbenchArchive(Guid RecordId, SceneDumpClassification Classification);
+public sealed record SceneWorkbenchCommand(Guid? TargetRoomId, IReadOnlyList<SceneWorkbenchRow> Rows,
+    IReadOnlyList<SceneWorkbenchArchive> Archives, bool ApplyBounds, SceneUnitSize? ReplacementDimensions);
+public sealed class SceneWorkbenchValidationException(string message) : InvalidOperationException(message) { }
 public sealed record SceneImportInstruction(Guid ObjectId, SceneImportMode Mode, Guid? ExistingRecordId, string FriendlyName);
 public enum SceneImportMode { Create, Update }
 public sealed record SceneImportResult(Guid RoomId, IReadOnlyList<Guid> TransitionIds, IReadOnlyList<Guid> CheckIds);

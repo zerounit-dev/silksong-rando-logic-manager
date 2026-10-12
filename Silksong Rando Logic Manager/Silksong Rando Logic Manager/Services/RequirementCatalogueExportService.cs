@@ -27,7 +27,11 @@ public sealed class RequirementCatalogueExportService(IDbContextFactory<LogicDbC
             .Select(x => new RequirementCatalogueExchangeItem(x.Id, x.Name, x.Category, x.OutputValue, x.Notes, x.SortOrder, x.Aliases))
             .ToListAsync(cancellationToken);
 
-        var document = new RequirementCatalogueExchangeDocument(2, predicates, items, countables, enemyTypes);
+        var crests = await db.RequirementCrests.AsNoTracking().OrderBy(x => x.SortOrder).ThenBy(x => x.Id)
+            .Select(x => new RequirementCatalogueExchangeItem(x.Id, x.Name, x.Category, x.OutputValue, x.Notes, x.SortOrder, x.Aliases))
+            .ToListAsync(cancellationToken);
+
+        var document = new RequirementCatalogueExchangeDocument(3, predicates, crests, items, countables, enemyTypes);
         var timestamp = timeProvider.GetUtcNow().ToString("yyyyMMdd-HHmmss-fff", CultureInfo.InvariantCulture);
         return new($"silksong-requirement-catalogue-{timestamp}.json", JsonSerializer.SerializeToUtf8Bytes(document, jsonOptions));
     }

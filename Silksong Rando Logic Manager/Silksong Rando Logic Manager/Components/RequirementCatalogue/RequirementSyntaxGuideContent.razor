@@ -7,6 +7,7 @@
         <button id="requirement-syntax-guide-tab-how-to-write" type="button" role="tab" aria-selected="@(tab == GuideTab.HowToWrite)" aria-controls="requirement-syntax-guide-content" class="@(tab == GuideTab.HowToWrite ? "selected" : null)" @onclick="() => tab = GuideTab.HowToWrite">How to write</button>
         <button id="requirement-syntax-guide-tab-location-types" type="button" role="tab" aria-selected="@(tab == GuideTab.LocationTypes)" aria-controls="requirement-syntax-guide-content" class="@(tab == GuideTab.LocationTypes ? "selected" : null)" @onclick="() => tab = GuideTab.LocationTypes">Location types</button>
         <button id="requirement-syntax-guide-tab-requirement-types" type="button" role="tab" aria-selected="@(tab == GuideTab.RequirementTypes)" aria-controls="requirement-syntax-guide-content" class="@(tab == GuideTab.RequirementTypes ? "selected" : null)" @onclick="() => tab = GuideTab.RequirementTypes">Requirement types</button>
+        <button id="requirement-syntax-guide-tab-crests" type="button" role="tab" aria-selected="@(tab == GuideTab.Crests)" aria-controls="requirement-syntax-guide-content" class="@(tab == GuideTab.Crests ? "selected" : null)" @onclick="() => tab = GuideTab.Crests">Crests</button>
         <button id="requirement-syntax-guide-tab-items" type="button" role="tab" aria-selected="@(tab == GuideTab.Items)" aria-controls="requirement-syntax-guide-content" class="@(tab == GuideTab.Items ? "selected" : null)" @onclick="() => tab = GuideTab.Items">Items</button>
         <button id="requirement-syntax-guide-tab-countables" type="button" role="tab" aria-selected="@(tab == GuideTab.Countables)" aria-controls="requirement-syntax-guide-content" class="@(tab == GuideTab.Countables ? "selected" : null)" @onclick="() => tab = GuideTab.Countables">Countables</button>
         <button id="requirement-syntax-guide-tab-enemy-types" type="button" role="tab" aria-selected="@(tab == GuideTab.EnemyTypes)" aria-controls="requirement-syntax-guide-content" class="@(tab == GuideTab.EnemyTypes ? "selected" : null)" @onclick="() => tab = GuideTab.EnemyTypes">Enemy Types</button>
@@ -18,12 +19,16 @@
                 <section>
                     <h3>Write a requirement</h3>
                     <p>A requirement is a recognized phrase such as <code><span class="guide-token-requirement">dash</span></code>, <code><span class="guide-token-requirement">break vines</span> <span class="guide-token-direction">left</span></code>, or <code><span class="guide-token-difficulty">hard</span> <span class="guide-token-requirement">spike pogo</span></code>.</p>
-                    <p>The Requirement types view shows each accepted pattern. Words in braces are replaced with the described value, and <code>?</code> marks an optional value. Requirement types, Items, Countables, and Enemy Types are the current accepted vocabulary.</p>
+                    <p>The Requirement types view shows each accepted pattern. Words in braces are replaced with the described value, and <code>?</code> marks an optional value. Requirement types, Crests, Items, Countables, and Enemy Types are the current accepted vocabulary.</p>
                     <p>Use <code><span class="guide-token-requirement">none</span></code> when nothing is required. Use <code><span class="guide-token-requirement">invalid</span></code> when the requirement can never be met.</p>
                 </section>
                 <section>
                     <h3>Combine requirements</h3>
                     <p>Use uppercase <code class="guide-token-fixed">AND</code> or <code class="guide-token-fixed">OR</code> throughout one chain: <code><span class="guide-token-requirement">dash</span> <span class="guide-token-fixed">AND</span> <span class="guide-token-requirement">clawline</span> <span class="guide-token-fixed">AND</span> <span class="guide-token-requirement">silk soar</span></code> or <code><span class="guide-token-requirement">dash</span> <span class="guide-token-fixed">OR</span> <span class="guide-token-requirement">clawline</span></code>. When mixing them, use parentheses to make the grouping explicit: <code><span class="guide-token-requirement">dash</span> <span class="guide-token-fixed">AND</span> (<span class="guide-token-requirement">clawline</span> <span class="guide-token-fixed">OR</span> <span class="guide-token-requirement">silk soar</span>)</code>.</p>
+                </section>
+                <section>
+                    <h3>Choose between values</h3>
+                    <p>Where a pattern shows square brackets, use commas to list alternatives: <code><span class="guide-token-requirement">break vines</span> [<span class="guide-token-direction">left</span>, <span class="guide-token-direction">right</span>]</code> means break vines left or right. For one value, brackets are optional: <code><span class="guide-token-requirement">break vines</span> <span class="guide-token-direction">left</span></code> or <code><span class="guide-token-requirement">break vines</span> [<span class="guide-token-direction">left</span>]</code>.</p>
                 </section>
                 <section>
                     <h3>Add a difficulty</h3>
@@ -32,12 +37,17 @@
                 </section>
                 <section>
                     <h3>Add a direction</h3>
-                    <p>The only <span class="guide-token-direction">direction</span> values are <code class="guide-token-direction">left</code>, <code class="guide-token-direction">right</code>, <code class="guide-token-direction">up</code>, and <code class="guide-token-direction">down</code>. A <span class="guide-token-direction">direction</span> follows the requirement type: <code><span class="guide-token-requirement">break vines</span> <span class="guide-token-direction">{direction}</span></code>. Examples are <code><span class="guide-token-requirement">break vines</span> <span class="guide-token-direction">left</span></code> and <code><span class="guide-token-requirement">open airlock</span> <span class="guide-token-direction">right</span></code>.</p>
-                    <p>A requirement type showing <code class="guide-token-direction">{direction?}</code> lets you omit the <span class="guide-token-direction">direction</span>; <code class="guide-token-direction">{direction}</code> still requires one. Check Requirement types to see which form is accepted.</p>
+                    <p>The only <span class="guide-token-direction">direction</span> values are <code class="guide-token-direction">left</code>, <code class="guide-token-direction">right</code>, <code class="guide-token-direction">up</code>, and <code class="guide-token-direction">down</code>. A <span class="guide-token-direction">direction</span> follows the requirement type: <code><span class="guide-token-requirement">break vines</span> [<span class="guide-token-direction">{direction}</span>]</code>. Examples are <code><span class="guide-token-requirement">break vines</span> <span class="guide-token-direction">left</span></code> and <code><span class="guide-token-requirement">open airlock</span> <span class="guide-token-direction">right</span></code>.</p>
+                    <p>A requirement type showing <code>[<span class="guide-token-direction">{direction?}</span>]</code> lets you omit the <span class="guide-token-direction">direction</span>; <code>[<span class="guide-token-direction">{direction}</span>]</code> still requires one. Check Requirement types to see which form is accepted.</p>
                 </section>
                 <section>
                     <h3>Require an amount</h3>
                     <p>Some requirements take a number directly, such as <code><span class="guide-token-requirement">clawline x</span> <span class="guide-token-amount">2</span></code>, <code><span class="guide-token-requirement">sharpdart x</span> <span class="guide-token-amount">3</span></code>, or <code><span class="guide-token-requirement">silkhearts x</span> <span class="guide-token-amount">2</span></code>.</p>
+                </section>
+                <section>
+                    <h3>Use a crest</h3>
+                    <p>Use a <span class="guide-token-crest">crest name</span> for <code class="guide-token-crest">{crest}</code>: <code><span class="guide-token-crest">shaman</span> <span class="guide-token-requirement">attack</span> <span class="guide-token-direction">up</span></code>, <code><span class="guide-token-difficulty">easy</span> <span class="guide-token-crest">shaman</span> <span class="guide-token-requirement">pogo</span></code>, or <code><span class="guide-token-difficulty">easy</span> <span class="guide-token-crest">shaman</span> <span class="guide-token-requirement">charge</span></code>.</p>
+                    <p>With <code class="guide-token-crest">{crest?}</code>, the <span class="guide-token-crest">crest</span> is optional: <code><span class="guide-token-requirement">attack</span> <span class="guide-token-direction">up</span></code> or <code><span class="guide-token-difficulty">easy</span> <span class="guide-token-requirement">charge</span></code>.</p>
                 </section>
                 <section>
                     <h3>Require an item</h3>
@@ -103,6 +113,21 @@
             }
             </tbody></table>
         }
+        else if (tab == GuideTab.Crests)
+        {
+            <label class="requirement-syntax-guide-search">search <input aria-label="Search crests" @bind="crestSearch" @bind:event="oninput" /></label>
+            <table class="requirement-syntax-guide-table requirement-syntax-guide-reference requirement-syntax-guide-notes-reference"><colgroup><col /><col /><col class="requirement-syntax-guide-notes-column" /></colgroup><thead><tr><th>Crest name</th><th>Other accepted names</th><th>Notes</th></tr></thead><tbody>
+            @foreach (var group in CrestGroups)
+            {
+                @if (group.Category is not null) { <tr class="requirement-syntax-guide-category"><th colspan="3">@group.Category</th></tr> }
+                @foreach (var crest in group.Rows)
+                {
+                    var aliases = crest.ParsedAliases;
+                    <tr class="requirement-syntax-guide-reference-row"><td class="guide-token-crest">@aliases[0]</td><td class="guide-token-crest">@string.Join(", ", aliases.Skip(1))</td><td class="guide-token-note">@crest.Notes</td></tr>
+                }
+            }
+            </tbody></table>
+        }
         else if (tab == GuideTab.Items)
         {
             <label class="requirement-syntax-guide-search">search <input aria-label="Search items" @bind="itemSearch" @bind:event="oninput" /></label>
@@ -153,8 +178,9 @@
 </section>
 
 @code {
-    private enum GuideTab { HowToWrite, LocationTypes, RequirementTypes, Items, Countables, EnemyTypes }
+    private enum GuideTab { HowToWrite, LocationTypes, RequirementTypes, Crests, Items, Countables, EnemyTypes }
     private sealed record PredicateGroup(string? Category, IReadOnlyList<RequirementPredicateReferenceView> Rows);
+    private sealed record CrestGroup(string? Category, IReadOnlyList<RequirementCrestReferenceView> Rows);
     private sealed record ItemGroup(string? Category, IReadOnlyList<RequirementItemReferenceView> Rows);
     private sealed record CountableGroup(string? Category, IReadOnlyList<RequirementCountableReferenceView> Rows);
     private sealed record EnemyTypeGroup(string? Category, IReadOnlyList<RequirementEnemyTypeReferenceView> Rows);
@@ -164,18 +190,20 @@
     [Parameter] public EventCallback Close { get; set; }
 
     private GuideTab tab;
-    private string predicateSearch = "", itemSearch = "", countableSearch = "", enemyTypeSearch = "";
+    private string predicateSearch = "", crestSearch = "", itemSearch = "", countableSearch = "", enemyTypeSearch = "";
     private string ActiveTabId => tab switch
     {
         GuideTab.HowToWrite => "requirement-syntax-guide-tab-how-to-write",
         GuideTab.LocationTypes => "requirement-syntax-guide-tab-location-types",
         GuideTab.RequirementTypes => "requirement-syntax-guide-tab-requirement-types",
+        GuideTab.Crests => "requirement-syntax-guide-tab-crests",
         GuideTab.Items => "requirement-syntax-guide-tab-items",
         GuideTab.Countables => "requirement-syntax-guide-tab-countables",
         _ => "requirement-syntax-guide-tab-enemy-types"
     };
 
     private IReadOnlyList<PredicateGroup> PredicateGroups => GroupPredicates(Reference.Predicates, predicateSearch);
+    private IReadOnlyList<CrestGroup> CrestGroups => GroupCrests(Reference.Crests, crestSearch);
     private IReadOnlyList<ItemGroup> ItemGroups => GroupItems(Reference.Items, itemSearch);
     private IReadOnlyList<CountableGroup> CountableGroups => GroupCountables(Reference.Countables, countableSearch);
     private IReadOnlyList<EnemyTypeGroup> EnemyTypeGroups => GroupEnemyTypes(Reference.EnemyTypes, enemyTypeSearch);
@@ -190,6 +218,22 @@
     }
 
     private static void AddPredicateGroup(List<PredicateGroup> groups, string? category, IEnumerable<RequirementPredicateReferenceView> candidates, string search)
+    {
+        var matches = candidates.Where(x => Matches(search, x.Name, x.Category, x.Aliases)).ToArray();
+        if (matches.Length > 0)
+            groups.Add(new(category, matches));
+    }
+
+    private static IReadOnlyList<CrestGroup> GroupCrests(IReadOnlyList<RequirementCrestReferenceView> rows, string search)
+    {
+        var groups = new List<CrestGroup>();
+        AddCrestGroup(groups, null, rows.Where(x => string.IsNullOrWhiteSpace(x.Category)), search);
+        foreach (var category in rows.Where(x => !string.IsNullOrWhiteSpace(x.Category)).Select(x => x.Category!).Distinct(StringComparer.Ordinal))
+            AddCrestGroup(groups, category, rows.Where(x => string.Equals(x.Category, category, StringComparison.Ordinal)), search);
+        return groups;
+    }
+
+    private static void AddCrestGroup(List<CrestGroup> groups, string? category, IEnumerable<RequirementCrestReferenceView> candidates, string search)
     {
         var matches = candidates.Where(x => Matches(search, x.Name, x.Category, x.Aliases)).ToArray();
         if (matches.Length > 0)
@@ -272,6 +316,7 @@
             {
                 "{difficulty}" or "{difficulty?}" => "guide-token-difficulty",
                 "{direction}" or "{direction?}" => "guide-token-direction",
+                "{crest}" or "{crest?}" => "guide-token-crest",
                 "{item}" => "guide-token-item",
                 "{countable}" => "guide-token-countable",
                 "{enemy}" => "guide-token-enemy",

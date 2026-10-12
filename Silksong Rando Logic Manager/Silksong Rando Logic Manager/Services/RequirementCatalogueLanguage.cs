@@ -10,14 +10,18 @@ public static class RequirementCatalogueLanguage
         new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateOnly, "{predicate}", "Predicate only"),
         new RequirementInputSyntaxOption(RequirementInputSyntax.OptionalDifficultyThenPredicate, "{difficulty?} {predicate}", "Optional difficulty + predicate"),
         new RequirementInputSyntaxOption(RequirementInputSyntax.RequiredDifficultyThenPredicate, "{difficulty} {predicate}", "Required difficulty + predicate"),
-        new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenDirection, "{predicate} {direction}", "Predicate + direction"),
-        new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenOptionalDirection, "{predicate} {direction?}", "Predicate + optional direction"),
+        new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenDirection, "{predicate} [{direction}]", "Predicate + direction"),
+        new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenOptionalDirection, "{predicate} [{direction?}]", "Predicate + optional direction"),
         new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenItem, "{predicate} {item}", "Predicate + item"),
         new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenCheck, "{predicate} {check}", "Predicate + check"),
         new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenQuantity, "{predicate} {quantity}", "Predicate + quantity"),
-        new RequirementInputSyntaxOption(RequirementInputSyntax.RequiredDifficultyThenPredicateThenEnemy, "{difficulty} {predicate} {enemy}", "Required difficulty + predicate + enemy"),
+        new RequirementInputSyntaxOption(RequirementInputSyntax.RequiredDifficultyThenPredicateThenEnemy, "{difficulty} {predicate} [{enemy}]", "Required difficulty + predicate + enemy"),
         new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenQuantityThenCountable, "{predicate} {quantity} {countable}", "Predicate + quantity + countable"),
-        new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenCountableThenQuantity, "{predicate} {countable} {quantity}", "Predicate + countable + quantity")
+        new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenCountableThenQuantity, "{predicate} {countable} {quantity}", "Predicate + countable + quantity"),
+        new RequirementInputSyntaxOption(RequirementInputSyntax.CrestThenPredicateThenDirection, "[{crest}] {predicate} {direction}", "Crest + predicate + direction"),
+        new RequirementInputSyntaxOption(RequirementInputSyntax.RequiredDifficultyThenCrestThenPredicate, "{difficulty} [{crest}] {predicate}", "Required difficulty + crest + predicate"),
+        new RequirementInputSyntaxOption(RequirementInputSyntax.OptionalCrestThenPredicateThenDirection, "[{crest?}] {predicate} {direction}", "Optional crest + predicate + direction"),
+        new RequirementInputSyntaxOption(RequirementInputSyntax.RequiredDifficultyThenOptionalCrestThenPredicate, "{difficulty} [{crest?}] {predicate}", "Required difficulty + optional crest + predicate")
     };
 
     public static IReadOnlyList<RequirementInputSyntaxOption> InputSyntaxOptions => inputSyntaxOptions;
@@ -143,6 +147,8 @@ public static class RequirementCatalogueLanguage
         RequirementInputSyntax.RequiredDifficultyThenPredicateThenEnemy => new HashSet<RequirementOutputPlaceholder> { RequirementOutputPlaceholder.Difficulty, RequirementOutputPlaceholder.Enemy },
         RequirementInputSyntax.PredicateThenQuantityThenCountable => new HashSet<RequirementOutputPlaceholder> { RequirementOutputPlaceholder.Quantity, RequirementOutputPlaceholder.Countable },
         RequirementInputSyntax.PredicateThenCountableThenQuantity => new HashSet<RequirementOutputPlaceholder> { RequirementOutputPlaceholder.Countable, RequirementOutputPlaceholder.Quantity },
+        RequirementInputSyntax.CrestThenPredicateThenDirection or RequirementInputSyntax.OptionalCrestThenPredicateThenDirection => new HashSet<RequirementOutputPlaceholder> { RequirementOutputPlaceholder.Crest, RequirementOutputPlaceholder.Direction },
+        RequirementInputSyntax.RequiredDifficultyThenCrestThenPredicate or RequirementInputSyntax.RequiredDifficultyThenOptionalCrestThenPredicate => new HashSet<RequirementOutputPlaceholder> { RequirementOutputPlaceholder.Difficulty, RequirementOutputPlaceholder.Crest },
         _ => throw new ArgumentOutOfRangeException(nameof(inputSyntax), inputSyntax, "Unsupported requirement input syntax.")
     };
 
@@ -159,7 +165,8 @@ public enum RequirementOutputPlaceholder
     Quantity,
     Check,
     Enemy,
-    Countable
+    Countable,
+    Crest
 }
 
 public abstract record RequirementOutputToken;
@@ -168,6 +175,12 @@ public sealed record RequirementOutputPlaceholderToken(RequirementOutputPlacehol
 
 public static class RequirementOutputTemplate
 {
+    // ONS1's input list marker never becomes an output placeholder marker.
+    // Keep literal-output handling of the fourteen prior choices unchanged.
+    internal static bool HasBracketedOns1Placeholder(RequirementInputSyntax syntax, string template) =>
+        syntax == RequirementInputSyntax.RequiredDifficultyThenOptionalCrestThenPredicate &&
+        (template.Contains("[{difficulty}]", StringComparison.Ordinal) || template.Contains("[{crest}]", StringComparison.Ordinal));
+
     public static bool TryTokenize(string? template, out IReadOnlyList<RequirementOutputToken> tokens, out string? error)
     {
         var result = new List<RequirementOutputToken>();
@@ -245,8 +258,9 @@ public static class RequirementOutputTemplate
             "check" => RequirementOutputPlaceholder.Check,
             "enemy" => RequirementOutputPlaceholder.Enemy,
             "countable" => RequirementOutputPlaceholder.Countable,
+            "crest" => RequirementOutputPlaceholder.Crest,
             _ => default
         };
-        return value is "difficulty" or "direction" or "item" or "quantity" or "check" or "enemy" or "countable";
+        return value is "difficulty" or "direction" or "item" or "quantity" or "check" or "enemy" or "countable" or "crest";
     }
 }

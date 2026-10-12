@@ -442,7 +442,7 @@ public sealed partial class SceneDumpParser
         {
             var property = json.ReadPropertyName();
             json.Expect(':');
-            if (!members.Add(property)) { evidence.Filler.Invalid = true; evidence.NotesRootInvalid = true; evidence.ConditionHeaderInvalid = true; }
+            if (!members.Add(property)) { evidence.Filler.Invalid = true; evidence.NotesRootInvalid = true; evidence.ConditionHeaderInvalid = true; evidence.PickupInvalid = true; }
             if (property == "type")
             {
                 type = json.ReadNullableString() ?? string.Empty;
@@ -453,7 +453,7 @@ public sealed partial class SceneDumpParser
             }
             else
             {
-                if (property == "error") { evidence.Filler.Invalid = true; evidence.NotesRootInvalid = true; evidence.ConditionHeaderInvalid = true; }
+                if (property == "error") { evidence.Filler.Invalid = true; evidence.NotesRootInvalid = true; evidence.ConditionHeaderInvalid = true; evidence.PickupInvalid = true; }
                 json.SkipValue();
             }
 
@@ -476,18 +476,41 @@ public sealed partial class SceneDumpParser
                 : type == "PlayMakerFSM" ? evidence.FsmJournal.Names.ToArray() : [],
             type is "EnemyDeathEffectsRegular" or "EnemyDeathEffectsNoEffect" ? evidence.DirectJournal.Malformed
                 : type == "PlayMakerFSM" && evidence.FsmJournal.Malformed)
-        { HasReliableFillerEvidence = evidence.Filler.DataPresent && !evidence.Filler.Invalid,
+        { IsArchipelagoLocationPickup = type == "CollectableItemPickup" && evidence.PickupDataObject &&
+              evidence.PickupItemObject && evidence.PickupTypeMatched && !evidence.PickupInvalid,
+          HasReliableFillerEvidence = evidence.Filler.DataPresent && !evidence.Filler.Invalid,
           ConditionalFillerEligible = evidence.Filler.Eligible(type),
           WorldEvidence = FinishWorldEvidence(type, evidence),
           EnemyConditionEvidence = FinishEnemyConditionEvidence(type, evidence),
-          HasReliableConditionCoverage = !evidence.ConditionHeaderInvalid && !string.IsNullOrWhiteSpace(type) && !IsMissingEvidence(type) };
+          HasPersistenceContext = type == "PersistentBoolItem" && !evidence.ConditionHeaderInvalid,
+          HasIncompletePersistenceEvidence = type == "PersistentBoolItem" && !evidence.ConditionHeaderInvalid &&
+              !evidence.PersistenceComplete,
+          HasReliableConditionCoverage = !evidence.ConditionHeaderInvalid && !string.IsNullOrWhiteSpace(type) && !IsMissingEvidence(type),
+          FsmBooleanNames = type == "PlayMakerFSM" && evidence.Filler.DataPresent && evidence.Filler.ObjectData &&
+              !evidence.Filler.Invalid && !evidence.NotesRootInvalid && !evidence.ConditionHeaderInvalid && !evidence.World.Invalid &&
+              (evidence.Filler.DataType is null or "PlayMakerFSM") ? evidence.FsmBooleanNames.ToArray() : [] };
     }
 
     private bool ScanComponentData(SceneComponentEvidence evidence, bool insideItemData, bool isComponentDataRoot, string context,
-        FillerShape? shape = null, bool isDataType = false)
+        FillerShape? shape = null, bool isDataType = false, PickupCaptureScope pickupScope = PickupCaptureScope.None,
+        PersistenceCaptureScope persistenceScope = PersistenceCaptureScope.None)
     {
+        // Observe only data.item.type alongside the ordinary scan; never substitute a
+        // reference parser that skips existing filler/world/Notes or identity extraction.
+        if ((isComponentDataRoot || pickupScope == PickupCaptureScope.Item) && json.Peek() != '{')
+            evidence.PickupInvalid = true;
+        if (pickupScope == PickupCaptureScope.ItemType && json.Peek() != '"') evidence.PickupInvalid = true;
+        // New documentary guards are isolated from the legacy scanner outcomes.
+        if (((isComponentDataRoot || persistenceScope == PersistenceCaptureScope.ItemData) && json.Peek() != '{') ||
+            ((isDataType || persistenceScope == PersistenceCaptureScope.ItemType) && json.Peek() != '"') ||
+            (persistenceScope == PersistenceCaptureScope.Value && json.Peek() is not ('t' or 'f')))
+            evidence.PersistenceInvalid = true;
         if (json.TryConsume('{'))
         {
+            if (isComponentDataRoot) evidence.PersistenceDataObject = true;
+            if (persistenceScope == PersistenceCaptureScope.ItemData) evidence.PersistenceItemObject = true;
+            if (isComponentDataRoot) evidence.PickupDataObject = true;
+            if (pickupScope == PickupCaptureScope.Item) evidence.PickupItemObject = true;
             if (isComponentDataRoot) { evidence.Filler.DataPresent = true; evidence.Filler.ObjectData = true; }
             var valid = shape is null || shape.Kind == FillerValueKind.Object;
             var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -495,8 +518,9 @@ public sealed partial class SceneDumpParser
             {
                 var property = json.ReadPropertyName();
                 json.Expect(':');
-                if (!seen.Add(property)) { valid = false; evidence.Filler.Invalid = true; if (isComponentDataRoot) evidence.NotesRootInvalid = true; }
-                if (property == "error") { evidence.Filler.Invalid = true; if (isComponentDataRoot) evidence.NotesRootInvalid = true; }
+                if (!seen.Add(property)) { valid = false; evidence.Filler.Invalid = true; if (isComponentDataRoot) evidence.NotesRootInvalid = true; if (isComponentDataRoot || pickupScope == PickupCaptureScope.Item) evidence.PickupInvalid = true; if (isComponentDataRoot || persistenceScope == PersistenceCaptureScope.ItemData) evidence.PersistenceInvalid = true; }
+                if (property == "error") { evidence.Filler.Invalid = true; if (isComponentDataRoot) evidence.NotesRootInvalid = true; if (isComponentDataRoot || pickupScope == PickupCaptureScope.Item) evidence.PickupInvalid = true; }
+                if (property == "error" && (isComponentDataRoot || persistenceScope == PersistenceCaptureScope.ItemData)) evidence.PersistenceInvalid = true;
                 FillerShape? childShape = null;
                 if (isComponentDataRoot)
                 {
@@ -519,7 +543,7 @@ public sealed partial class SceneDumpParser
                 }
                 else if (isComponentDataRoot && property == "fsm")
                 {
-                    ParseFsm(evidence.FsmJournal, evidence.World);
+                    ParseFsm(evidence.FsmJournal, evidence.World, evidence.FsmBooleanNames);
                 }
                 else if (isComponentDataRoot && ReadWorldField(property, evidence))
                 {
@@ -534,12 +558,21 @@ public sealed partial class SceneDumpParser
                 }
                 else if (insideItemData && property == "ID")
                 {
-                    evidence.ItemDataId ??= json.ReadNullableString();
+                    // Consume even when an earlier recursive ID won identity selection.
+                    var id = json.ReadNullableString();
+                    evidence.ItemDataId ??= id;
+                    if (persistenceScope == PersistenceCaptureScope.ItemData) evidence.PersistenceId = id;
                 }
                 else
                 {
                     var childValid = ScanComponentData(evidence, insideItemData || property == "itemData", false, $"{context}.{property}",
-                        childShape, isComponentDataRoot && property == "$type");
+                        childShape, isComponentDataRoot && property == "$type",
+                        isComponentDataRoot && property == "item" ? PickupCaptureScope.Item :
+                            pickupScope == PickupCaptureScope.Item ? property == "type" ? PickupCaptureScope.ItemType : PickupCaptureScope.ItemField :
+                            isComponentDataRoot && property == "$type" ? PickupCaptureScope.ItemField : PickupCaptureScope.None,
+                        isComponentDataRoot && property == "itemData" ? PersistenceCaptureScope.ItemData :
+                            persistenceScope == PersistenceCaptureScope.ItemData && property == "$type" ? PersistenceCaptureScope.ItemType :
+                            persistenceScope == PersistenceCaptureScope.ItemData && property == "Value" ? PersistenceCaptureScope.Value : PersistenceCaptureScope.None);
                     valid &= childValid;
                     // A supplied root type wrapper must be well-formed even for native data.
                     // Conditional field guards remain admission-only for their owning types.
@@ -576,12 +609,25 @@ public sealed partial class SceneDumpParser
         if (json.Peek() == '"')
         {
             var stringValue = json.ReadNullableString();
+            if (pickupScope == PickupCaptureScope.ItemType)
+                evidence.PickupTypeMatched = stringValue == "SilksongRandomizer.Patches.MinorPickupPatches+ArchipelagoLocationItem";
+            if ((pickupScope is PickupCaptureScope.ItemType or PickupCaptureScope.ItemField) && IsMissingEvidence(stringValue))
+                evidence.PickupInvalid = true;
             if (IsMissingEvidence(stringValue)) evidence.Filler.Invalid = true;
             if (isDataType) evidence.Filler.DataType = stringValue;
+            if ((isDataType && stringValue != "PersistentBoolItem") ||
+                (persistenceScope == PersistenceCaptureScope.ItemType && stringValue != "PersistentBoolItem+PersistentBoolData"))
+                evidence.PersistenceInvalid = true;
             return !isComponentDataRoot && (shape is null || shape.Kind == FillerValueKind.String &&
                 !IsMissingEvidence(stringValue) && (shape.ExactString is null || shape.ExactString == stringValue));
         }
         if (isComponentDataRoot) evidence.Filler.Invalid = true;
+        if (isDataType) evidence.PersistenceInvalid = true;
+        if (persistenceScope == PersistenceCaptureScope.Value && json.Peek() is 't' or 'f')
+        {
+            evidence.PersistenceValue = json.ReadNullableBoolean();
+            return !isComponentDataRoot && shape is null;
+        }
         if (shape?.Kind == FillerValueKind.Number)
             return json.ReadNullableDouble() is { } number && double.IsFinite(number) &&
                 (!shape.IntegerOnly || number is >= int.MinValue and <= int.MaxValue && Math.Truncate(number) == number);
@@ -627,6 +673,12 @@ public sealed partial class SceneDumpParser
 
     private sealed class SceneComponentEvidence
     {
+        public bool PickupDataObject, PickupItemObject, PickupTypeMatched, PickupInvalid;
+        public bool PersistenceDataObject, PersistenceItemObject, PersistenceInvalid;
+        public string? PersistenceId;
+        public bool? PersistenceValue;
+        public bool PersistenceComplete => PersistenceDataObject && PersistenceItemObject && !PersistenceInvalid &&
+            !string.IsNullOrWhiteSpace(PersistenceId) && !IsMissingEvidence(PersistenceId) && PersistenceValue is not null;
         public string? ItemDataId { get; set; }
         public string? TargetScene { get; set; }
         public string? EntryPoint { get; set; }
@@ -636,9 +688,13 @@ public sealed partial class SceneDumpParser
         public SceneJournalEvidence FsmJournal { get; } = new();
         public FillerDataEvidence Filler { get; } = new();
         public WorldDataEvidence World { get; } = new();
+        public List<string> FsmBooleanNames { get; } = [];
         public bool NotesRootInvalid;
         public bool ConditionHeaderInvalid;
     }
+
+    private enum PickupCaptureScope { None, Item, ItemType, ItemField }
+    private enum PersistenceCaptureScope { None, ItemData, ItemType, Value }
 
     private sealed class SceneJournalEvidence
     {
@@ -648,7 +704,7 @@ public sealed partial class SceneDumpParser
 
     // Only the direct component's fsm.states[].actionData is admitted. Each state
     // retains indexed scalar arrays and reference wrappers, never its raw JSON.
-    private void ParseFsm(SceneJournalEvidence evidence, WorldDataEvidence world)
+    private void ParseFsm(SceneJournalEvidence evidence, WorldDataEvidence world, List<string> reads)
     {
         var fsmFields = WorldMembers(world, property =>
         {
@@ -658,23 +714,30 @@ public sealed partial class SceneDumpParser
             {
                 string? stateName = null;
                 var tests = new WorldDataEvidence();
+                var stateReads = new List<string>();
+                var stateHeader = new WorldDataEvidence();
                 var stateFields = WorldMembers(tests, stateProperty =>
                 {
-                    if (stateProperty == "$type") WorldType(tests, "HutongGames.PlayMaker.FsmState");
+                    if (stateProperty == "$type")
+                    {
+                        var wrapper = WorldText(tests);
+                        if (wrapper != "HutongGames.PlayMaker.FsmState") { tests.Invalid = true; stateHeader.Invalid = true; }
+                    }
                     else if (stateProperty == "name") stateName = WorldText(tests);
-                    else if (stateProperty == "actionData") ParseActionData(evidence, tests);
+                    else if (stateProperty == "actionData") ParseActionData(evidence, tests, stateReads);
                     else json.SkipValue();
-                });
+                }, stateHeader);
                 if (!stateFields.Contains("name") || !stateFields.Contains("actionData")) tests.Invalid = true;
                 world.FsmUncertain |= tests.Invalid || tests.FsmUncertain;
                 world.HasExportError |= tests.HasExportError;
                 if (!tests.Invalid) world.FsmTests.AddRange(tests.FsmTests.Select(test => test with { State = stateName }));
+                if (!stateHeader.Invalid && stateFields.Contains("actionData") && !string.IsNullOrWhiteSpace(stateName) && !IsMissingEvidence(stateName)) reads.AddRange(stateReads);
             });
         });
         if (!fsmFields.Contains("states")) world.Invalid = true;
     }
 
-    private void ParseActionData(SceneJournalEvidence evidence, WorldDataEvidence world)
+    private void ParseActionData(SceneJournalEvidence evidence, WorldDataEvidence world, List<string> reads)
     {
         List<string?> names = [], parameterNames = [], parameterTypes = [];
         List<bool?> enabled = [];
@@ -682,11 +745,17 @@ public sealed partial class SceneDumpParser
         List<SceneReference> objects = [];
         List<SceneLiteralString> strings = [];
         List<string?> events = [];
+        var variablePool = new WorldDataEvidence(); // New pool failures never enter SW1/journal/filler evidence.
+        List<bool> booleanVariables = [];
+        var actionHeader = new WorldDataEvidence();
         var actionFields = WorldMembers(world, property =>
         {
             switch (property)
             {
-                case "$type": WorldType(world, "HutongGames.PlayMaker.ActionData"); break;
+                case "$type":
+                    var wrapper = WorldText(world);
+                    if (wrapper != "HutongGames.PlayMaker.ActionData") { world.Invalid = true; actionHeader.Invalid = true; }
+                    break;
                 case "actionNames": names = WorldValues(world, () => WorldText(world)); break;
                 case "actionEnabled": enabled = WorldValues(world, () => WorldBoolean(world)); break;
                 case "actionStartIndex": starts = WorldValues(world, () => WorldIndex(world)); break;
@@ -696,9 +765,13 @@ public sealed partial class SceneDumpParser
                 case "fsmObjectParams": objects = ParseValues(ParseFsmObjectReference); break;
                 case "fsmStringParams": strings = WorldValues(world, () => ParseLiteralString(world)); break;
                 case "stringParams": events = WorldValues(world, () => WorldText(world, allowEmpty: true)); break;
+                case "fsmVarParams": booleanVariables = WorldValues(variablePool, ParseDocumentaryBooleanVariable); break;
                 default: json.SkipValue(); break;
             }
-        });
+        }, actionHeader);
+        if (!actionHeader.Invalid)
+            DecodeDocumentaryReads(reads, actionFields, names, enabled, starts, parameterNames, parameterTypes, positions,
+                strings, booleanVariables, !variablePool.Invalid && !variablePool.HasExportError);
         if (!new[] { "actionNames", "actionEnabled", "actionStartIndex", "paramName", "paramDataType", "paramDataPos", "fsmStringParams", "stringParams" }.All(actionFields.Contains))
             world.Invalid = true;
         DecodeWorldTests(world, names, enabled, starts, parameterNames, parameterTypes, positions, strings, events);
@@ -849,6 +922,11 @@ public sealed class SceneDumpObject(
     public ScenePlacementWorldAvailability PlacementWorld { get; internal set; }
     public IReadOnlyList<ScenePlayerDataCondition> PlayerDataConditions { get; internal set; } = [];
     public IReadOnlyList<SceneBooleanTest> SpawnConditions { get; internal set; } = [];
+    public IReadOnlyList<string> FsmBooleanNames { get; internal set; } = [];
+    public bool HasPersistenceContext { get; internal set; }
+    public bool HasIncompletePersistenceEvidence { get; internal set; }
+    public bool HasGoverningConditions { get; internal set; }
+    public bool HasIncompleteConditionEvidence { get; internal set; }
     public IReadOnlyList<string> WorldUncertainty { get; internal set; } = [];
     // Permanent scoped distinction: SW1 enemy/candidate proof versus SR1 non-enemy context.
     public bool ShowAct3Indication => IsEnemyActorCandidate || Classification == SceneDumpClassification.Enemy
@@ -862,12 +940,17 @@ public sealed class SceneDumpObject(
 public sealed record SceneDumpComponent(string Type, string? ItemDataId, string? TargetScene, string? EntryPoint,
     bool RedirectedHealthReceiver, IReadOnlyList<string> JournalNames, bool MalformedJournal)
 {
+    public bool IsArchipelagoLocationPickup { get; internal init; }
     public bool HasReliableFillerEvidence { get; internal init; }
     public bool ConditionalFillerEligible { get; internal init; }
     public SceneComponentWorldEvidence? WorldEvidence { get; internal init; }
     public SceneEnemyConditionEvidence? EnemyConditionEvidence { get; internal init; }
     public bool HasReliableConditionCoverage { get; internal init; }
+    public IReadOnlyList<string> FsmBooleanNames { get; internal init; } = [];
+    public bool HasPersistenceContext { get; internal init; }
+    public bool HasIncompletePersistenceEvidence { get; internal init; }
 }
+
 
 public sealed record ScenePosition(double? X, double? Y, double? Z);
 

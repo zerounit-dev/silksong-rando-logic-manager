@@ -77,6 +77,12 @@ public static class RequirementCatalogueValidator
             return;
         }
 
+        if (RequirementOutputTemplate.HasBracketedOns1Placeholder(inputSyntax, outputSyntax))
+        {
+            issues.Add(Issue("OutputSyntax", id, name, "Output placeholders must not use input list brackets."));
+            return;
+        }
+
         var required = RequirementCatalogueLanguage.GetSupportedOutputArguments(inputSyntax);
         var seen = new HashSet<RequirementOutputPlaceholder>();
         foreach (var placeholder in tokens.OfType<RequirementOutputPlaceholderToken>().Select(token => token.Value))
