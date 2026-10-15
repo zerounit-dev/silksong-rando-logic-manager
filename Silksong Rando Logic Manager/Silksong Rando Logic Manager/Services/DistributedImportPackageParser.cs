@@ -54,6 +54,62 @@ public sealed class DistributedImportPackageParser
             throw new PackageFormatException("A grouped partial room dump requires exactly its one room group in $.roomGroupings.groups.");
     }
 
+    public DistributedImportParseOutcome ComposePartialSelection(IReadOnlyList<DistributedImportFilePackage> files)
+    {
+        if (files.Count == 1) return new DistributedImportPackageValidated(files[0].Package, Summarize(files[0].Package));
+        if (files.Count == 0) return new DistributedImportPackageRejected(["Select at least one JSON package."]);
+
+        var errors = new List<string>();
+        var groups = new Dictionary<Guid, DistributedRoomGroup>();
+        var rooms = new List<DistributedRoomDocument>();
+        var identities = new Dictionary<Guid, (string Kind, Guid? Owner, string FileName)>();
+        var sources = new Dictionary<Guid, List<string>>();
+        var version = files[0].Package.ExportVersion;
+        foreach (var file in files)
+        {
+            var package = file.Package;
+            if (package.ExportVersion != version) errors.Add($"{files[0].FileName}, {file.FileName}: export versions must match.");
+            if (package.IsPartialRoomDump != true || package.Rooms.Count == 0) errors.Add($"{file.FileName}: multi-file selection requires a partial package containing rooms.");
+            if (package.AreaMap is not null) errors.Add($"{file.FileName}: an areaMap snapshot is not allowed in a multi-file selection, even when empty.");
+            foreach (var group in package.RoomGroupings?.Groups ?? [])
+            {
+                Add(group.Id, "room group", null, file.FileName);
+                if (groups.TryGetValue(group.Id, out var previous))
+                {
+                    if (previous != group) errors.Add($"{identities[group.Id].FileName}, {file.FileName}: repeated room-group {group.Id} context must match every exchanged field exactly.");
+                }
+                else groups.Add(group.Id, group);
+            }
+            foreach (var room in package.Rooms)
+            {
+                Add(room.Id, "room", null, file.FileName);
+                foreach (var child in room.Subrooms) Add(child.Id, "subroom", room.Id, file.FileName);
+                foreach (var child in room.Transitions) Add(child.Id, "transition", room.Id, file.FileName);
+                foreach (var child in room.Connections) Add(child.Id, "connection", room.Id, file.FileName);
+                foreach (var child in room.Checks) Add(child.Id, "check", room.Id, file.FileName);
+                rooms.Add(room);
+            }
+        }
+        if (errors.Count != 0) return new DistributedImportPackageRejected(errors);
+        var combined = new DistributedImportPackage(version, true, null, new(groups.Values.ToArray()), rooms.ToArray())
+        {
+            SourceFileNames = sources.ToDictionary(x => x.Key, x => (IReadOnlyList<string>)x.Value.ToArray())
+        };
+        return new DistributedImportPackageValidated(combined, Summarize(combined));
+
+        void Add(Guid id, string kind, Guid? owner, string fileName)
+        {
+            if (!sources.TryGetValue(id, out var names)) sources.Add(id, names = []);
+            names.Add(fileName);
+            if (!identities.TryGetValue(id, out var prior)) { identities.Add(id, (kind, owner, fileName)); return; }
+            if (prior.Kind == "room group" && kind == "room group") return;
+            var reason = prior.Kind != kind ? $"GUID {id} is reused across {prior.Kind} and {kind} entities."
+                : prior.Owner != owner ? $"{kind} GUID {id} is reused under different room owners."
+                : $"{kind} GUID {id} overlaps; identical content is not permitted either.";
+            errors.Add($"{prior.FileName}, {fileName}: {reason}");
+        }
+    }
+
     private static DistributedImportPackageSummary Summarize(DistributedImportPackage package) => new(
         package.ExportVersion, package.IsPartialRoomDump, package.AreaMap?.Maps.Count ?? 0, package.RoomGroupings?.Groups.Count ?? 0,
         package.Rooms.Count, package.Rooms.Sum(x => x.Subrooms.Count), package.Rooms.Sum(x => x.Transitions.Count),

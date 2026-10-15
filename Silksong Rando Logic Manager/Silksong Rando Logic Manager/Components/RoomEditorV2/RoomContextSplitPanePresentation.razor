@@ -7,7 +7,7 @@
         <AreaMapPanePresentation View="Map" HostGeneration="MapOwnerGeneration" LinkedRoomActivated="LinkedRoomActivated" MapLinksChanged="MapLinksChanged" ModalStateChanged="MapLinkModalStateChanged" />
         <div class="room-context-divider" aria-hidden="true"></div>
     }
-    <SceneContextPanePresentation View="Scene" Placement="Placement" TakePlacementFocus="TakePlacementFocus" SelectedItem="SelectedItem" ActionBox="ActionBox" ActionRequested="ActionRequested" OwnerMounted="OwnerMounted" SelectionChanged="SelectionChanged" PlacementCommitted="PlacementCommitted" PlacementCancelled="PlacementCancelled" MarkerDragCommitted="MarkerDragCommitted" SceneNudgeCommitted="SceneNudgeCommitted" FrameGeometryCommitted="FrameGeometryCommitted" Capture="Capture" RoomId="RoomId" />
+    <SceneContextPanePresentation View="Scene" Placement="Placement" TakePlacementFocus="TakePlacementFocus" SelectedItem="SelectedItem" ActionBox="ActionBox" ActionRequested="ActionRequested" OwnerMounted="OwnerMounted" LayerVisibilityChanged="LayerVisibilityChanged" SelectionChanged="SelectionChanged" PlacementCommitted="PlacementCommitted" PlacementCancelled="PlacementCancelled" MarkerDragCommitted="MarkerDragCommitted" SceneNudgeCommitted="SceneNudgeCommitted" FrameGeometryCommitted="FrameGeometryCommitted" Capture="Capture" RoomId="RoomId" />
 </section>
     <div class="room-map-context-height-handle" data-v2-map-context-height-handle="true" aria-hidden="true"></div>
 </div>
@@ -21,6 +21,7 @@
     [Parameter] public V2SceneActionBoxView? ActionBox { get; set; }
     [Parameter] public Func<Guid, long, V2SceneAction, Task>? ActionRequested { get; set; }
     [Parameter] public Func<Guid, long, Task>? OwnerMounted { get; set; }
+    [Parameter] public Func<Guid, long, V2SceneSelectedItemKind, bool, Task>? LayerVisibilityChanged { get; set; }
     [Parameter] public Func<V2SceneSelectionCallback, Task>? SelectionChanged { get; set; }
     [Parameter] public Func<Guid, long, SceneAnnotationPlacementRequest, double, double, Task<bool>>? PlacementCommitted { get; set; }
     [Parameter] public Func<Guid, long, SceneAnnotationPlacementRequest, Task<bool>>? PlacementCancelled { get; set; }

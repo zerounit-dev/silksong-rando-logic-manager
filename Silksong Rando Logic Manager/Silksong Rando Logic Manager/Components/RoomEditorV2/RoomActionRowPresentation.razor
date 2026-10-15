@@ -2,13 +2,13 @@
 
 <div class="document-action-row">
     <RoomNavigationContextControlsPresentation View="NavigationContext" BackToMap="BackToMap" ToggleMapContext="ToggleMapContext" />
-    <RoomLifecycleContentControlsPresentation View="LifecycleContent" RoomId="RoomId" ToggleArchivedChildren="ToggleArchivedChildren" Intent="LifecycleContentIntent" Archive="Archive" Restore="Restore" PermanentDelete="PermanentDelete" CurrentRoomExport="CurrentRoomExport" ZoneExport="ZoneExport" />
+    <RoomLifecycleContentControlsPresentation View="LifecycleContent" ExportLinks="ExportLinks" ToggleArchivedChildren="ToggleArchivedChildren" Intent="LifecycleContentIntent" Archive="Archive" Restore="Restore" PermanentDelete="PermanentDelete" />
 </div>
 
 @code {
     [Parameter, EditorRequired] public RoomNavigationContextControlsView NavigationContext { get; set; } = null!;
     [Parameter, EditorRequired] public RoomLifecycleContentControlsView LifecycleContent { get; set; } = null!;
-    [Parameter, EditorRequired] public Guid RoomId { get; set; }
+    [Parameter, EditorRequired] public RoomExportLinksView ExportLinks { get; set; } = null!;
     [Parameter] public EventCallback BackToMap { get; set; }
     [Parameter] public EventCallback ToggleMapContext { get; set; }
     [Parameter] public EventCallback ToggleArchivedChildren { get; set; }
@@ -16,6 +16,4 @@
     [Parameter] public EventCallback Archive { get; set; }
     [Parameter] public EventCallback Restore { get; set; }
     [Parameter] public EventCallback PermanentDelete { get; set; }
-    [Parameter] public EventCallback<RoomExportIntent> CurrentRoomExport { get; set; }
-    [Parameter] public EventCallback<RoomExportIntent> ZoneExport { get; set; }
 }

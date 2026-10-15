@@ -6,8 +6,18 @@ namespace Silksong_Rando_Logic_Manager.Services;
 
 // Stateless import orchestration. Callers hold only DistributedImportOrchestrationState
 // and shaped comparison evidence; every durable operation has its own transaction.
-public sealed class DistributedImportApplicationService(IDbContextFactory<LogicDbContext> contexts, TimeProvider timeProvider, SceneImageFileService sceneImages)
+public sealed class DistributedImportApplicationService(IDbContextFactory<LogicDbContext> contexts, TimeProvider timeProvider, SceneImageFileService sceneImages, ILogger<DistributedImportApplicationService> logger)
 {
+    // Read-only admission for the complete selection before Start is enabled.
+    public async Task<DistributedImportOutcome> PrepareAsync(DistributedImportPackage package, CancellationToken ct = default)
+    {
+        var errors = await ValidateAgainstDatabaseAsync(package, ct);
+        return errors.Count == 0 ? new DistributedImportPrepared(new(package.ExportVersion, package.IsPartialRoomDump,
+            package.AreaMap?.Maps.Count ?? 0, package.RoomGroupings?.Groups.Count ?? 0, package.Rooms.Count,
+            package.Rooms.Sum(x => x.Subrooms.Count), package.Rooms.Sum(x => x.Transitions.Count),
+            package.Rooms.Sum(x => x.Connections.Count), package.Rooms.Sum(x => x.Checks.Count))) : new DistributedImportRejected(errors);
+    }
+
     public Task<DistributedImportOutcome> StartAsync(DistributedImportStartRequest request, CancellationToken ct = default) =>
         StartAsync(request, null, ct);
 
@@ -17,6 +27,8 @@ public sealed class DistributedImportApplicationService(IDbContextFactory<LogicD
     {
         var errors = await ValidateAgainstDatabaseAsync(request.Package, ct);
         if (errors.Count != 0) return new DistributedImportRejected(errors);
+        if (priorState is { RoomGroupingStageCompleted: true, ReviewRoomIds: not null })
+            return new DistributedImportStarted(priorState, priorState.AreaMapOutcome, priorState.RoomGroupingOutcome);
 
         var map = priorState?.AreaMapStageCompleted == true ? priorState.AreaMapOutcome
             : request.Package.AreaMap is null ? new("area-map", false, true, "No area-map snapshot was supplied.")
@@ -24,13 +36,27 @@ public sealed class DistributedImportApplicationService(IDbContextFactory<LogicD
         var stateAfterMap = NewState(request.Package, true, !Failed(map, out var mapError), false, new("room-groupings", 0, 1, "Waiting for room-grouping stage."), map, new("room-groupings", false, false, null), new HashSet<Guid>(), new HashSet<Guid>(), []);
         if (!stateAfterMap.AreaMapStageCompleted) return new DistributedImportFailed("area-map", mapError, stateAfterMap);
 
-        var groups = priorState?.RoomGroupingStageCompleted == true ? priorState.RoomGroupingOutcome
-            : request.Package.RoomGroupings is null ? new("room-groupings", false, true, "No room-grouping snapshot was supplied.")
-            : request.Package.IsPartialRoomDump == true ? new("room-groupings", false, true, "Partial-package group context is nonmutating.")
-            : request.ApplyRoomGroupings ? await ApplyGroupsAsync(request.Package.RoomGroupings, request.Package.ExportVersion, ct) : new("room-groupings", false, true, "Room-grouping snapshot was not selected.");
-        if (Failed(groups, out var groupError)) return new DistributedImportFailed("room-groupings", groupError, stateAfterMap);
+        try
+        {
+            var groups = priorState?.RoomGroupingStageCompleted == true ? priorState.RoomGroupingOutcome
+                : request.Package.RoomGroupings is null ? new("room-groupings", false, true, "No room-grouping snapshot was supplied.")
+                : request.Package.IsPartialRoomDump == true ? new("room-groupings", false, true, "Partial-package group context is nonmutating.")
+                : request.ApplyRoomGroupings ? await ApplyGroupsAsync(request.Package.RoomGroupings, request.Package.ExportVersion, ct) : new("room-groupings", false, true, "Room-grouping snapshot was not selected.");
+            if (Failed(groups, out var groupError)) return new DistributedImportFailed("room-groupings", groupError, stateAfterMap);
 
-        return new DistributedImportStarted(await CreateReadyStateAsync(request.Package, map, groups, ct), map, groups);
+            // Publish completed mutation stages before any queue-preparation read.
+            var state = stateAfterMap with { RoomGroupingStageCompleted = true, RoomGroupingOutcome = groups,
+                Progress = new("room preparation", 0, request.Package.Rooms.Count, "Preparing the review queue."), ReviewRoomIds = null };
+            return new DistributedImportStarted(state, map, groups);
+        }
+        catch (Exception exception) { throw new DistributedImportInterruptedException(stateAfterMap, exception); }
+    }
+
+    public async Task<DistributedImportOutcome> PrepareRoomsAsync(DistributedImportOrchestrationState state, CancellationToken ct = default)
+    {
+        if (!ReadyForRooms(state, out var rejected)) return rejected;
+        if (state.ReviewRoomIds is not null) return new DistributedImportStarted(state, state.AreaMapOutcome, state.RoomGroupingOutcome);
+        return new DistributedImportStarted(await CreateReadyStateAsync(state.Package, state.AreaMapOutcome, state.RoomGroupingOutcome, ct), state.AreaMapOutcome, state.RoomGroupingOutcome);
     }
 
     public async Task<DistributedImportOutcome> PrepareRoomAsync(DistributedImportOrchestrationState state, Guid roomId, CancellationToken ct = default)
@@ -40,7 +66,7 @@ public sealed class DistributedImportApplicationService(IDbContextFactory<LogicD
         if (incoming is null) return new DistributedImportRejected(["The requested room is not in the package."]);
         var comparison = await CompareAsync(incoming, ct);
         return comparison.Kind == DistributedRoomComparisonKind.Identical
-            ? new DistributedImportRoomSkipped(roomId, state)
+            ? new DistributedImportRoomSkipped(roomId, state.PendingRoomIds.Contains(roomId) ? Decide(state, roomId) : state, comparison)
             : new DistributedImportRoomPrepared(comparison);
     }
 
@@ -135,7 +161,15 @@ public sealed class DistributedImportApplicationService(IDbContextFactory<LogicD
             await ReconcileSelectedChildrenAsync(db, room.Id, incoming, childPlan!, operationUtc, ct);
         using (db.SuppressAuditMetadata()) { await db.SaveChangesAsync(ct); await new LogicReferenceResolver(db).ResolveAsync(ct); }
         await tx.CommitAsync(ct);
-        if (invalidateSceneImage) await sceneImages.DeleteAsync(incoming.Id, ct);
+        if (invalidateSceneImage)
+        {
+            try { await sceneImages.DeleteAsync(incoming.Id, ct); }
+            catch (Exception exception)
+            {
+                logger.LogError(exception, "Postcommit scene image cleanup failed for committed imported room {RoomId}.", incoming.Id);
+                return new DistributedImportRoomApplied(incoming.Id, null!) { CleanupException = exception };
+            }
+        }
         return new DistributedImportRoomApplied(incoming.Id, null!);
     }
 
@@ -412,7 +446,7 @@ public sealed class DistributedImportApplicationService(IDbContextFactory<LogicD
             .Select(x => x.Room.Id)
             .ToArray();
         var pending = reviewRoomIds.ToHashSet();
-        return NewState(package, true, true, true, new("rooms", package.Rooms.Count - pending.Count, package.Rooms.Count, "Awaiting explicit decisions for new or changed rooms."), map, groups, pending, new HashSet<Guid>(), reviewRoomIds);
+        return NewState(package, true, true, true, new("rooms", package.Rooms.Count - pending.Count, package.Rooms.Count, "Awaiting explicit decisions for new or changed rooms."), map, groups, pending, package.Rooms.Select(x => x.Id).Where(id => !pending.Contains(id)).ToHashSet(), reviewRoomIds);
     }
 
     private static DistributedImportOrchestrationState Decide(DistributedImportOrchestrationState state, Guid roomId)
@@ -429,7 +463,14 @@ public sealed class DistributedImportApplicationService(IDbContextFactory<LogicD
         await using var db=await contexts.CreateDbContextAsync(ct); var errors=new List<string>(); var types=new Dictionary<Guid,string>(); void Add(Guid id,string type){ if(types.TryGetValue(id,out var prior)&&prior!=type) errors.Add($"GUID {id} is reused for {prior} and {type} entities."); else types[id]=type; }
         foreach(var room in package.Rooms){Add(room.Id,"room");foreach(var x in room.Subrooms)Add(x.Id,"subroom");foreach(var x in room.Transitions)Add(x.Id,"transition");foreach(var x in room.Connections)Add(x.Id,"connection");foreach(var x in room.Checks){Add(x.Id,"check");if(package.ExportVersion>=3&&x.LocationType is not null&&!CheckLocationTypeCatalogue.IsRecognized(x.LocationType))errors.Add($"Check {x.Id} in room {room.Id} has an unrecognized location type.");}} foreach(var x in package.RoomGroupings?.Groups??[])Add(x.Id,"group"); foreach(var x in package.AreaMap?.Maps??[]){Add(x.Id,"map");foreach(var y in x.Overlays)Add(y.Id,"overlay");foreach(var y in x.Zones){Add(y.Id,"zone");foreach(var z in y.Scenes){Add(z.Id,"scene");foreach(var q in z.Chunks)Add(q.Id,"chunk");}}}
         var all=types.Keys.ToHashSet(); var tables=new[]{("room",await db.Rooms.Select(x=>x.Id).ToArrayAsync(ct)),("subroom",await db.Subrooms.Select(x=>x.Id).ToArrayAsync(ct)),("transition",await db.RoomTransitions.Select(x=>x.Id).ToArrayAsync(ct)),("connection",await db.SubroomConnections.Select(x=>x.Id).ToArrayAsync(ct)),("check",await db.CheckLocations.Select(x=>x.Id).ToArrayAsync(ct)),("group",await db.RoomGroups.Select(x=>x.Id).ToArrayAsync(ct)),("map",await db.Maps.Select(x=>x.Id).ToArrayAsync(ct)),("zone",await db.MapZones.Select(x=>x.Id).ToArrayAsync(ct)),("scene",await db.MapScenes.Select(x=>x.Id).ToArrayAsync(ct)),("chunk",await db.MapChunks.Select(x=>x.Id).ToArrayAsync(ct)),("overlay",await db.MapOverlays.Select(x=>x.Id).ToArrayAsync(ct))}; foreach(var(type,ids) in tables)foreach(var id in ids.Where(all.Contains))if(types[id]!=type)errors.Add($"GUID {id} is reused for local {type} and incoming {types[id]} entities.");
-        async Task CheckOwners<T>(IEnumerable<(Guid Id,Guid Owner)> incoming, IQueryable<T> query, Func<T,Guid> id, Func<T,Guid> owner,string name){var local=(await query.ToListAsync(ct)).Where(x=>all.Contains(id(x))).ToDictionary(id,owner);foreach(var x in incoming)if(local.TryGetValue(x.Id,out var found)&&found!=x.Owner)errors.Add($"{name} GUID {x.Id} belongs to a different local room.");} await CheckOwners(package.Rooms.SelectMany(r=>r.Subrooms.Select(x=>(x.Id,r.Id))),db.Subrooms,x=>x.Id,x=>x.RoomId,"Subroom");await CheckOwners(package.Rooms.SelectMany(r=>r.Transitions.Select(x=>(x.Id,r.Id))),db.RoomTransitions,x=>x.Id,x=>x.RoomId,"Transition");await CheckOwners(package.Rooms.SelectMany(r=>r.Connections.Select(x=>(x.Id,r.Id))),db.SubroomConnections,x=>x.Id,x=>x.RoomId,"Connection");await CheckOwners(package.Rooms.SelectMany(r=>r.Checks.Select(x=>(x.Id,r.Id))),db.CheckLocations,x=>x.Id,x=>x.RoomId,"Check"); return errors;
+        async Task CheckOwners<T>(IEnumerable<(Guid Id,Guid Owner)> incoming, IQueryable<T> query, Func<T,Guid> id, Func<T,Guid> owner,string name){var local=(await query.ToListAsync(ct)).Where(x=>all.Contains(id(x))).ToDictionary(id,owner);foreach(var x in incoming)if(local.TryGetValue(x.Id,out var found)&&found!=x.Owner)errors.Add($"{name} GUID {x.Id} belongs to a different local room.");} await CheckOwners(package.Rooms.SelectMany(r=>r.Subrooms.Select(x=>(x.Id,r.Id))),db.Subrooms,x=>x.Id,x=>x.RoomId,"Subroom");await CheckOwners(package.Rooms.SelectMany(r=>r.Transitions.Select(x=>(x.Id,r.Id))),db.RoomTransitions,x=>x.Id,x=>x.RoomId,"Transition");await CheckOwners(package.Rooms.SelectMany(r=>r.Connections.Select(x=>(x.Id,r.Id))),db.SubroomConnections,x=>x.Id,x=>x.RoomId,"Connection");await CheckOwners(package.Rooms.SelectMany(r=>r.Checks.Select(x=>(x.Id,r.Id))),db.CheckLocations,x=>x.Id,x=>x.RoomId,"Check");
+        return errors.Select(error =>
+        {
+            // Every classified identity error above includes its implicated GUID.
+            var names = package.SourceFileNames.Where(source => error.Contains(source.Key.ToString(), StringComparison.Ordinal))
+                .SelectMany(source => source.Value).Distinct(StringComparer.Ordinal).ToArray();
+            return names.Length == 0 ? error : $"{string.Join(", ", names)}: {error}";
+        }).ToList();
     }
     private static bool SameComparison(DistributedRoomComparison left, DistributedRoomComparison right) => JsonSerializer.Serialize(left)==JsonSerializer.Serialize(right);
 

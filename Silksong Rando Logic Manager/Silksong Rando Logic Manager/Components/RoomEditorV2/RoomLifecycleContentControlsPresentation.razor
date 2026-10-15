@@ -15,8 +15,15 @@
     {
         <button id="room-archive" class="archive-room-button" type="button" @onclick="Archive"><i class="fa-solid fa-box-archive" aria-hidden="true"></i> archive room</button>
     }
-    <button id="room-zone-export" class="icon-button room-current-export" type="button" aria-label="export zone" title="@(View.CanExportZone ? "Export every active and archived room in this room group." : "Export zone is unavailable because this room is not in a room group.")" disabled="@(!View.CanExportZone)" @onclick="ExportZone"><i class="fa-solid fa-file-export" aria-hidden="true"></i> export zone</button>
-    <button id="room-current-export" class="icon-button room-current-export" type="button" aria-label="export current room" title="export current room" @onclick="ExportCurrentRoom"><i class="fa-solid fa-file-export" aria-hidden="true"></i> export room</button>
+    @if (ExportLinks.ZoneUrl is { } zoneUrl)
+    {
+        <a id="room-zone-export" class="icon-button room-current-export" href="@zoneUrl" download aria-label="export zone" title="Export every active and archived room in this room group."><i class="fa-solid fa-file-export" aria-hidden="true"></i> export zone</a>
+    }
+    else
+    {
+        <button id="room-zone-export" class="icon-button room-current-export" type="button" aria-label="export zone" title="Export zone is unavailable because this room is not in a room group." disabled><i class="fa-solid fa-file-export" aria-hidden="true"></i> export zone</button>
+    }
+    <a id="room-current-export" class="icon-button room-current-export" href="@ExportLinks.CurrentRoomUrl" download aria-label="export current room" title="export current room"><i class="fa-solid fa-file-export" aria-hidden="true"></i> export room</a>
 </div>
 
 @code {
@@ -26,10 +33,6 @@
     [Parameter] public EventCallback Archive { get; set; }
     [Parameter] public EventCallback Restore { get; set; }
     [Parameter] public EventCallback PermanentDelete { get; set; }
-    [Parameter] public EventCallback<RoomExportIntent> CurrentRoomExport { get; set; }
-    [Parameter] public EventCallback<RoomExportIntent> ZoneExport { get; set; }
-    [Parameter, EditorRequired] public Guid RoomId { get; set; }
+    [Parameter, EditorRequired] public RoomExportLinksView ExportLinks { get; set; } = null!;
     private Task RequestRecheckRoomLogic() => Intent.InvokeAsync(RoomLifecycleContentControlsIntent.RecheckRoomLogic);
-    private Task ExportCurrentRoom() => CurrentRoomExport.InvokeAsync(new(RoomId));
-    private Task ExportZone() => ZoneExport.InvokeAsync(new(RoomId));
 }

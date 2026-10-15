@@ -43,9 +43,9 @@ public sealed record V2RoomHeaderSaveStatus(V2RoomHeaderSaveState State, string?
 public sealed record RoomNavigationContextControlsView(bool IsArchived);
 /// <summary>Read-only room lifecycle/content-control presentation; archived-child visibility is page-local.</summary>
 public sealed record RoomLifecycleContentControlsView(bool IsArchived, bool ShowArchivedChildren,
-    bool RecheckRoomLogicBusy = false, bool CanExportZone = false);
-/// <summary>Read-only room-export intent; the server derives scope from this room ID.</summary>
-public sealed record RoomExportIntent(Guid RoomId);
+    bool RecheckRoomLogicBusy = false);
+/// <summary>Page-supplied native attachment URLs; a null zone URL means genuinely disabled.</summary>
+public sealed record RoomExportLinksView(string CurrentRoomUrl, string? ZoneUrl);
 public enum RoomLifecycleContentControlsIntent { RecheckRoomLogic }
 public enum V2RoomLifecycleCommandStatus { Committed, Missing, ExpectedFailure, Unexpected }
 /// <summary>Typed result for archive, restore, and archived-room permanent deletion.</summary>
@@ -111,7 +111,10 @@ public sealed record SubroomRowView(Guid EntityId, int SortOrder, bool IsArchive
     string FriendlyName, string ReferenceId, string Notes, double? SceneUnitX, double? SceneUnitY,
     double? SceneUnitWidth, double? SceneUnitHeight, V2Severity FriendlyNameSeverity,
     V2Severity ReferenceIdSeverity, V2Severity UsageSeverity, V2Severity GeometrySeverity,
-    bool EnableAnnotation = true);
+    bool EnableAnnotation = true)
+{
+    public RowTargetCoordinateState TargetCoordinateState { get; init; }
+}
 public sealed record SubroomTableView(IReadOnlyList<SubroomRowView> ActiveRows, IReadOnlyList<SubroomRowView> ArchivedRows);
 public sealed record SubroomReferenceTransitionTargetEvidence(Guid EntityId, DateTime UpdatedUtc, string? ExpectedText);
 public sealed record SubroomReferenceConnectionTargetEvidence(Guid EntityId, DateTime UpdatedUtc, string FieldName, string ExpectedText);
@@ -142,7 +145,10 @@ public sealed record TransitionRowView(Guid EntityId, int SortOrder, bool IsArch
     V2Severity RequirementsSeverity, V2Severity InGameIdSeverity, V2ReferenceState SourceReferenceState,
     V2ReferenceState DestinationRoomState, V2ReferenceState DestinationAliasState, V2InverseState InverseState,
     bool IsUnsafeArrival, bool EnableAnnotation = false, bool CanExplicitInverseSetup = false,
-    Guid? ResolvedInverseRoomId = null);
+    Guid? ResolvedInverseRoomId = null)
+{
+    public RowTargetCoordinateState TargetCoordinateState { get; init; }
+}
 public sealed record TransitionTableView(IReadOnlyList<TransitionRowView> ActiveRows, IReadOnlyList<TransitionRowView> ArchivedRows,
     IReadOnlyList<string> RoomReferenceSuggestions,
     IReadOnlyDictionary<Guid, IReadOnlyList<string>> DestinationAliasSuggestionsByTransitionId)
@@ -248,6 +254,7 @@ public sealed record ConnectionRowView(Guid EntityId, int SortOrder, bool IsArch
 {
     /// <summary>Presentation identity only; never part of an editable baseline or draft.</summary>
     public Guid? AnnotationMarkerEntityId { get; init; }
+    public RowTargetCoordinateState TargetCoordinateState { get; init; }
 }
 public sealed record ConnectionTableView(IReadOnlyList<ConnectionRowView> activeRows, IReadOnlyList<ConnectionRowView> archivedRows,
     IReadOnlyList<string> SubroomReferenceSuggestions)
@@ -302,6 +309,7 @@ public sealed record CheckRowView(Guid EntityId, int SortOrder, bool IsArchived,
     V2Severity PositionSeverity, V2Severity LocationTypeSeverity, V2ReferenceState SubroomReferenceState)
 {
     public bool IsEnemy { get; init; }
+    public RowTargetCoordinateState TargetCoordinateState { get; init; }
 }
 public sealed record CheckLocationsTableView(IReadOnlyList<CheckRowView> ActiveRows, IReadOnlyList<CheckRowView> ArchivedRows,
     IReadOnlyList<string> SubroomReferenceSuggestions, IReadOnlyList<CheckLocationTypeDefinition> LocationTypes);
@@ -309,7 +317,10 @@ public sealed record EnemiesTableView(IReadOnlyList<CheckRowView> ActiveRows, IR
     IReadOnlyList<string> SubroomReferenceSuggestions, IReadOnlyList<CheckLocationTypeDefinition> LocationTypes);
 /// <summary>Read-only scene projection. Coordinates remain lower-left/y-up scene units.</summary>
 public sealed record SceneImageDisplayView(bool HasTransform, bool IsStale, bool ImageExists, long ImageVersion = 0)
-{ public bool IsAvailable => HasTransform && !IsStale && ImageExists; }
+{
+    public bool IsAvailable => HasTransform && !IsStale && ImageExists;
+    public V2Severity BoundsImageSeverity { get; init; } = V2Severity.Neutral;
+}
 /// <summary>Read-only scene projection. Coordinates remain lower-left/y-up scene units.</summary>
 public sealed record SceneLayoutView(bool HasValidBounds, double SceneMinX, double SceneMinY, double? SceneMaxX, double? SceneMaxY,
     IReadOnlyList<SceneSubroomFrameView> Frames, IReadOnlyList<SceneMarkerView> Markers,
@@ -343,7 +354,7 @@ public sealed record SceneAnnotationPlacementRequest(string Kind, Guid EntityId,
 public enum V2SceneAction { Rearm, Reset, Clear, ToggleVisibility, Dismiss }
 public sealed record V2SceneActionBoxView(bool RearmEnabled, bool ResetEnabled, bool ClearEnabled, bool VisibilityEnabled,
     bool DismissEnabled, string RearmLabel, string ResetLabel, string ClearLabel, string VisibilityLabel, string DismissLabel,
-    bool AnnotationIsVisible, string StatusText);
+    bool AnnotationIsVisible, string StatusText, bool AnnotationMatchesGamePosition);
 // Typed V2 check write contracts deliberately exclude imported metadata and
 // annotation fields. Those remain read-only until their later workflows.
 public sealed record CheckDurableBaseline(Guid EntityId, DateTime UpdatedUtc, int SortOrder, bool IsArchived,

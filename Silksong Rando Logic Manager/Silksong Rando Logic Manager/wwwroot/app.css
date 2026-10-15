@@ -206,6 +206,7 @@ button, input, textarea { font: inherit; }
 .room-actions .archive-room-button { border-color: #9c1b1b; color: #9c1b1b; }
 .archive-room-button i { margin-right: .18rem; }
 .room-actions .room-current-export i { margin-right: .18rem; }
+.room-actions a.room-current-export { font: inherit; font-size: .68rem; line-height: 1; text-decoration: none; }
 .archived-indicator, .archived-table, .archived-section-label, .archived-room-link { color: #6c757d; }
 .room-content-toggle i { margin-right: .18rem; }
 .room-editor-v2 .room-map-context-height-host { position: relative; width: 100%; aspect-ratio: 16 / var(--room-map-context-ratio-term, 9); margin: .9rem auto .75rem; border: 1px solid #77756d; background: #eeede7; }
@@ -264,10 +265,14 @@ button, input, textarea { font: inherit; }
 .scene-image-capture-unavailable { padding: 0 .25rem .25rem; }
 .scene-layout-actions button { min-height: 1.45rem; padding: .1rem .2rem; border: 1px solid #99978f; background: transparent; color: inherit; cursor: pointer; font-size: .68rem; }
 .scene-layout-actions button:disabled { cursor: default; opacity: .45; }
+.room-context-scene-pane .scene-layout-actions button.scene-bounds-image-warning { color: #806000; }
+.room-context-scene-pane .scene-layout-actions button.scene-bounds-image-danger { color: #b42318; }
+.scene-layer-icon { width: 1rem; height: 1rem; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; vertical-align: middle; }
 .scene-layout-status { display: flex; min-height: 1.25rem; padding: .18rem .25rem; background: #171717; color: #d8d8d4; font-size: .66rem; }
 .scene-annotation-action-box { display: flex; flex: 0 0 auto; gap: .18rem; white-space: nowrap; }
 .scene-annotation-action-box button { min-height: 1.45rem; padding: .1rem .2rem; border: 1px solid #99978f; background: transparent; color: inherit; cursor: pointer; font-size: .68rem; }
 .scene-annotation-action-box button:disabled { cursor: default; opacity: .45; }
+.room-context-scene-pane .scene-annotation-action-box button.scene-annotation-game-aligned { color: #198754; }
 .scene-status-message { min-width: 0; flex: 1 1 auto; display: flex; align-items: center; gap: .18rem; }
 .scene-status-text { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .scene-status-message [data-scene-marker-retry] { flex: 0 0 auto; }
@@ -444,9 +449,10 @@ button, input, textarea { font: inherit; }
 .row-actions .action-slot { display: inline-flex; width: 1.35rem; min-width: 1.35rem; justify-content: center; }
 .row-actions button { width: 1.35rem; min-width: 1.35rem; min-height: 1.2rem; padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; font-size: .62rem; line-height: 1; }
 .annotation-crosshairs { display: inline-block; }
-.annotation-crosshairs-warning { color: var(--bs-warning, #ffc107); }
-.row-actions button[id*='-show-'] .annotation-crosshairs,
-.row-actions button[id*='-place-'] .annotation-crosshairs { color: var(--bs-warning, #ffc107); }
+.room-editor-v2 .row-actions .annotation-crosshairs.row-target-annotation-unavailable { color: #ffc107; }
+.room-editor-v2 .row-actions .annotation-crosshairs.row-target-game-unavailable { color: #adb5bd; }
+.room-editor-v2 .row-actions .annotation-crosshairs.row-target-displaced { color: #0dcaf0; }
+.room-editor-v2 .row-actions .annotation-crosshairs.row-target-aligned { color: #000000; }
 .row-actions .icon-button { width: 1.35rem; min-width: 1.35rem; min-height: 1.2rem; padding: 0; }
 .archived-table-label { margin-top: .25rem; color: #85837b; font-size: .68rem; }
 .connection-state-heading, .connection-state { width: 2.4rem; min-width: 2.4rem; text-align: center !important; }

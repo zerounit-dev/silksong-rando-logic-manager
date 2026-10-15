@@ -433,7 +433,8 @@ public static class SubroomTableMapper
                 archived ? V2Severity.Neutral : MapperSupport.Duplicate(x.FriendlyName, active.Select(y => y.FriendlyName)),
                 archived ? V2Severity.Neutral : MapperSupport.Duplicate(x.ReferenceId, active.Select(y => y.ReferenceId)),
                 !archived && !usedIds.Contains(x.Id) ? V2Severity.Warning : V2Severity.Neutral,
-                MapperSupport.Rectangle(x.X, x.Y, x.Width, x.Height), x.AnnotationEnabled)).ToArray();
+                MapperSupport.Rectangle(x.X, x.Y, x.Width, x.Height), x.AnnotationEnabled)
+                { TargetCoordinateState = RowTargetCoordinatePresentation.Frame(x.X, x.Y, x.Width, x.Height) }).ToArray();
     }
     internal static SubroomTableView Reconcile(SubroomTableView? _, SubroomTableView fresh)=>fresh;
 }
@@ -459,7 +460,8 @@ public static class TransitionTableMapper
                 (string.IsNullOrWhiteSpace(resolvedTarget.DestinationRoomReferenceText) || string.IsNullOrWhiteSpace(resolvedTarget.DestinationTransitionAliasText)) &&
                 suggestions.Count(y => !y.Archived && MapperSupport.Same(y.ReferenceId, header.ReferenceId)) == 1 &&
                 active.Count(y => MapperSupport.Same(y.Alias, x.Alias)) == 1;
-            return new(x.Id,x.SortOrder,x.Archived,x.UpdatedUtc,x.RequirementsParseSucceeded,x.Alias,x.FriendlyName,x.Source,x.DestinationRoom,x.DestinationAlias,x.Requirements,x.Notes,x.Todo,x.Verified,x.InGameId,x.InGameX,x.InGameY,x.InGameZ,x.LocalX,x.LocalY,x.LocalZ,x.AnnotationX,x.AnnotationY,isActive?MapperSupport.Alias(x.Alias,active.Select(y=>y.Alias)):V2Severity.Neutral,isActive?MapperSupport.Duplicate(x.FriendlyName,active.Select(y=>y.FriendlyName)):V2Severity.Neutral,isActive?MapperSupport.ReferenceSeverity(MapperSupport.Presence(x.Source,activeSubs.Any()),source):V2Severity.Neutral,isActive?MapperSupport.ReferenceSeverity(MapperSupport.Required(x.DestinationRoom),room):V2Severity.Neutral,isActive?MapperSupport.ReferenceSeverity(MapperSupport.Max(MapperSupport.Alias(x.DestinationAlias,[]),pair),alias):V2Severity.Neutral,isActive?(header.Archived?MapperSupport.Required(x.Requirements):MapperSupport.Requirements(x.Requirements,x.RequirementsParseSucceeded)):V2Severity.Neutral,game,source,room,alias,inverse,x.IsUnsafeArrival,x.EnableAnnotation,canAuthorInverse,inverseTarget?.RoomId);
+            return new(x.Id,x.SortOrder,x.Archived,x.UpdatedUtc,x.RequirementsParseSucceeded,x.Alias,x.FriendlyName,x.Source,x.DestinationRoom,x.DestinationAlias,x.Requirements,x.Notes,x.Todo,x.Verified,x.InGameId,x.InGameX,x.InGameY,x.InGameZ,x.LocalX,x.LocalY,x.LocalZ,x.AnnotationX,x.AnnotationY,isActive?MapperSupport.Alias(x.Alias,active.Select(y=>y.Alias)):V2Severity.Neutral,isActive?MapperSupport.Duplicate(x.FriendlyName,active.Select(y=>y.FriendlyName)):V2Severity.Neutral,isActive?MapperSupport.ReferenceSeverity(MapperSupport.Presence(x.Source,activeSubs.Any()),source):V2Severity.Neutral,isActive?MapperSupport.ReferenceSeverity(MapperSupport.Required(x.DestinationRoom),room):V2Severity.Neutral,isActive?MapperSupport.ReferenceSeverity(MapperSupport.Max(MapperSupport.Alias(x.DestinationAlias,[]),pair),alias):V2Severity.Neutral,isActive?(header.Archived?MapperSupport.Required(x.Requirements):MapperSupport.Requirements(x.Requirements,x.RequirementsParseSucceeded)):V2Severity.Neutral,game,source,room,alias,inverse,x.IsUnsafeArrival,x.EnableAnnotation,canAuthorInverse,inverseTarget?.RoomId)
+                { TargetCoordinateState = RowTargetCoordinatePresentation.ComparedPoint(x.AnnotationX, x.AnnotationY, x.InGameX, x.InGameY) };
         }
         V2ReferenceState DestinationAlias(TransitionLoad x,V2ReferenceState roomState){ if(!MapperSupport.Text(x.DestinationAlias))return V2ReferenceState.None; if(roomState==V2ReferenceState.TargetArchived)return V2ReferenceState.TargetArchived; if(roomState!=V2ReferenceState.Resolved||x.DestinationRoomId is null)return x.DestinationId is null?V2ReferenceState.Unresolved:V2ReferenceState.OutOfSync; var matches=facts.DestinationAliases.Where(y=>!y.Archived&&y.RoomId==x.DestinationRoomId&&MapperSupport.Same(y.Alias,x.DestinationAlias)).ToArray(); if(matches.Length==0){var archived=facts.DestinationAliases.Any(y=>y.Archived&&y.RoomId==x.DestinationRoomId&&MapperSupport.Same(y.Alias,x.DestinationAlias));return archived?V2ReferenceState.TargetArchived:x.DestinationId is null?V2ReferenceState.Unresolved:V2ReferenceState.OutOfSync;} return matches.Length>1?V2ReferenceState.Ambiguous:matches[0].Id==x.DestinationId?V2ReferenceState.Resolved:V2ReferenceState.OutOfSync; }
         V2InverseState Inverse(TransitionLoad x)=>x.DestinationRoomId is null||x.DestinationId is null?V2InverseState.None:facts.Inverses.Count(y=>y.RoomId==x.DestinationRoomId&&y.DestinationRoomId==header.Id&&y.DestinationId==x.Id) switch{0=>V2InverseState.Zero,1=>V2InverseState.One,_=>V2InverseState.Multiple};
@@ -490,7 +492,8 @@ public static class ConnectionTableMapper
                 DurableSceneUnitX = row.SceneUnitX,
                 DurableSceneUnitY = row.SceneUnitY,
                 EffectiveEnableAnnotation = enabled,
-                AnnotationMarkerEntityId = eligible ? canonical.EntityId : null
+                AnnotationMarkerEntityId = eligible ? canonical.EntityId : null,
+                TargetCoordinateState = RowTargetCoordinatePresentation.Point(canonical.SceneUnitX, canonical.SceneUnitY)
             };
         }).ToArray();
     }
@@ -535,7 +538,7 @@ public static class CheckTableMapper
                     : MapperSupport.Requirements(x.Requirements, x.RequirementsParseSucceeded),
                 V2Severity.Neutral, MapperSupport.Pair(x.AnnotationX, x.AnnotationY),
                 active && !owningRoomArchived && definition is null ? V2Severity.Danger : V2Severity.Neutral, state)
-                { IsEnemy = isEnemy };
+                { IsEnemy = isEnemy, TargetCoordinateState = RowTargetCoordinatePresentation.ComparedPoint(x.AnnotationX, x.AnnotationY, x.InGameX, x.InGameY) };
             (isEnemy ? active ? enemiesActive : enemiesArchived : active ? checksActive : checksArchived).Add(row);
         }
         return (new(checksActive.ToArray(), checksArchived.ToArray(), suggestions, types),

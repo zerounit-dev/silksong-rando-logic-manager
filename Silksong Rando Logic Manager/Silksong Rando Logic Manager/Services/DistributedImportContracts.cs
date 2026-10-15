@@ -7,7 +7,13 @@ public sealed record DistributedImportPackage(
     bool? IsPartialRoomDump,
     DistributedAreaMapSnapshot? AreaMap,
     DistributedRoomGroupingSnapshot? RoomGroupings,
-    IReadOnlyList<DistributedRoomDocument> Rooms);
+    IReadOnlyList<DistributedRoomDocument> Rooms)
+{
+    // Application-only provenance; never an exchange envelope or persisted session.
+    public IReadOnlyDictionary<Guid, IReadOnlyList<string>> SourceFileNames { get; init; } = new Dictionary<Guid, IReadOnlyList<string>>();
+}
+
+public sealed record DistributedImportFilePackage(string FileName, DistributedImportPackage Package);
 
 public sealed record DistributedImportPackageSummary(
     int ExportVersion,
@@ -96,9 +102,19 @@ public sealed record DistributedImportOrchestrationState(
 }
 public sealed record DistributedImportStageOutcome(string Stage, bool Applied, bool Skipped, string? Detail);
 public sealed record DistributedImportStarted(DistributedImportOrchestrationState State, DistributedImportStageOutcome AreaMap, DistributedImportStageOutcome RoomGroupings) : DistributedImportOutcome;
-public sealed record DistributedImportRoomSkipped(Guid RoomId, DistributedImportOrchestrationState State) : DistributedImportOutcome;
+public sealed record DistributedImportRoomSkipped(Guid RoomId, DistributedImportOrchestrationState State, DistributedRoomComparison? Comparison = null) : DistributedImportOutcome;
 public sealed record DistributedImportRoomKept(Guid RoomId, DistributedImportOrchestrationState State) : DistributedImportOutcome;
-public sealed record DistributedImportRoomApplied(Guid RoomId, DistributedImportOrchestrationState State) : DistributedImportOutcome;
+public sealed record DistributedImportRoomApplied(Guid RoomId, DistributedImportOrchestrationState State) : DistributedImportOutcome
+{
+    // Commit is confirmed even when subsequent local image cleanup fails. This is
+    // unexpected diagnostic context, not a failed/retryable database operation.
+    public Exception? CleanupException { get; init; }
+}
+public sealed class DistributedImportInterruptedException(DistributedImportOrchestrationState state, Exception innerException)
+    : Exception("Import interrupted after the recorded snapshot stages.", innerException)
+{
+    public DistributedImportOrchestrationState State { get; } = state;
+}
 public sealed record DistributedImportRoomBecameIdentical(Guid RoomId, DistributedRoomComparison Comparison, DistributedImportOrchestrationState State) : DistributedImportOutcome;
 public sealed record DistributedImportComparisonRefreshed(DistributedRoomComparison Comparison) : DistributedImportOutcome;
 // The review is caller-owned transient state.  Its IDs are the sole authority

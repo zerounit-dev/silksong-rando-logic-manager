@@ -26,7 +26,7 @@ else
     var tableOwnerGeneration = childInteractionOwnerGeneration;
     <div @ref="pageRoot" class="room-editor-v2" data-v2-dialog-open="@SceneDialogOpen.ToString().ToLowerInvariant()">
         <article class="room-document" aria-label="Room editor">
-            <RoomHeaderPresentation View="view.Header" Map="mapView" MapOwnerGeneration="@(mapLoads?.AppliedGeneration ?? 0)" Scene="view.Scene" Placement="placementRequest" TakePlacementFocus="TakeScenePlacementFocus" SelectedItem="selectedSceneItem" ActionBox="SceneActionBox" ActionRequested="HandleSceneActionAsync" OwnerMounted="SetSceneOwnerAsync" SelectionChanged="SetSceneSelectionAsync" PlacementCommitted="CommitScenePlacementAsync" PlacementCancelled="CancelScenePlacementAsync" MarkerDragCommitted="CommitSceneMarkerDragAsync" SceneNudgeCommitted="CommitSceneNudgeAsync" FrameGeometryCommitted="CommitSubroomGeometryAsync" Capture="RequestSceneImageCaptureAsync" LinkedRoomActivated="NavigateLinkedMapRoomAsync" MapLinksChanged="ReloadAreaMapAfterMapLinkChangeAsync" MapLinkModalStateChanged="SetRoomMapLinkModalStateAsync" Draft="headerDraft" RefreshDiagnostic="refreshDiagnostic" Status="headerSaveStatus" ShowMapContext="showMapContext" MapContextVisibilityResolved="mapContextVisibilityResolved" BackToMap="NavigateBackToMap" ToggleMapContext="ToggleMapContextAsync" ShowArchivedChildren="showArchivedChildren" ToggleArchivedChildren="ToggleArchivedChildren" LifecycleContentIntent="HandleLifecycleContentIntentAsync" RecheckRoomLogicBusy="recheckingRoomLogic" Archive="ArchiveRoomAsync" Restore="RestoreRoomAsync" PermanentDelete="RequestRoomPermanentDeleteAsync" CurrentRoomExport="DownloadCurrentRoomExport" ZoneExport="DownloadZoneExport" DraftChanged="SetHeaderDraft" Save="SaveHeader" />
+            <RoomHeaderPresentation View="view.Header" Map="mapView" MapOwnerGeneration="@(mapLoads?.AppliedGeneration ?? 0)" Scene="view.Scene" Placement="placementRequest" TakePlacementFocus="TakeScenePlacementFocus" SelectedItem="selectedSceneItem" ActionBox="SceneActionBox" ActionRequested="HandleSceneActionAsync" OwnerMounted="SetSceneOwnerAsync" LayerVisibilityChanged="SetSceneLayerVisibilityAsync" SelectionChanged="SetSceneSelectionAsync" PlacementCommitted="CommitScenePlacementAsync" PlacementCancelled="CancelScenePlacementAsync" MarkerDragCommitted="CommitSceneMarkerDragAsync" SceneNudgeCommitted="CommitSceneNudgeAsync" FrameGeometryCommitted="CommitSubroomGeometryAsync" Capture="RequestSceneImageCaptureAsync" LinkedRoomActivated="NavigateLinkedMapRoomAsync" MapLinksChanged="ReloadAreaMapAfterMapLinkChangeAsync" MapLinkModalStateChanged="SetRoomMapLinkModalStateAsync" Draft="headerDraft" RefreshDiagnostic="refreshDiagnostic" Status="headerSaveStatus" ShowMapContext="showMapContext" MapContextVisibilityResolved="mapContextVisibilityResolved" BackToMap="NavigateBackToMap" ToggleMapContext="ToggleMapContextAsync" ShowArchivedChildren="showArchivedChildren" ToggleArchivedChildren="ToggleArchivedChildren" LifecycleContentIntent="HandleLifecycleContentIntentAsync" RecheckRoomLogicBusy="recheckingRoomLogic" Archive="ArchiveRoomAsync" Restore="RestoreRoomAsync" PermanentDelete="RequestRoomPermanentDeleteAsync" ExportLinks="CreateExportLinks(view.Header)" DraftChanged="SetHeaderDraft" Save="SaveHeader" />
             <div class="room-document-content">
                 <RoomCommentsPresentation View="new RoomCommentsView(headerDraft?.Comments ?? view.Header.Comments)" Editable="headerSaveStatus.IsEditable" DraftChanged="SetHeaderComments" Save="SaveHeader" />
                 <SubroomTablePresentation @ref="subroomTable" RoomId="RoomId" OwnerGeneration="tableOwnerGeneration" OwnerIsCurrent="@(() => IsTableOwnerCurrent(tableOwnerRoom,tableOwnerGeneration))" View="view.Subrooms" ShowArchivedChildren="showArchivedChildren" SceneActionsAvailable="SceneTableActionsAvailable" SceneActionsUnavailableReason="@SceneTableActionsUnavailableReason" Save="SaveSubroom" Create="CreateSubroom" Reorder="ReorderSubroom" SetArchive="SetSubroomArchive" AnnotationRequested="HandleSubroomAnnotationAsync" GeometryRequested="RequestSubroomGeometryAsync" DeleteConfirmationRequested="RequestChildPermanentDeleteAsync" DeleteConfirmationCancelled="CancelChildPermanentDeleteAsync" DeleteConfirmationConfirmed="ConfirmChildPermanentDeleteAsync" FocusRequested="RequestChildFocusAsync" DraftStateChanged="@(value => SetPendingDraft(ChildTableKind.Subroom, value, tableOwnerRoom, tableOwnerGeneration))" RefreshApplied="ApplyRefreshedState" ClearDragFeedback="ClearSubroomDragFeedbackAsync" />
@@ -76,6 +76,27 @@ else
     private AreaMapPanePresentation.RoomMapLinkModalState roomMapLinkModalState;
     private bool showMapContext, mapContextVisibilityLoadStarted, mapContextVisibilityResolved;
     private V2SceneSelectedItem? selectedSceneItem;
+    private readonly HashSet<V2SceneSelectedItemKind> hiddenSceneLayers = [];
+    private readonly Dictionary<V2SceneSelectedItemKind, long> sceneLayerEpochs = [];
+    // Durable refresh ownership is not ownership of the user's current interaction.
+    // Canonical connection rebinding retains this revision; explicit intents retire it.
+    private long sceneIntentRevision;
+    private static V2SceneSelectedItemKind SceneLayer(V2SceneSelectedItemKind kind) => kind == V2SceneSelectedItemKind.Connection ? V2SceneSelectedItemKind.Transition : kind;
+    private long SceneLayerEpoch(V2SceneSelectedItemKind kind) => sceneLayerEpochs.GetValueOrDefault(SceneLayer(kind));
+    private void AdmitSceneLayerIntent(V2SceneSelectedItemKind kind) { sceneIntentRevision++; hiddenSceneLayers.Remove(SceneLayer(kind)); }
+    private async Task SetSceneLayerVisibilityAsync(Guid room, long generation, V2SceneSelectedItemKind kind, bool shown)
+    {
+        if (!OwnsCurrentSceneOwner(room, generation)) return;
+        var layer = SceneLayer(kind);
+        if (shown) { hiddenSceneLayers.Remove(layer); return; }
+        hiddenSceneLayers.Add(layer); sceneLayerEpochs[layer] = SceneLayerEpoch(layer) + 1;
+        var clearsSelection = selectedSceneItem is { } selected && SceneLayer(selected.Kind) == layer;
+        if (clearsSelection) { sceneIntentRevision++; selectedSceneItem = null; }
+        if (placementRequest is { } request && SceneLayerKind(request.Kind) == layer)
+            await CancelScenePlacementAsync(room, generation, request);
+        else if (clearsSelection) await InvokeAsync(StateHasChanged);
+    }
+    private static V2SceneSelectedItemKind SceneLayerKind(string kind) => kind == "subroom" ? V2SceneSelectedItemKind.Subroom : kind == "check" ? V2SceneSelectedItemKind.Check : V2SceneSelectedItemKind.Transition;
     private long sceneOwnerGeneration;
     private long childInteractionOwnerGeneration;
     private Guid? displayedRoomId;
@@ -186,8 +207,9 @@ else
         await InvokeAsync(StateHasChanged);
         Navigation.NavigateTo("/requirements");
     }
-    private void DownloadCurrentRoomExport(RoomExportIntent intent) => Navigation.NavigateTo($"{LocalExchangeDownloadEndpoints.CurrentRoomPathPrefix}{intent.RoomId:D}", forceLoad: true);
-    private void DownloadZoneExport(RoomExportIntent intent) => Navigation.NavigateTo($"{LocalExchangeDownloadEndpoints.ZonePathPrefix}{intent.RoomId:D}", forceLoad: true);
+    private static RoomExportLinksView CreateExportLinks(RoomHeaderView header) => new(
+        $"{LocalExchangeDownloadEndpoints.CurrentRoomPathPrefix}{header.RoomId:D}",
+        header.CanExportZone ? $"{LocalExchangeDownloadEndpoints.ZonePathPrefix}{header.RoomId:D}" : null);
     private void NavigateBackToMap() => Navigation.NavigateTo("/");
     private async Task ToggleMapContextAsync()
     {
@@ -474,10 +496,10 @@ else
             // disablement still explains its own precise admission reason.
             var status = sceneActionStatus ?? view?.Scene?.BoundsImageDiagnostic ?? (armed ? PlacementStatus(placementRequest!) : unavailable ? reason : view?.Scene?.Image?.IsStale == true ? "needs recapture" : "");
             if (selectedSceneItem is not { } selected)
-                return new(false, false, false, false, false, reason, reason, reason, reason, reason, false, status);
+                return new(false, false, false, false, false, reason, reason, reason, reason, reason, false, status, false);
             var data = SelectedSceneData(selected);
             if (unavailable || data is null)
-                return new(false, false, false, false, false, reason, reason, reason, reason, reason, false, status);
+                return new(false, false, false, false, false, reason, reason, reason, reason, reason, false, status, data?.AnnotationMatchesGamePosition == true);
             var reset = data.Kind is V2SceneSelectedItemKind.Transition or V2SceneSelectedItemKind.Check && Usable(data.GameX, data.GameY);
             var valid = data.IsValidGeometry;
             var rearm = !armed;
@@ -487,23 +509,25 @@ else
             var immediateActionBlocked = modalState is not null || meaningfulPendingDraft;
             return new(rearm && !pending, reset && !pending && !immediateActionBlocked, clear && !pending && !immediateActionBlocked, visibility && !pending && !immediateActionBlocked, !pending,
                 armed ? "placement is already armed" : "re-arm placement", "reset annotation to game position", "clear annotation geometry",
-                data.Enabled ? "hide annotation" : "show annotation", armed ? "cancel placement" : "dismiss scene interaction", data.Enabled, status);
+                data.Enabled ? "hide annotation" : "show annotation", armed ? "cancel placement" : "dismiss scene interaction", data.Enabled, status, data.AnnotationMatchesGamePosition);
         }
     }
     private static string PlacementStatus(SceneAnnotationPlacementRequest request) => request.Kind == "subroom"
         ? "draw subroom rectangle; drag to the opposite corner, or press Escape to cancel"
         : $"place {request.Kind} annotation; click the scene, or press Escape to cancel";
-    private sealed record SceneActionData(V2SceneSelectedItemKind Kind, Guid EntityId, bool Enabled, bool IsValidGeometry, double? GameX, double? GameY, object Baseline);
+    private static bool MatchesGamePosition(double? annotationX, double? annotationY, double? gameX, double? gameY) =>
+        Usable(annotationX, annotationY) && Usable(gameX, gameY) && annotationX == gameX && annotationY == gameY;
+    private sealed record SceneActionData(V2SceneSelectedItemKind Kind, Guid EntityId, bool Enabled, bool IsValidGeometry, double? GameX, double? GameY, bool AnnotationMatchesGamePosition, object Baseline);
     private SceneActionData? SelectedSceneData(V2SceneSelectedItem selected) => selected.Kind switch
     {
         V2SceneSelectedItemKind.Subroom => view?.Subrooms.ActiveRows.SingleOrDefault(x => x.EntityId == selected.EntityId) is { } row
-            ? new(selected.Kind, selected.EntityId, row.EnableAnnotation, row.SceneUnitX is double x && row.SceneUnitY is double y && row.SceneUnitWidth is double w && row.SceneUnitHeight is double h && double.IsFinite(x) && double.IsFinite(y) && double.IsFinite(w) && double.IsFinite(h) && w > 0 && h > 0, null, null, RoomEditorV2CommandService.FromView(row)) : null,
+            ? new(selected.Kind, selected.EntityId, row.EnableAnnotation, row.SceneUnitX is double x && row.SceneUnitY is double y && row.SceneUnitWidth is double w && row.SceneUnitHeight is double h && double.IsFinite(x) && double.IsFinite(y) && double.IsFinite(w) && double.IsFinite(h) && w > 0 && h > 0, null, null, false, RoomEditorV2CommandService.FromView(row)) : null,
         V2SceneSelectedItemKind.Transition => view?.Transitions.ActiveRows.SingleOrDefault(x => x.EntityId == selected.EntityId) is { } row
-            ? new(selected.Kind, selected.EntityId, row.EnableAnnotation, Usable(row.AnnotationSceneUnitX, row.AnnotationSceneUnitY), row.InGamePositionX, row.InGamePositionY, RoomEditorV2CommandService.TransitionFromView(row)) : null,
+            ? new(selected.Kind, selected.EntityId, row.EnableAnnotation, Usable(row.AnnotationSceneUnitX, row.AnnotationSceneUnitY), row.InGamePositionX, row.InGamePositionY, MatchesGamePosition(row.AnnotationSceneUnitX, row.AnnotationSceneUnitY, row.InGamePositionX, row.InGamePositionY), RoomEditorV2CommandService.TransitionFromView(row)) : null,
         V2SceneSelectedItemKind.Check => ActiveCheckRows.SingleOrDefault(x => x.EntityId == selected.EntityId) is { } row
-            ? new(selected.Kind, selected.EntityId, row.EnableAnnotation, Usable(row.AnnotationSceneUnitX, row.AnnotationSceneUnitY), row.InGamePositionX, row.InGamePositionY, RoomEditorV2CommandService.CheckMetadataFromView(row)) : null,
+            ? new(selected.Kind, selected.EntityId, row.EnableAnnotation, Usable(row.AnnotationSceneUnitX, row.AnnotationSceneUnitY), row.InGamePositionX, row.InGamePositionY, MatchesGamePosition(row.AnnotationSceneUnitX, row.AnnotationSceneUnitY, row.InGamePositionX, row.InGamePositionY), RoomEditorV2CommandService.CheckMetadataFromView(row)) : null,
         V2SceneSelectedItemKind.Connection => view?.Connections.ActiveRows.SingleOrDefault(x => x.EntityId == selected.EntityId) is { } row && (row.CanPlaceAnnotation || row.CanRemoveAnnotation)
-            ? new(selected.Kind, selected.EntityId, row.EffectiveEnableAnnotation, row.HasCompleteAnnotationCoordinates, null, null, row.EntityId) : null,
+            ? new(selected.Kind, selected.EntityId, row.EffectiveEnableAnnotation, row.HasCompleteAnnotationCoordinates, null, null, false, row.EntityId) : null,
         _ => null
     };
     private async Task HandleSceneActionAsync(Guid ownerRoomId, long ownerGeneration, V2SceneAction action)
@@ -511,6 +535,7 @@ else
         if (!OwnsCurrentSceneOwner(ownerRoomId, ownerGeneration) || !SceneTableActionsAvailable || selectedSceneItem is not { } selected) return;
         if (action == V2SceneAction.Dismiss)
         {
+            sceneIntentRevision++;
             if (placementRequest is not null) { placementRequest = null; sceneActionStatus = null; }
             else ClearSceneTransientState();
             await InvokeAsync(StateHasChanged); return;
@@ -519,11 +544,13 @@ else
         if (data is null || sceneActionPending) return;
         if (action == V2SceneAction.Rearm)
         {
+            AdmitSceneLayerIntent(selected.Kind);
             if (placementRequest is null) { placementRequest = new(selected.Kind == V2SceneSelectedItemKind.Subroom ? "subroom" : selected.Kind == V2SceneSelectedItemKind.Transition ? "exit" : selected.Kind == V2SceneSelectedItemKind.Check ? "check" : "connection", selected.Kind == V2SceneSelectedItemKind.Connection ? (Guid)data.Baseline : selected.EntityId, "scene-action-box", selected.Kind == V2SceneSelectedItemKind.Connection ? selected.EntityId : null); sceneActionStatus = null; await InvokeAsync(StateHasChanged); }
             return;
         }
         if ((action == V2SceneAction.Reset && !(data.Kind is V2SceneSelectedItemKind.Transition or V2SceneSelectedItemKind.Check && Usable(data.GameX, data.GameY))) || (action == V2SceneAction.Clear && !data.IsValidGeometry) || (action == V2SceneAction.ToggleVisibility && !data.IsValidGeometry) || modalState is not null || meaningfulPendingDraft) return;
         var owner=CaptureCheckOwner(scene:true);
+        var intentRevision = sceneIntentRevision;
         pendingCheckScenePage=owner.Page;
         sceneActionPending = true; sceneActionStatus = null; await InvokeAsync(StateHasChanged);
         await commandGate.WaitAsync();
@@ -532,7 +559,7 @@ else
             if(!OwnsCheckAdmission(owner))return;
             owner.Refresh=refresh!.RefreshGeneration;
             if (!OwnsCurrentSceneOwner(ownerRoomId, ownerGeneration) || refresh?.CurrentRoomId != RoomId || SelectedSceneData(selected) is null || modalState is not null || meaningfulPendingDraft) return;
-            placementRequest = null;
+            if (intentRevision == sceneIntentRevision) placementRequest = null;
             var result = await ExecuteSceneActionCommandAsync(action, data);
             if(!OwnsCheckAdmission(owner)||refresh!.RequiresCheckRoomReload)return;
             if(data.Kind==V2SceneSelectedItemKind.Check&&(result.checkOutcome is not { } check||check.RequiresRoomReload||!OwnsCheckResult(owner,check)))return;
@@ -570,6 +597,7 @@ else
     private Task HandleSubroomAnnotationAsync(SubroomDurableBaseline baseline, string initiatorId)
     {
         if (!SceneTableActionsAvailable || modalState is not null || meaningfulPendingDraft || view?.Subrooms.ActiveRows.Any(x => x.EntityId == baseline.EntityId) != true) return Task.CompletedTask;
+        AdmitSceneLayerIntent(V2SceneSelectedItemKind.Subroom);
         selectedSceneItem = new(V2SceneSelectedItemKind.Subroom, baseline.EntityId);
         if (view.Scene!.Frames.Any(x => x.EntityId == baseline.EntityId)) placementRequest = null;
         else if (!baseline.EnableAnnotation && HasUsableRectangle(baseline)) { _ = ShowAndSelectSubroomAsync(baseline); }
@@ -579,6 +607,10 @@ else
     private async Task HandleTransitionAnnotationAsync(TransitionDurableBaseline baseline, string initiatorId)
     {
         if (!SceneTableActionsAvailable || modalState is not null || meaningfulPendingDraft || refresh?.CurrentRoomId != RoomId || view?.Transitions.ActiveRows.SingleOrDefault(x => x.EntityId == baseline.EntityId) is not { } row) return;
+        AdmitSceneLayerIntent(V2SceneSelectedItemKind.Transition);
+        var intentRevision = sceneIntentRevision;
+        var layerEpoch = SceneLayerEpoch(V2SceneSelectedItemKind.Transition);
+        StateHasChanged();
         if (view!.Scene!.Markers.Any(x => x.Kind == "exit" && x.EntityId == baseline.EntityId)) { selectedSceneItem = new(V2SceneSelectedItemKind.Transition, baseline.EntityId); placementRequest = null; await InvokeAsync(StateHasChanged); return; }
         if (HasUsablePosition(row.AnnotationSceneUnitX, row.AnnotationSceneUnitY) && !row.EnableAnnotation)
         {
@@ -589,7 +621,7 @@ else
                 owner.Refresh=refresh!.RefreshGeneration;
                 var outcome=await CommitTransitionWithRecoveryAsync(owner.Room,"transition-annotation-show-and-select",()=>Commands.ShowAndSelectTransitionAnnotationAsync(owner.Room,baseline),true);
                 if(outcome.RequiresRoomReload||!OwnsAppliedChild(owner,outcome.Status==V2TransitionCommandStatus.Committed,outcome.PresentationRefreshed,outcome.RequiresRoomReload))return;
-                if(outcome.Status==V2TransitionCommandStatus.Committed){selectedSceneItem=new(V2SceneSelectedItemKind.Transition,baseline.EntityId);placementRequest=null;SetRefreshDiagnostic();await InvokeAsync(StateHasChanged);}
+                if(outcome.Status==V2TransitionCommandStatus.Committed){if(intentRevision == sceneIntentRevision && layerEpoch == SceneLayerEpoch(V2SceneSelectedItemKind.Transition)){selectedSceneItem=new(V2SceneSelectedItemKind.Transition,baseline.EntityId);placementRequest=null;}SetRefreshDiagnostic();await InvokeAsync(StateHasChanged);}
             }
             finally{commandGate.Release();}
             return;
@@ -599,6 +631,10 @@ else
     private async Task HandleCheckAnnotationAsync(CheckMetadataDurableBaseline baseline, string initiatorId)
     {
         if (!SceneTableActionsAvailable || modalState is not null || meaningfulPendingDraft || refresh?.CurrentRoomId != RoomId || ActiveCheckRows.SingleOrDefault(x => x.EntityId == baseline.EntityId) is not { } row) return;
+        AdmitSceneLayerIntent(V2SceneSelectedItemKind.Check);
+        var intentRevision = sceneIntentRevision;
+        var layerEpoch = SceneLayerEpoch(V2SceneSelectedItemKind.Check);
+        StateHasChanged();
         if (view!.Scene!.Markers.Any(x => x.Kind == "check" && x.EntityId == baseline.EntityId)) { selectedSceneItem = new(V2SceneSelectedItemKind.Check, baseline.EntityId); placementRequest = null; await InvokeAsync(StateHasChanged); return; }
         if (HasUsablePosition(row.AnnotationSceneUnitX, row.AnnotationSceneUnitY) && !row.EnableAnnotation)
         {
@@ -610,7 +646,7 @@ else
                 owner.Refresh=refresh!.RefreshGeneration;
                 var outcome = await CommitCheckWithRecoveryAsync(owner.Room, "check-annotation-show-and-select", () => Commands.ShowAndSelectCheckAnnotationAsync(owner.Room, baseline), true);
                 if(outcome.RequiresRoomReload||!OwnsCheckResult(owner,outcome))return;
-                if (outcome.Status == V2CheckCommandStatus.Committed) { selectedSceneItem = new(V2SceneSelectedItemKind.Check, baseline.EntityId); placementRequest = null; SetRefreshDiagnostic(); await InvokeAsync(StateHasChanged); }
+                if (outcome.Status == V2CheckCommandStatus.Committed) { if(intentRevision == sceneIntentRevision && layerEpoch == SceneLayerEpoch(V2SceneSelectedItemKind.Check)){selectedSceneItem = new(V2SceneSelectedItemKind.Check, baseline.EntityId); placementRequest = null;} SetRefreshDiagnostic(); await InvokeAsync(StateHasChanged); }
             }
             finally { commandGate.Release(); }
             return;
@@ -620,6 +656,10 @@ else
     private async Task HandleConnectionAnnotationAsync(ConnectionDurableBaseline baseline, string initiatorId)
     {
         if (!SceneTableActionsAvailable || modalState is not null || meaningfulPendingDraft || refresh?.CurrentRoomId != RoomId || view?.Connections.ActiveRows.SingleOrDefault(x => x.EntityId == baseline.EntityId) is not { } row || (!row.CanPlaceAnnotation && !row.CanRemoveAnnotation)) return;
+        AdmitSceneLayerIntent(V2SceneSelectedItemKind.Connection);
+        var intentRevision = sceneIntentRevision;
+        var layerEpoch = SceneLayerEpoch(V2SceneSelectedItemKind.Connection);
+        StateHasChanged();
         var marker = view.Connections.ActiveRows.Where(x => string.Equals(x.Alias.Trim(), row.Alias.Trim(), StringComparison.OrdinalIgnoreCase)).OrderBy(x => x.SortOrder).ThenBy(x => x.EntityId).First();
         if (view!.Scene!.Markers.Any(x => x.Kind == "connection" && x.EntityId == marker.EntityId)) { selectedSceneItem = new(V2SceneSelectedItemKind.Connection, marker.EntityId); placementRequest = null; await InvokeAsync(StateHasChanged); return; }
         if (row.CanPlaceAnnotation && row.HasCompleteAnnotationCoordinates)
@@ -631,7 +671,7 @@ else
                 owner.Refresh=refresh!.RefreshGeneration;
                 var outcome=await CommitConnectionWithRecoveryAsync(owner.Room,"connection-annotation-show-and-select",()=>Commands.ShowAndSelectConnectionAnnotationAsync(owner.Room,baseline.EntityId),true);
                 if(outcome.RequiresRoomReload||!OwnsAppliedChild(owner,outcome.Status==V2ConnectionCommandStatus.Committed,outcome.PresentationRefreshed,outcome.RequiresRoomReload))return;
-                if(outcome.Status==V2ConnectionCommandStatus.Committed && outcome.PostRefreshSelection is { } shown && view?.Scene?.Markers.Any(x => x.Kind == "connection" && x.EntityId == shown.EntityId) == true){selectedSceneItem=new(V2SceneSelectedItemKind.Connection,shown.EntityId);placementRequest=null;SetRefreshDiagnostic();await InvokeAsync(StateHasChanged);}
+                if(outcome.Status==V2ConnectionCommandStatus.Committed && outcome.PostRefreshSelection is { } shown && view?.Scene?.Markers.Any(x => x.Kind == "connection" && x.EntityId == shown.EntityId) == true){if(intentRevision == sceneIntentRevision && layerEpoch == SceneLayerEpoch(V2SceneSelectedItemKind.Connection)){selectedSceneItem=new(V2SceneSelectedItemKind.Connection,shown.EntityId);placementRequest=null;}SetRefreshDiagnostic();await InvokeAsync(StateHasChanged);}
             }
             finally{commandGate.Release();}
             return;
@@ -860,6 +900,7 @@ else
     private async Task<bool> CommitScenePlacementAsync(Guid ownerRoomId, long ownerGeneration, SceneAnnotationPlacementRequest request, double x, double y)
     {
         if (!OwnsCurrentSceneOwner(ownerRoomId, ownerGeneration) || placementRequest != request || !SelectionMatches(request) || refresh?.CurrentRoomId != RoomId) return false;
+        var intentRevision = sceneIntentRevision;
         var owner=CaptureCheckOwner(scene:true);
         await commandGate.WaitAsync();
         try
@@ -890,7 +931,7 @@ else
                 if(result.RequiresRoomReload||!OwnsAppliedChild(owner,result.Status==V2ConnectionCommandStatus.Committed,result.PresentationRefreshed,result.RequiresRoomReload))return false;
                 if (result.Status != V2ConnectionCommandStatus.Committed)
                 {
-                    if (result.Status == V2ConnectionCommandStatus.ExpectedFailure)
+                    if (result.Status == V2ConnectionCommandStatus.ExpectedFailure && intentRevision == sceneIntentRevision)
                     {
                         placementRequest = null;
                         connectionPlacementOutcome = result.Message ?? "Connection annotation is already enabled.";
@@ -901,7 +942,8 @@ else
                 }
             }
             else return false;
-            placementRequest = null; SetRefreshDiagnostic();
+            if (intentRevision == sceneIntentRevision) placementRequest = null;
+            SetRefreshDiagnostic();
             await InvokeAsync(StateHasChanged);
             return true;
         }
@@ -909,6 +951,8 @@ else
     }
     private async Task<bool> CommitSubroomGeometryAsync(Guid ownerRoomId, long ownerGeneration, Guid entityId, double x, double y, double width, double height)
     {
+        var intentRevision = sceneIntentRevision;
+        var layerEpoch = SceneLayerEpoch(V2SceneSelectedItemKind.Subroom);
         var owner=CaptureCheckOwner(scene:true);
         var initialOrReplacementPlacement = placementRequest is { Kind: "subroom", EntityId: var armedId } && armedId == entityId && SelectionMatches(placementRequest);
         if (!AdmitsCurrentSceneCommandAfterGate(ownerRoomId, ownerGeneration, "subroom", entityId, requiresRenderedTarget: !initialOrReplacementPlacement)) return false;
@@ -922,8 +966,7 @@ else
             if(!OwnsCheckAdmission(owner))return false;owner.Refresh=coordinator.RefreshGeneration;
             var result = await CommitSubroomWithRecoveryAsync(RoomId, "subroom-geometry", () => Commands.SaveSubroomGeometryAsync(RoomId, RoomEditorV2CommandService.FromView(row), x, y, width, height), SceneRefreshImpact.SubroomGeometry);
             if (result.Status != V2SubroomCommandStatus.Committed||result.RequiresRoomReload||!OwnsAppliedChild(owner,true,result.PresentationRefreshed,result.RequiresRoomReload)) return false;
-            placementRequest = null;
-            selectedSceneItem = new(V2SceneSelectedItemKind.Subroom, entityId);
+            if (intentRevision == sceneIntentRevision && layerEpoch == SceneLayerEpoch(V2SceneSelectedItemKind.Subroom)) { placementRequest = null; selectedSceneItem = new(V2SceneSelectedItemKind.Subroom, entityId); }
             SetRefreshDiagnostic(); await InvokeAsync(StateHasChanged); return true;
         }
         finally { commandGate.Release(); }
@@ -931,6 +974,7 @@ else
     private async Task<bool> CancelScenePlacementAsync(Guid ownerRoomId, long ownerGeneration, SceneAnnotationPlacementRequest request)
     {
         if (!OwnsCurrentSceneOwner(ownerRoomId, ownerGeneration) || placementRequest != request) return false;
+        sceneIntentRevision++;
         placementRequest = null; pendingModalFocus = new(request.InitiatorId, null, V2ModalFocusOutcome.Initiator);
         await InvokeAsync(StateHasChanged);
         return true;
@@ -939,6 +983,8 @@ else
     {
         if (disposed || callback.RoomId != RoomId || callback.OwnerGeneration != sceneOwnerGeneration) return Task.CompletedTask;
         var selection = callback.Selection;
+        if (selection is { } target && hiddenSceneLayers.Contains(SceneLayer(target.Kind))) return Task.CompletedTask;
+        sceneIntentRevision++;
         var changed = selectedSceneItem != selection;
         selectedSceneItem = selection;
         if (changed || selection is null) placementRequest = null;
@@ -949,7 +995,7 @@ else
         // A same-room pane replacement can mount before an older pane's delayed
         // lifecycle continuation. Owner generations are monotonic, so an older
         // mount must not reopen admission for its later browser callbacks.
-        if (!disposed && ownerRoomId == RoomId && ownerGeneration > sceneOwnerGeneration) { sceneOwnerGeneration = ownerGeneration; return InvokeAsync(StateHasChanged); }
+        if (!disposed && ownerRoomId == RoomId && ownerGeneration > sceneOwnerGeneration) { sceneIntentRevision++; sceneOwnerGeneration = ownerGeneration; hiddenSceneLayers.Clear(); sceneLayerEpochs.Clear(); return InvokeAsync(StateHasChanged); }
         return Task.CompletedTask;
     }
     private bool OwnsCurrentSceneOwner(Guid ownerRoomId, long ownerGeneration) => !disposed && ownerRoomId == RoomId && ownerGeneration == sceneOwnerGeneration;
@@ -969,8 +1015,9 @@ else
            && refresh?.CurrentRoomId == RoomId
            && modalState is null
            && !meaningfulPendingDraft
+           && !hiddenSceneLayers.Contains(SceneLayerKind(kind))
            && (!requiresRenderedTarget || IsSelectedRenderable(kind, entityId));
-    private void ClearSceneTransientState() { selectedSceneItem = null; placementRequest = null; }
+    private void ClearSceneTransientState() { sceneIntentRevision++; selectedSceneItem = null; placementRequest = null; }
     private bool SelectionMatches(SceneAnnotationPlacementRequest request)
     {
         if (selectedSceneItem is not { } selected) return false;
@@ -984,6 +1031,8 @@ else
     private static bool HasUsableRectangle(SubroomDurableBaseline value) => value.SceneUnitX is double x && value.SceneUnitY is double y && value.SceneUnitWidth is double width && value.SceneUnitHeight is double height && double.IsFinite(x) && double.IsFinite(y) && double.IsFinite(width) && double.IsFinite(height) && width > 0 && height > 0;
     private async Task ShowAndSelectSubroomAsync(SubroomDurableBaseline baseline)
     {
+        var intentRevision = sceneIntentRevision;
+        var layerEpoch = SceneLayerEpoch(V2SceneSelectedItemKind.Subroom);
         var owner=CaptureCheckOwner(scene:true);await commandGate.WaitAsync();
         try
         {
@@ -991,7 +1040,7 @@ else
             owner.Refresh=refresh!.RefreshGeneration;
             var result=await CommitSubroomWithRecoveryAsync(owner.Room,"subroom-annotation-show-and-select",()=>Commands.ShowSubroomAnnotationAsync(owner.Room,baseline),SceneRefreshImpact.SubroomGeometry);
             if(result.RequiresRoomReload||!OwnsAppliedChild(owner,result.Status==V2SubroomCommandStatus.Committed,result.PresentationRefreshed,result.RequiresRoomReload))return;
-            if(result.Status==V2SubroomCommandStatus.Committed){selectedSceneItem=new(V2SceneSelectedItemKind.Subroom,baseline.EntityId);placementRequest=null;SetRefreshDiagnostic();await InvokeAsync(StateHasChanged);}
+            if(result.Status==V2SubroomCommandStatus.Committed){if(intentRevision == sceneIntentRevision && layerEpoch == SceneLayerEpoch(V2SceneSelectedItemKind.Subroom)){selectedSceneItem=new(V2SceneSelectedItemKind.Subroom,baseline.EntityId);placementRequest=null;}SetRefreshDiagnostic();await InvokeAsync(StateHasChanged);}
         }
         finally{commandGate.Release();}
     }
@@ -1027,7 +1076,7 @@ else
     private bool IsSelectedRenderable(string kind, Guid entityId)
     {
         var expected = kind switch { "subroom" => V2SceneSelectedItemKind.Subroom, "exit" => V2SceneSelectedItemKind.Transition, "check" => V2SceneSelectedItemKind.Check, "connection" => V2SceneSelectedItemKind.Connection, _ => (V2SceneSelectedItemKind?)null };
-        return expected is not null && selectedSceneItem is { } selected && selected.Kind == expected && selected.EntityId == entityId && view?.Scene is { } scene && (kind == "subroom" ? scene.Frames.Any(x => x.EntityId == entityId) : scene.Markers.Any(x => x.EntityId == entityId && x.Kind == kind));
+        return expected is not null && !hiddenSceneLayers.Contains(SceneLayerKind(kind)) && selectedSceneItem is { } selected && selected.Kind == expected && selected.EntityId == entityId && view?.Scene is { } scene && (kind == "subroom" ? scene.Frames.Any(x => x.EntityId == entityId) : scene.Markers.Any(x => x.EntityId == entityId && x.Kind == kind));
     }
     private Task SetCheckMetadataDraft(CheckInGameMetadataDraft draft)
     {

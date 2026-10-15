@@ -173,7 +173,15 @@ window.initializeV2SceneViewport = (svg, viewKey, ownerGeneration, placementCall
     // settles. Marker-command continuations may update only their owner generation.
     const generation = (Number(svg.__v2SceneViewportGeneration) || 0) + 1;
     svg.__v2SceneViewportGeneration = generation;
-    let down = null, annotationsShown = true, imageShown = true, zoneShown = true, selected = null, armed = null, nudgeTail = Promise.resolve(), nudgeGeometry = null, nudgeEpoch = 0, active = true, draft = null, failedMarker = null, frameVisual = null, relationshipThreads = [], currentOwnerGeneration = ownerGeneration;
+    let down = null, imageShown = true, zoneShown = true, selected = null, armed = null, nudgeTail = Promise.resolve(), nudgeGeometry = null, nudgeEpoch = 0, active = true, draft = null, failedMarker = null, frameVisual = null, relationshipThreads = [], currentOwnerGeneration = ownerGeneration;
+    const layers = { subroom: true, exit: true, check: true }, layerEpochs = { subroom: 0, exit: 0, check: 0 };
+    const cancelledArms = { subroom: false, exit: false, check: false };
+    let explicitIntent = null, capturedIntent = null;
+    let latestArmRevision = -1, latestSelectionRevision = -1;
+    const category = kind => kind === "connection" ? "exit" : kind;
+    const visibleKind = kind => layers[category(kind)] === true;
+    const visibleItem = item => !!item && visibleKind(item.dataset.sceneSelectionKind);
+    const layerOperation = kind => { const key = category(kind), epoch = layerEpochs[key]; return currentOperation(() => layerEpochs[key] === epoch && layers[key]); };
     const ownsCurrentGeneration = () => active && svg.__v2SceneViewportGeneration === generation;
     // Every scene-owned async continuation captures this owner generation. This
     // is deliberately local to the named scene browser owner: a route/SVG-owner
@@ -204,13 +212,14 @@ window.initializeV2SceneViewport = (svg, viewKey, ownerGeneration, placementCall
         const activeGeometry = relationshipGeometry(thread), marker = markerOverride || activeGeometry.marker, frame = frameOverride || activeGeometry.frame;
         const right = frame.x + frame.w, top = frame.y + frame.h;
         const inside = marker.x >= frame.x && marker.x <= right && marker.y >= frame.y && marker.y <= top;
-        thread.node.style.display = inside ? "none" : "";
+        thread.node.style.display = inside || !layers.subroom || !visibleKind(thread.markerKind) ? "none" : "";
         thread.node.setAttribute("x1", marker.x); thread.node.setAttribute("y1", -marker.y);
         thread.node.setAttribute("x2", Math.max(frame.x, Math.min(right, marker.x))); thread.node.setAttribute("y2", -Math.max(frame.y, Math.min(top, marker.y)));
     };
     const rebuildRelationships = () => {
         relationshipThreads = [...(svg.querySelectorAll?.("[data-scene-relationship-thread=true]") || [])].map(node => ({
             node, markerId: node.dataset.sceneThreadMarkerId?.toLowerCase(), frameId: node.dataset.sceneThreadFrameId?.toLowerCase(),
+            markerKind: svg.querySelector(`[data-scene-layout-marker][data-scene-id='${node.dataset.sceneThreadMarkerId}']`)?.dataset.sceneSelectionKind,
             marker: { x: Number(node.dataset.sceneThreadMarkerX), y: Number(node.dataset.sceneThreadMarkerY) },
             frame: { x: Number(node.dataset.sceneThreadFrameX), y: Number(node.dataset.sceneThreadFrameY), w: Number(node.dataset.sceneThreadFrameWidth), h: Number(node.dataset.sceneThreadFrameHeight) }
         })).filter(thread => thread.markerId && thread.frameId && [thread.marker.x, thread.marker.y, thread.frame.x, thread.frame.y, thread.frame.w, thread.frame.h].every(Number.isFinite) && thread.frame.w > 0 && thread.frame.h > 0);
@@ -220,9 +229,58 @@ window.initializeV2SceneViewport = (svg, viewKey, ownerGeneration, placementCall
     const updateFrameRelationships = (id, geometry = null) => { relationshipThreads.forEach(thread => { if (thread.frameId === id.toLowerCase()) renderRelationship(thread, null, geometry); }); syncAttention(); };
     const settleMarkerVisual = item => { const id = item.dataset.sceneId.toLowerCase(), visual = [...markerVisuals].find(value => value.id === id); item.style.transform=""; if (visual) { visual.item.style.transform=""; markerVisuals.delete(visual); updateMarkerRelationships(visual.id); } };
     const clearMarkerVisuals = () => { markerVisuals.forEach(value => value.item.style.transform=""); markerVisuals.clear(); syncAttention(); };
-    const annotations = pane.querySelector("[data-scene-annotations=true]"), toggle = pane.querySelector("[data-scene-annotation-toggle=true]"), reset = pane.querySelector("[data-scene-reset-view=true]"), status = pane.querySelector("[data-scene-status-text=true]"), retryButton = pane.querySelector("[data-scene-marker-retry=true]");
+    const reset = pane.querySelector("[data-scene-reset-view=true]"), status = pane.querySelector("[data-scene-status-text=true]"), retryButton = pane.querySelector("[data-scene-marker-retry=true]");
+    let layerControls = [];
     let image = svg.querySelector?.("[data-scene-layout-image=true]"), imageToggle = pane.querySelector("[data-scene-image-toggle=true]"), zoneToggle = pane.querySelector("[data-scene-zone-toggle=true]");
-    const showAnnotations = shown => { annotationsShown = shown; if (annotations) annotations.style.display = shown ? "" : "none"; if (toggle) { toggle.setAttribute("aria-pressed", String(shown)); toggle.setAttribute("aria-label", shown ? "Hide annotations" : "Show annotations"); toggle.setAttribute("title", shown ? "Hide annotations" : "Show annotations"); } syncAttention(); };
+    const applyLayers = () => {
+        svg.querySelectorAll("[data-scene-selection-kind]").forEach(item => item.style.display = visibleItem(item) ? "" : "none");
+        for (const { node, key } of layerControls) {
+            const shown = key ? layers[key] : Object.values(layers).every(Boolean);
+            const label = `${shown ? "Hide" : "Show"} ${!key ? "annotations" : key === "subroom" ? "subrooms" : key === "exit" ? "exits and connections" : "check locations and enemies"}`;
+            node.setAttribute("aria-pressed", String(shown)); node.setAttribute("aria-label", label); node.setAttribute("title", label);
+        }
+        relationshipThreads.forEach(thread => renderRelationship(thread));
+        syncAttention();
+    };
+    const setLayer = (kind, shown) => {
+        const key = category(kind);
+        if (!active || !(key in layers) || layers[key] === shown) return;
+        layers[key] = shown;
+        if (!shown) {
+            layerEpochs[key]++;
+            cancelledArms[key] = true;
+            if (category(explicitIntent?.kind) === key) explicitIntent = null;
+            if (category(capturedIntent?.kind) === key) capturedIntent = null;
+            if (category(armed?.kind) === key) { armed = null; clearDraft(); if (status) status.textContent = ""; svg.classList.remove("scene-layout-placement-armed"); svg.style.cursor = ""; }
+            if (category(selected?.dataset.sceneSelectionKind) === key) { selected.classList.remove("selected"); selected = null; nudgeEpoch++; nudgeGeometry = null; }
+            const gestureKind = down?.drawStart ? "subroom" : (down?.frame || down?.drag)?.dataset.sceneSelectionKind;
+            if (category(gestureKind) === key) cancelGesture();
+            if (key === "subroom") {
+                restoreFrameVisual(); clearSnap();
+                // A different category's gesture is preserved; remove only the
+                // now-ineligible frame targets/locks from its snap candidates.
+                if (down?.candidates) down.candidates = candidates(down.frame);
+            }
+            for (const visual of [...markerVisuals]) if (category(visual.item.dataset.sceneSelectionKind) === key) { visual.item.style.transform = ""; markerVisuals.delete(visual); }
+            if (category(failedMarker?.kind) === key) clearFailure();
+        }
+        applyLayers();
+        callback("SetSceneLayerVisibilityAsync", key, shown)?.catch(() => {});
+    };
+    const bindLayerControls = () => {
+        for (const { node, click } of layerControls) node.removeEventListener("click", click);
+        layerControls = [...pane.querySelectorAll("[data-scene-layer-toggle], [data-scene-annotation-toggle=true]")].map(node => {
+            const key = node.dataset.sceneLayerToggle, click = () => {
+                if (!active) return;
+                if (key) setLayer(key, !layers[key]);
+                else {
+                    const shown = !Object.values(layers).every(Boolean);
+                    for (const categoryKey of Object.keys(layers)) setLayer(categoryKey, shown);
+                }
+            };
+            node.addEventListener("click", click); return { node, key, click };
+        });
+    };
     const clearDraft = () => { draft?.remove(); draft=null; };
     // A resize cannot use a group translation: the body, each exterior target,
     // and the upright label all have distinct prospective geometry.  Keep their
@@ -303,7 +361,7 @@ window.initializeV2SceneViewport = (svg, viewKey, ownerGeneration, placementCall
     // nonrenderable item. The browser mirrors only currently rendered geometry.
     const notifySelection = item => { const valid=currentOperation(), owner=currentOwnerGeneration; const call=item ? placementCallback?.invokeMethodAsync("SelectSceneItemAsync",viewKey,owner,item.dataset.sceneSelectionKind,item.dataset.sceneId) : placementCallback?.invokeMethodAsync("ClearSceneSelectionAsync",viewKey,owner); call?.then(()=>{if(!valid()||owner!==currentOwnerGeneration)return;}).catch(()=>{}); };
     const failure = value => { failedMarker=value; if(status) status.textContent="marker save failed"; if(retryButton) retryButton.hidden=false; };
-    const retryMarker = () => { const value=failedMarker, valid=currentOperation(); if(!value) return; callback("CommitMarkerDragAsync",value.kind,value.id,value.x,value.y).then(ok=>{if(valid()&&ok)clearFailure();}).catch(()=>{}); };
+    const retryMarker = () => { const value=failedMarker; if(!value || !visibleKind(value.kind)) return; const valid=layerOperation(value.kind); callback("CommitMarkerDragAsync",value.kind,value.id,value.x,value.y).then(ok=>{if(valid()&&ok)clearFailure();}).catch(()=>{}); };
     // Image visibility is deliberately owned entirely by this named mounted-pane
     // owner. It has no .NET callback, command, map load, or projection work.
     const showImage = shown => { if (!active) return; imageShown = shown; if (image) image.style.display = shown ? "" : "none"; if (imageToggle) { imageToggle.setAttribute("aria-pressed", String(shown)); imageToggle.setAttribute("aria-label", shown ? "Hide scene image" : "Show scene image"); imageToggle.setAttribute("title", shown ? "Hide scene image" : "Show scene image"); } };
@@ -316,7 +374,7 @@ window.initializeV2SceneViewport = (svg, viewKey, ownerGeneration, placementCall
     const snapClass = "scene-layout-snap-target-edge", guideClass = "scene-layout-snap-guide";
     const clearSnap = (resetLocks=true) => { [...(svg.querySelectorAll?.(`.${snapClass}`) || [])].forEach(x => x.classList.remove(snapClass)); [...(svg.querySelectorAll?.(`.${guideClass}`) || [])].forEach(x => x.remove()); if (resetLocks && down) down.locks = {}; };
     const valid = item => ["sceneFrameX", "sceneFrameY", "sceneFrameWidth", "sceneFrameHeight"].every(k => Number.isFinite(Number(item.dataset[k]))) && Number(item.dataset.sceneFrameWidth)>0 && Number(item.dataset.sceneFrameHeight)>0;
-    const candidates = excluded => { const result={x:[],y:[]}; const add=(value,axis,node,edge)=>result[axis].push({value,node,edge}); const room=svg.querySelector?.(".scene-layout-room-bounds"); if(room){const x=Number(room.getAttribute("x")),top=-Number(room.getAttribute("y")),w=Number(room.getAttribute("width")),h=Number(room.getAttribute("height"));if(w>0&&h>0){add(x,"x",room,"l");add(x+w,"x",room,"r");add(top-h,"y",room,"b");add(top,"y",room,"t");}} svg.querySelectorAll?.("[data-scene-layout-frame=true]").forEach(frame=>{if(frame===excluded||!valid(frame))return;const x=Number(frame.dataset.sceneFrameX),y=Number(frame.dataset.sceneFrameY),w=Number(frame.dataset.sceneFrameWidth),h=Number(frame.dataset.sceneFrameHeight);add(x,"x",frame,"l");add(x+w,"x",frame,"r");add(y,"y",frame,"b");add(y+h,"y",frame,"t");}); return result; };
+    const candidates = excluded => { const result={x:[],y:[]}; const add=(value,axis,node,edge)=>result[axis].push({value,node,edge}); const room=svg.querySelector?.(".scene-layout-room-bounds"); if(room){const x=Number(room.getAttribute("x")),top=-Number(room.getAttribute("y")),w=Number(room.getAttribute("width")),h=Number(room.getAttribute("height"));if(w>0&&h>0){add(x,"x",room,"l");add(x+w,"x",room,"r");add(top-h,"y",room,"b");add(top,"y",room,"t");}} svg.querySelectorAll?.("[data-scene-layout-frame=true]").forEach(frame=>{if(frame===excluded||!visibleItem(frame)||!valid(frame))return;const x=Number(frame.dataset.sceneFrameX),y=Number(frame.dataset.sceneFrameY),w=Number(frame.dataset.sceneFrameWidth),h=Number(frame.dataset.sceneFrameHeight);add(x,"x",frame,"l");add(x+w,"x",frame,"r");add(y,"y",frame,"b");add(y+h,"y",frame,"t");}); return result; };
     const scale = axis => { const m=svg.getScreenCTM?.(); const length=axis==="x"?Math.hypot(m?.a||0,m?.b||0):Math.hypot(m?.c||0,m?.d||0); return length>0?6/length:0; };
     const targetEdge = candidate => candidate.node.classList?.contains("scene-layout-room-bounds") ? svg.querySelector?.(`[data-scene-snap-room-edge='${candidate.edge}']`) : candidate.node.querySelector?.(candidate.edge==="l"?".edge-w":candidate.edge==="r"?".edge-e":candidate.edge==="b"?".edge-s":".edge-n");
     const renderSnap = (locked, axis) => { const target=targetEdge(locked); target?.classList.add(snapClass); if(!document.createElementNS)return;const line=document.createElementNS("http://www.w3.org/2000/svg","line");line.classList.add(guideClass);if(axis==="x"){line.setAttribute("x1",locked.value);line.setAttribute("x2",locked.value);line.setAttribute("y1",-Number(svg.dataset.sceneMinY));line.setAttribute("y2",-Number(svg.dataset.sceneMaxY));}else{const y=-locked.value;line.setAttribute("x1",Number(svg.dataset.sceneMinX));line.setAttribute("x2",Number(svg.dataset.sceneMaxX));line.setAttribute("y1",y);line.setAttribute("y2",y);}svg.appendChild(line); };
@@ -335,19 +393,23 @@ window.initializeV2SceneViewport = (svg, viewKey, ownerGeneration, placementCall
             callback("CommitPlacementAsync", request.kind, request.entityId, at.x, -at.y).catch(() => {});
             return;
         }
-        if(down && down.frame && down.moved){const item=down.frame,value=snap(geometry(event),event),valid=currentOperation();if(value.w>0&&value.h>0) callback("CommitSubroomGeometryAsync",item.dataset.sceneId,value.x,value.y,value.w,value.h).then(ok=>{if(!valid())return;settleFrameVisual(item,ok);}).catch(()=>{if(!valid())return;settleFrameVisual(item,false);}); return;} if(down && down.drag && down.moved){const item=down.drag, at=point(event.clientX,event.clientY),origin=point(down.x,down.y),dx=at.x-origin.x,svgDy=at.y-origin.y,valid=currentOperation(),visual={item,id:item.dataset.sceneId.toLowerCase(),x:Number(item.dataset.sceneMarkerX)+dx,y:Number(item.dataset.sceneMarkerY)-svgDy};item.style.transform=`translate(${dx}px, ${svgDy}px)`;markerVisuals.add(visual);updateMarkerRelationships(visual.id); callback("CommitMarkerDragAsync",item.dataset.sceneSelectionKind,item.dataset.sceneId,at.x,-at.y).then(ok=>{if(!valid())return;settleMarkerVisual(item);if(ok){clearFailure();}else failure({kind:item.dataset.sceneSelectionKind,id:item.dataset.sceneId,x:at.x,y:-at.y});}).catch(()=>{if(!valid())return;settleMarkerVisual(item);failure({kind:item.dataset.sceneSelectionKind,id:item.dataset.sceneId,x:at.x,y:-at.y});}); return;} const item = event.target?.closest?.("[data-scene-selection-kind]");
+        if(down && down.frame && down.moved){const item=down.frame,value=snap(geometry(event),event),valid=layerOperation("subroom");if(value.w>0&&value.h>0) callback("CommitSubroomGeometryAsync",item.dataset.sceneId,value.x,value.y,value.w,value.h).then(ok=>{if(!valid())return;settleFrameVisual(item,ok);}).catch(()=>{if(!valid())return;settleFrameVisual(item,false);}); return;} if(down && down.drag && down.moved){const item=down.drag, at=point(event.clientX,event.clientY),origin=point(down.x,down.y),dx=at.x-origin.x,svgDy=at.y-origin.y,valid=layerOperation(item.dataset.sceneSelectionKind),visual={item,id:item.dataset.sceneId.toLowerCase(),x:Number(item.dataset.sceneMarkerX)+dx,y:Number(item.dataset.sceneMarkerY)-svgDy};item.style.transform=`translate(${dx}px, ${svgDy}px)`;markerVisuals.add(visual);updateMarkerRelationships(visual.id); callback("CommitMarkerDragAsync",item.dataset.sceneSelectionKind,item.dataset.sceneId,at.x,-at.y).then(ok=>{if(!valid())return;settleMarkerVisual(item);if(ok){clearFailure();}else failure({kind:item.dataset.sceneSelectionKind,id:item.dataset.sceneId,x:at.x,y:-at.y});}).catch(()=>{if(!valid())return;settleMarkerVisual(item);failure({kind:item.dataset.sceneSelectionKind,id:item.dataset.sceneId,x:at.x,y:-at.y});}); return;} const item = event.target?.closest?.("[data-scene-selection-kind]");
         if (!item && down?.panning) return;
+        if (item && !visibleItem(item)) return;
         if (selected === item) return;
         selected?.classList.remove("selected"); selected = item || null;
-        if (selected) selected.classList.add("selected");
+        explicitIntent = null;
+        capturedIntent = null;
+        if (selected) { selected.classList.add("selected"); cancelledArms[category(selected.dataset.sceneSelectionKind)] = false; }
         syncAttention();
         notifySelection(selected);
         clearFailure();
     };
     const end = (event, cancelled=false) => { if (cancelled) clearFailure(); if (down?.id === event.pointerId) { if (cancelled && down.drag) { down.drag.style.transform=""; updateMarkerRelationships(down.drag.dataset.sceneId); } if (cancelled && down.frame) restoreFrameVisual(); if (svg.hasPointerCapture(event.pointerId)) svg.releasePointerCapture(event.pointerId); clearDraft(); clearSnap(); down = null; } };
-    const toggleAnnotations = () => { clearFailure(); showAnnotations(!annotationsShown); }, toggleImage = () => showImage(!imageShown), toggleZone = () => { clearFailure(); const shown = !zoneShown; setZoneVisible(shown); window.saveRoomZoneMapVisibility?.(shown); };
+    const toggleImage = () => showImage(!imageShown), toggleZone = () => { clearFailure(); const shown = !zoneShown; setZoneVisible(shown); window.saveRoomZoneMapVisibility?.(shown); };
     const reconcile = ownerGeneration => {
         currentOwnerGeneration = ownerGeneration;
+        bindLayerControls();
         // Detach replaced controls before observing the new DOM. A stale control
         // cannot mutate the current owner after a render replacement.
         imageToggle?.removeEventListener("click", toggleImage);
@@ -380,30 +442,76 @@ window.initializeV2SceneViewport = (svg, viewKey, ownerGeneration, placementCall
         }
         rebuildRelationships();
         if (frameVisual) showFrameVisual(frameVisual.item, frameVisual.geometry, frameVisual.mode);
+        applyLayers();
         showImage(imageShown);
         setZoneVisible(zoneShown);
         syncAttention();
     };
     const cancelGesture = () => { clearFailure(); clearDraft(); clearSnap(); if (down?.drag) { down.drag.style.transform=""; updateMarkerRelationships(down.drag.dataset.sceneId); } if (frameVisual) restoreFrameVisual(); if (down && svg.hasPointerCapture(down.id)) svg.releasePointerCapture(down.id); down=null; };
-    const cancelPlacement = event => { if (event.type === "keydown" && event.key !== "Escape") return; cancelGesture(); if (!armed) return; event.preventDefault(); callback("CancelPlacementAsync").catch(() => {}); };
+    const cancelPlacement = event => { if (event.type === "keydown" && event.key !== "Escape") return; capturedIntent = null; cancelGesture(); if (!armed) return; event.preventDefault(); callback("CancelPlacementAsync").catch(() => {}); };
     const cancelDrag = event => end(event, true);
     // Key repeats arrive before the server refreshes DOM attributes.  Chain from
     // the accepted/pending geometry, never the stale rendered dataset.
-    const nudge = event => { if(!selected || !["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(event.key)) return; clearFailure(); event.preventDefault(); const item=selected, kind=item.dataset.sceneSelectionKind, frame=kind==="subroom", amount=event.shiftKey?5:1, base=nudgeGeometry?.id===item.dataset.sceneId?nudgeGeometry:{id:item.dataset.sceneId,kind,x:Number(frame?item.dataset.sceneFrameX:item.dataset.sceneMarkerX),y:Number(frame?item.dataset.sceneFrameY:item.dataset.sceneMarkerY)}; const next={...base,x:base.x+(event.key==="ArrowLeft"?-amount:event.key==="ArrowRight"?amount:0),y:base.y+(event.key==="ArrowDown"?-amount:event.key==="ArrowUp"?amount:0)}, epoch=nudgeEpoch,valid=currentOperation(()=>epoch===nudgeEpoch); nudgeGeometry=next; nudgeTail=nudgeTail.then(async()=>{if(!valid())return;try{const ok=await callback("CommitSceneNudgeAsync",kind,item.dataset.sceneId,next.x,next.y);if(valid()&&!ok){nudgeEpoch++;nudgeGeometry=null;}}catch{if(valid()){nudgeEpoch++;nudgeGeometry=null;}}}); };
-    svg.addEventListener("wheel", wheel, { passive:false }); svg.addEventListener("pointerdown", start); svg.addEventListener("pointermove", move); svg.addEventListener("pointerup", select); svg.addEventListener("pointerup", end); svg.addEventListener("pointercancel", cancelDrag); svg.addEventListener("keydown", cancelPlacement); svg.addEventListener("keydown", nudge); svg.addEventListener("contextmenu", cancelPlacement); toggle?.addEventListener("click", toggleAnnotations); imageToggle?.addEventListener("click", toggleImage); zoneToggle?.addEventListener("click", toggleZone); reset?.addEventListener("click", resetView);
+    const nudge = event => { if(!visibleItem(selected) || !["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(event.key)) return; clearFailure(); event.preventDefault(); const item=selected, kind=item.dataset.sceneSelectionKind, frame=kind==="subroom", amount=event.shiftKey?5:1, base=nudgeGeometry?.id===item.dataset.sceneId?nudgeGeometry:{id:item.dataset.sceneId,kind,x:Number(frame?item.dataset.sceneFrameX:item.dataset.sceneMarkerX),y:Number(frame?item.dataset.sceneFrameY:item.dataset.sceneMarkerY)}; const next={...base,x:base.x+(event.key==="ArrowLeft"?-amount:event.key==="ArrowRight"?amount:0),y:base.y+(event.key==="ArrowDown"?-amount:event.key==="ArrowUp"?amount:0)}, epoch=nudgeEpoch,layerCurrent=layerOperation(kind),valid=()=>layerCurrent()&&epoch===nudgeEpoch; nudgeGeometry=next; nudgeTail=nudgeTail.then(async()=>{if(!valid())return;try{const ok=await callback("CommitSceneNudgeAsync",kind,item.dataset.sceneId,next.x,next.y);if(valid()&&!ok){nudgeEpoch++;nudgeGeometry=null;}}catch{if(valid()){nudgeEpoch++;nudgeGeometry=null;}}}); };
+    svg.addEventListener("wheel", wheel, { passive:false }); svg.addEventListener("pointerdown", start); svg.addEventListener("pointermove", move); svg.addEventListener("pointerup", select); svg.addEventListener("pointerup", end); svg.addEventListener("pointercancel", cancelDrag); svg.addEventListener("keydown", cancelPlacement); svg.addEventListener("keydown", nudge); svg.addEventListener("contextmenu", cancelPlacement); imageToggle?.addEventListener("click", toggleImage); zoneToggle?.addEventListener("click", toggleZone); reset?.addEventListener("click", resetView);
     retryButton?.addEventListener("click", retryMarker);
-    const arm = (kind, entityId, acquireFocus, ownerGeneration) => {
+    // Capture precedes authoritative page admission. A candidate may reveal its
+    // layer, but cannot retire the retained interaction or release a cancelled
+    // arm. Only a matching newer page parameter delivery confirms that identity.
+    const confirmCapturedIntent = (kind, id, revision, selection) => {
+        if (!capturedIntent || capturedIntent.kind !== kind ||
+            (selection ? capturedIntent.selectionId : capturedIntent.id) !== id.toLowerCase().replaceAll("-", "") ||
+            revision <= (selection ? capturedIntent.selectionRevision : capturedIntent.armRevision)) return;
+        cancelGesture();
+        explicitIntent = capturedIntent; capturedIntent = null;
+        cancelledArms[category(kind)] = false;
+    };
+    const arm = (kind, entityId, acquireFocus, ownerGeneration, revision) => {
         if (!ownsCurrentGeneration() || ownerGeneration !== currentOwnerGeneration || Number(svg.dataset.sceneOwnerGeneration) !== ownerGeneration || !svg.isConnected) return;
+        if (!Number.isFinite(revision) || revision < latestArmRevision) return;
+        if (!visibleKind(kind)) return;
+        confirmCapturedIntent(kind, entityId, revision, false);
+        const intentMatches = explicitIntent?.kind === kind && explicitIntent.id === entityId.toLowerCase().replaceAll("-", "");
+        if (!visibleKind(kind) || cancelledArms[category(kind)] || (explicitIntent && !intentMatches && armed?.kind !== kind)) return;
+        latestArmRevision = revision;
+        // Owned canonical connection reconciliation may retarget the retained
+        // request. It updates identity only, never visibility or focus intent.
+        if (explicitIntent && !intentMatches && armed?.kind === "connection" && kind === "connection") { explicitIntent.id = entityId.toLowerCase().replaceAll("-", ""); explicitIntent.selectionId = explicitIntent.id; }
         clearFailure(); clearSnap(); armed={kind,entityId};
         if(status) status.textContent=armedInstruction(armed);
         svg.classList.add("scene-layout-placement-armed"); svg.style.cursor="crosshair";
         // Render reconciliation retains placement but never invents focus intent.
         // The current root's typed dialog fact also guards delayed interop delivery.
-        if (acquireFocus === true && attentionRoot?.isConnected && attentionRoot.dataset.v2DialogOpen === "false") svg.focus();
+        if (acquireFocus === true && (!explicitIntent || !explicitIntent.focusConsumed) && attentionRoot?.isConnected && attentionRoot.dataset.v2DialogOpen === "false") { if (explicitIntent) explicitIntent.focusConsumed = true; svg.focus(); }
     };
-    svg.__v2SceneViewport = { key:viewKey, isLive:()=>active, reconcile, arm, clearPlacement:() => { clearSnap(); armed=null; svg.classList.remove("scene-layout-placement-armed"); svg.style.cursor=""; }, clearSelection:() => { cancelGesture(); clearFailure(); nudgeGeometry=null; selected?.classList.remove("selected"); selected=null; syncAttention(); }, select:id => { cancelGesture(); clearFailure(); nudgeGeometry=null; const item=svg.querySelector(`[data-scene-id='${id}']`); if (!item) return; selected?.classList.remove("selected"); selected=item; selected.classList.add("selected"); syncAttention(); }, dispose:() => { active=false; clearFailure(); nudgeGeometry=null; cancelGesture(); clearMarkerVisuals(); selected?.classList.remove("selected"); attentionRoot?.[v2ChildInteractionOwnerKey]?.retireSceneAttention?.(svg); svg.removeEventListener("wheel", wheel); svg.removeEventListener("pointerdown", start); svg.removeEventListener("pointermove", move); svg.removeEventListener("pointerup", select); svg.removeEventListener("pointerup", end); svg.removeEventListener("pointercancel", cancelDrag); svg.removeEventListener("keydown", cancelPlacement); svg.removeEventListener("keydown", nudge); svg.removeEventListener("contextmenu", cancelPlacement); toggle?.removeEventListener("click", toggleAnnotations); imageToggle?.removeEventListener("click", toggleImage); zoneToggle?.removeEventListener("click", toggleZone); reset?.removeEventListener("click", resetView); retryButton?.removeEventListener("click", retryMarker); } };
+    const ownsRevision = (owner, revision, latest) => ownsCurrentGeneration() && owner === currentOwnerGeneration && Number(svg.dataset.sceneOwnerGeneration) === owner && svg.isConnected && Number.isFinite(revision) && revision >= latest;
+    const clearPlacement = (owner, revision) => { if (!ownsRevision(owner, revision, latestArmRevision)) return; latestArmRevision=revision; if (armed) clearSnap(); armed=null; svg.classList.remove("scene-layout-placement-armed"); svg.style.cursor=""; };
+    const clearSelection = (owner, revision) => { if (!ownsRevision(owner, revision, latestSelectionRevision)) return; latestSelectionRevision=revision; if (!selected) return; cancelGesture(); clearFailure(); nudgeEpoch++; nudgeGeometry=null; selected.classList.remove("selected"); selected=null; syncAttention(); };
+    const selectItem = (id, owner, revision) => {
+        if (!ownsRevision(owner, revision, latestSelectionRevision)) return;
+        const item=svg.querySelector(`[data-scene-id='${id}']`);
+        if (!visibleItem(item)) return;
+        confirmCapturedIntent(item.dataset.sceneSelectionKind, id, revision, true);
+        if (cancelledArms[category(item.dataset.sceneSelectionKind)]) return;
+        if (explicitIntent?.selectionPending && (explicitIntent.kind !== item.dataset.sceneSelectionKind || explicitIntent.selectionId !== id.toLowerCase().replaceAll("-", ""))) return;
+        latestSelectionRevision=revision;
+        if (explicitIntent) explicitIntent.selectionPending=false;
+        if (selected === item) return;
+        cancelGesture(); clearFailure(); nudgeEpoch++; nudgeGeometry=null; selected?.classList.remove("selected"); selected=item; selected.classList.add("selected"); syncAttention();
+    };
+    svg.__v2SceneViewport = { key:viewKey, isLive:()=>active, reconcile, arm, clearPlacement, clearSelection, select:selectItem, dispose:() => { active=false; clearFailure(); nudgeEpoch++; nudgeGeometry=null; cancelGesture(); clearMarkerVisuals(); selected?.classList.remove("selected"); attentionRoot?.[v2ChildInteractionOwnerKey]?.retireSceneAttention?.(svg); svg.removeEventListener("wheel", wheel); svg.removeEventListener("pointerdown", start); svg.removeEventListener("pointermove", move); svg.removeEventListener("pointerup", select); svg.removeEventListener("pointerup", end); svg.removeEventListener("pointercancel", cancelDrag); svg.removeEventListener("keydown", cancelPlacement); svg.removeEventListener("keydown", nudge); svg.removeEventListener("contextmenu", cancelPlacement); for (const { node, click } of layerControls) node.removeEventListener("click", click); layerControls=[]; imageToggle?.removeEventListener("click", toggleImage); zoneToggle?.removeEventListener("click", toggleZone); reset?.removeEventListener("click", resetView); retryButton?.removeEventListener("click", retryMarker); } };
     svg.__v2SceneViewport.ownsOwner = value => ownsCurrentGeneration() && currentOwnerGeneration === value;
-    rebuildRelationships(); showAnnotations(true); showImage(true);
+    svg.__v2SceneViewport.isKindVisible = visibleKind;
+    // The existing root child click owner forwards only actual explicit row/re-arm
+    // activations. Reveal is synchronous with that browser intent, never a delayed
+    // render callback that could undo a subsequent hide. Reconciliation cannot
+    // release a cancelled arm; a newer matching admitted parameter can.
+    svg.__v2SceneViewport.explicitLayerIntent = (kind, id, selectionId) => {
+        if (!ownsCurrentGeneration() || Number(svg.dataset.sceneOwnerGeneration) !== currentOwnerGeneration || !svg.isConnected || !(category(kind) in layers) || !id) return;
+        capturedIntent = { kind, id: id.toLowerCase().replaceAll("-", ""), selectionId: (selectionId || id).toLowerCase().replaceAll("-", ""), selectionPending: true, focusConsumed: false, armRevision: latestArmRevision, selectionRevision: latestSelectionRevision };
+        setLayer(kind, true);
+    };
+    bindLayerControls(); rebuildRelationships(); applyLayers(); showImage(true);
     // Resolve before making the host visible so reload/navigation never paint
     // the opposite split state. A missing/invalid stored value defaults shown.
     try { zoneShown = window.loadRoomZoneMapVisibility?.() !== false; } catch { zoneShown = true; }
@@ -415,10 +523,10 @@ window.disposeV2SceneViewport = (svg, ownerGeneration) => {
     if (ownerGeneration !== undefined && !state?.ownsOwner?.(ownerGeneration)) return;
     state?.dispose(); if (svg) delete svg.__v2SceneViewport;
 };
-window.armV2ScenePlacement = (svg, kind, entityId, acquireFocus, ownerGeneration) => svg?.__v2SceneViewport?.arm(kind, entityId, acquireFocus, ownerGeneration);
-window.clearV2ScenePlacement = svg => svg?.__v2SceneViewport?.clearPlacement();
-window.selectV2SceneLayoutItem = (svg, entityId) => svg?.__v2SceneViewport?.select(entityId);
-window.clearV2SceneLayoutSelection = svg => svg?.__v2SceneViewport?.clearSelection();
+window.armV2ScenePlacement = (svg, kind, entityId, acquireFocus, ownerGeneration, revision) => svg?.__v2SceneViewport?.arm(kind, entityId, acquireFocus, ownerGeneration, revision);
+window.clearV2ScenePlacement = (svg, ownerGeneration, revision) => svg?.__v2SceneViewport?.clearPlacement(ownerGeneration, revision);
+window.selectV2SceneLayoutItem = (svg, entityId, ownerGeneration, revision) => svg?.__v2SceneViewport?.select(entityId, ownerGeneration, revision);
+window.clearV2SceneLayoutSelection = (svg, ownerGeneration, revision) => svg?.__v2SceneViewport?.clearSelection(ownerGeneration, revision);
 
 /* Separate modal-local V2 owner. Pointer edits remain browser-local; all numeric
    bounds, mapping and mode reconcile together at field/reset/Apply boundaries. */
@@ -946,7 +1054,7 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
           const wordAt=(word,index)=>source.slice(index,index+word.length)===word&&!identifierCodePoint(codePointBefore(source,index))&&!identifierCodePoint(codePointAt(source,index+word.length));
               const syntax = { only:"{predicate}", optional:"{difficulty?} {predicate}", required:"{difficulty} {predicate}", direction:"{predicate} [{direction}]", optionalDirection:"{predicate} [{direction?}]", item:"{predicate} {item}", check:"{predicate} {check}", quantity:"{predicate} {quantity}", enemy:"{difficulty} {predicate} [{enemy}]", countable:"{predicate} {quantity} {countable}", countableFirst:"{predicate} {countable} {quantity}", crestDirection:"[{crest}] {predicate} {direction}", difficultyCrest:"{difficulty} [{crest}] {predicate}", optionalCrestDirection:"[{crest?}] {predicate} {direction}", difficultyOptionalCrest:"{difficulty} [{crest?}] {predicate}" };
           const operandShapes=new Map(Object.values(syntax).filter(pattern=>pattern.includes("[")).map(pattern=>[pattern,pattern.split(" ").map(marker=>({role:marker.replace(/[\[\]{}?]/gu,""),optional:marker.includes("?"),list:marker.startsWith("[")}))]));
-          const difficulty = new Set(["easy","medium","hard"]), direction = new Set(["left","right","up","down"]);
+          const difficulty = new Set(["easy","medium","hard"]), direction = new Set(["left","right","up","down","both","either","any","all"]);
            const tokenizeAtom = text => { const chunks=[...text.matchAll(/\S+/gu)].map(match=>({start:match.index,end:match.index+match[0].length,identity:identify(match[0])})),meaningful=chunks.filter(chunk=>chunk.identity);return {text,chunks,meaningful}; };
              const matchingCandidates = tokens => { if(!tokens.length)return [];const matches=(requirementsLookups.predicateAliasesByFirstToken.get(tokens[0].identity)||[]).map(candidate=>({candidate,difficultyEnabled:false,invalidDifficulty:false}));if(tokens.length>1)for(const candidate of requirementsLookups.predicateAliasesByFirstToken.get(tokens[1].identity)||[]){const input=candidate.predicate.inputSyntax;if(difficulty.has(tokens[0].identity)&&(input===syntax.optional||input===syntax.required||input===syntax.enemy))matches.push({candidate,difficultyEnabled:true,invalidDifficulty:false});else if(!difficulty.has(tokens[0].identity)&&(input===syntax.required||input===syntax.enemy))matches.push({candidate,difficultyEnabled:false,invalidDifficulty:true});}return matches; };
            const matchedPrefix = (tokens,candidate,start) => { if(start+candidate.tokens.length>tokens.length)return null;for(let index=0;index<candidate.tokens.length;index++)if(tokens[start+index].identity!==candidate.tokens[index])return null;return {next:start+candidate.tokens.length,prefixEnd:tokens[start+candidate.tokens.length-1].end}; };
@@ -1164,7 +1272,7 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
               if (!attentionRow(row)) continue;
               const kind = row.dataset.v2RowAnnotationKind, id = row.dataset.v2RowAnnotationId;
               const item = layer.querySelector(`[data-scene-selection-kind='${CSS.escape(kind)}'][data-scene-id='${CSS.escape(id)}']`);
-              if (item) { current.delete(item); current.set(item, strength); }
+              if (item && svg.__v2SceneViewport.isKindVisible(kind)) { current.delete(item); current.set(item, strength); }
           }
           for (const [item, strength] of current) {
               const frame = item.dataset.sceneSelectionKind === "subroom",
@@ -1320,7 +1428,21 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
             owners[saved.kind].invokeMethodAsync(...args).catch(()=>{});
         };
         const change=event=>{if(!owned(event))return;const field=event.target,kind=kindOf(field);if(!kind||field.disabled||!(field instanceof HTMLSelectElement||(field instanceof HTMLInputElement&&field.type==="checkbox")))return;const c=config(kind),owner=owners[kind];if(!c.control||!field.dataset[c.client]||!owner?.invokeMethodAsync)return;event.stopImmediatePropagation();dispatchBoundary(kind,owner,[c.control,field.dataset[c.client],field.dataset[c.field],field instanceof HTMLInputElement?String(field.checked):field.value]).catch(()=>{});};
-        const click=event=>{if(!owned(event))return;if(event.target instanceof Element&&!control(event.target)){const cell=event.target.closest("td");let editor=cell?.querySelector("input:not([type='checkbox']), textarea");if(!editor&&(cell?.classList.contains("verification-cell")||cell?.classList.contains("check-type-cell")))editor=cell.querySelector("select");if(editor&&!editor.disabled&&!editor.readOnly)editor.focus();}const button=event.target instanceof Element?event.target.closest("button[data-v2-child-action]"):null;if(!button||button.disabled)return;const action=button.dataset.v2ChildAction,kind=Object.keys(configs).find(k=>configs[k].action&&button.closest(`table[data-${attribute(configs[k].table)}]`));if(!kind)return;const c=config(kind),id=button.closest("tr")?.dataset[c.row],owner=owners[kind];if(!c.actions?.includes(action)||!id||!owner?.invokeMethodAsync)return;event.preventDefault();event.stopImmediatePropagation();owner.invokeMethodAsync(c.action,action,id).catch(()=>{});};
+        const click=event=>{if(!owned(event))return;sceneLayerClick(event);if(event.target instanceof Element&&!control(event.target)){const cell=event.target.closest("td");let editor=cell?.querySelector("input:not([type='checkbox']), textarea");if(!editor&&(cell?.classList.contains("verification-cell")||cell?.classList.contains("check-type-cell")))editor=cell.querySelector("select");if(editor&&!editor.disabled&&!editor.readOnly)editor.focus();}const button=event.target instanceof Element?event.target.closest("button[data-v2-child-action]"):null;if(!button||button.disabled)return;const action=button.dataset.v2ChildAction,kind=Object.keys(configs).find(k=>configs[k].action&&button.closest(`table[data-${attribute(configs[k].table)}]`));if(!kind)return;const c=config(kind),id=button.closest("tr")?.dataset[c.row],owner=owners[kind];if(!c.actions?.includes(action)||!id||!owner?.invokeMethodAsync)return;event.preventDefault();event.stopImmediatePropagation();owner.invokeMethodAsync(c.action,action,id).catch(()=>{});};
+        const sceneLayerClick = event => {
+            const button = event.target instanceof Element ? event.target.closest("button") : null;
+            if (!button || button.disabled) return;
+            const pane = root.querySelector(".room-context-scene-pane"), scene = pane?.querySelector("[data-scene-layout-canvas]")?.__v2SceneViewport;
+            if (!scene?.isLive()) return;
+            if (button.matches("[data-scene-action='rearm']") && pane.contains(button)) {
+                scene.explicitLayerIntent(pane.dataset.sceneSelectedKind, pane.dataset.sceneSelectedId); return;
+            }
+            const match = button.id.match(/^v2-(subroom|transition|connection|check)-(select|show|place)-([0-9a-f-]+)$/i);
+            if (!match) return;
+            const tableKind = match[1], c = config(tableKind), row = button.closest("tr"), kind = tableKind === "transition" ? "exit" : tableKind;
+            if (!c || !owners[tableKind] || !row?.closest(`table[data-${attribute(c.table)}='active']`) || row.dataset[c.row]?.toLowerCase() !== match[3].toLowerCase()) return;
+            scene.explicitLayerIntent(kind, match[3], row.dataset.v2RowAnnotationId);
+        };
     const dragend=()=>{if(drag)clear(drag.kind);drag=null;};
          const input=event=>{
              const field=event.target;

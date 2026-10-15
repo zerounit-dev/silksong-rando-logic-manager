@@ -159,10 +159,10 @@
                         </table>
                         <h4>Existing active items</h4>
                         <table class="scene-reconcile-table scene-existing-table">
-                            <thead><tr>@if (category != SceneDumpClassification.Exit) { <th>Type</th> }<th>Friendly name</th><th>Game ID</th><th>Position</th><th>Archive</th></tr></thead>
+                            <thead><tr>@if (category != SceneDumpClassification.Exit) { <th>Type</th> }<th>Friendly name</th><th>Game ID</th><th>Position</th>@if (category == SceneDumpClassification.Check) { <th>Annotation position</th> }<th>Archive</th></tr></thead>
                             <tbody>@foreach (var record in Existing(category))
                             {
-                                <tr class="@(Assigned(record.Id) ? "scene-assigned-record" : null)">@if (category != SceneDumpClassification.Exit) { <td>@TypeName(record.LocationType)</td> }<td>@record.FriendlyName</td><td><span class="scene-game-id" title="@record.InGameId">@MiddleId(record.InGameId, enemy)</span></td><td>@Position(record)</td><td class="scene-archive-cell"><input type="checkbox" checked="@archives.Contains(record.Id)" disabled="@Assigned(record.Id)" @onchange="(args => SetArchive(record.Id, args.Value is true))" aria-label="Archive @record.FriendlyName" /></td></tr>
+                                <tr class="@(Assigned(record.Id) ? "scene-assigned-record" : null)">@if (category != SceneDumpClassification.Exit) { <td>@TypeName(record.LocationType)</td> }<td>@record.FriendlyName</td><td><span class="scene-game-id" title="@record.InGameId">@MiddleId(record.InGameId, enemy)</span></td><td>@Position(record)</td>@if (category == SceneDumpClassification.Check) { <td>@AnnotationPosition(record)</td> }<td class="scene-archive-cell"><input type="checkbox" checked="@archives.Contains(record.Id)" disabled="@Assigned(record.Id)" @onchange="(args => SetArchive(record.Id, args.Value is true))" aria-label="Archive @record.FriendlyName" /></td></tr>
                             }</tbody>
                         </table>
                     </section>
@@ -374,6 +374,7 @@
     private static string ClassificationText(SceneDumpClassification classification) => classification switch { SceneDumpClassification.Exit => "exit", SceneDumpClassification.Check => "check", SceneDumpClassification.Enemy => "enemy", _ => "other" };
     private static string Position(ScenePosition? position) => position is null ? "-" : CompactPosition(position.X, position.Y, position.Z);
     private static string Position(SceneImportSelectableRecord record) => CompactPosition(record.X, record.Y, record.Z);
+    private static string AnnotationPosition(SceneImportSelectableRecord record) => $"{Value(record.EnemyEquivalence?.AnnotationX)}, {Value(record.EnemyEquivalence?.AnnotationY)}";
     private static string CompactPosition(double? x, double? y, double? z) => $"{Value(x)}, {Value(y)}" + (z is { } raw && raw != 0 ? $", { (Math.Abs(raw) < .005 ? raw.ToString("G", System.Globalization.CultureInfo.InvariantCulture) : Value(raw))}" : string.Empty);
     private static string Value(double? value) => value?.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) ?? "-";
     private static string N(double value) => value.ToString(System.Globalization.CultureInfo.InvariantCulture);

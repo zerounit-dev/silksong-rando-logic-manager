@@ -80,7 +80,11 @@ internal static class SceneLayoutMapper
             }
         var hasTransform = SceneBounds.HasUsableScales(room.ScaleX, room.ScaleY) && (!room.UseSceneImage || SceneBounds.HasUsablePixelOffsets(room.PixelOffsetX, room.PixelOffsetY));
         var mappingPresent = room.ScaleX is not null || room.ScaleY is not null || room.PixelOffsetX is not null || room.PixelOffsetY is not null;
-        return new(validBounds, room.MinX, room.MinY, room.MaxX, room.MaxY, frames, markers.OrderBy(x => x.Kind).ThenBy(x => x.Label, StringComparer.OrdinalIgnoreCase).ToArray(), new(hasTransform, room.IsStale, imageExists, room.UpdatedUtc.Ticks), threads)
+        var boundsImageSeverity = !room.UseSceneImage ? V2Severity.Neutral
+            : room.IsStale || !imageExists ? V2Severity.Danger
+            : room.ScaleX != SceneImageCaptureService.RecommendedScale || room.ScaleY != SceneImageCaptureService.RecommendedScale ? V2Severity.Warning
+            : V2Severity.Neutral;
+        return new(validBounds, room.MinX, room.MinY, room.MaxX, room.MaxY, frames, markers.OrderBy(x => x.Kind).ThenBy(x => x.Label, StringComparer.OrdinalIgnoreCase).ToArray(), new(hasTransform, room.IsStale, imageExists, room.UpdatedUtc.Ticks) { BoundsImageSeverity = boundsImageSeverity }, threads)
         { BoundsImageDiagnostic = !validBounds ? "scene bounds unavailable or unusable" : mappingPresent && !hasTransform ? "scene image mapping incomplete or unusable" : null };
     }
 

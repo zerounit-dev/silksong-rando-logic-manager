@@ -52,7 +52,7 @@ internal static class RoomGraphRequirementTranslator
     private sealed class Parser(string source, Guid owningRoomId, RoomGraphTranslationContext context)
     {
         private static readonly HashSet<string> Difficulties = new(StringComparer.Ordinal) { "easy", "medium", "hard" };
-        private static readonly HashSet<string> Directions = new(StringComparer.Ordinal) { "left", "right", "up", "down" };
+        private static readonly HashSet<string> Directions = new(StringComparer.Ordinal) { "left", "right", "up", "down", "both", "either", "any", "all" };
         private int position;
         private readonly List<string> reasons = [];
 

@@ -275,7 +275,7 @@ internal sealed class RequirementValidationContext
 internal static class ManagedRequirementValidator
 {
     private static readonly HashSet<string> Difficulties = new(StringComparer.Ordinal) { "easy", "medium", "hard" };
-    private static readonly HashSet<string> Directions = new(StringComparer.Ordinal) { "left", "right", "up", "down" };
+    private static readonly HashSet<string> Directions = new(StringComparer.Ordinal) { "left", "right", "up", "down", "both", "either", "any", "all" };
 
     internal static bool Validate(string source, Guid owningRoomId, RequirementValidationContext context) =>
         new Parser(source, owningRoomId, context.GetPrepared()).Parse();

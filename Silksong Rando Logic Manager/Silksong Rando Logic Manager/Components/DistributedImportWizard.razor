@@ -6,7 +6,7 @@
 @inject WorkspaceChangeNotifier WorkspaceChanges
 @inject DiagnosticState Diagnostics
 
-<InputFile id="distributed-import-input" class="distributed-import-input" OnChange="ReadPackageAsync" accept="application/json,.json" disabled="@busy" />
+<InputFile @key="inputVersion" id="distributed-import-input" class="distributed-import-input" OnChange="ReadPackageAsync" accept="application/json,.json" multiple disabled="@(busy || view?.Started == true || view?.State?.HasStarted == true)" />
 
 @if (view is not null)
 {
@@ -21,13 +21,13 @@
             {
                 var package = view.Package!;
                 <div class="distributed-import-summary">
-                    <span>@view.FileName · exchange version @summary.ExportVersion · @(summary.IsPartialRoomDump == true ? "partial room package" : summary.IsPartialRoomDump == false ? "complete room catalogue" : "snapshot package")</span>
+                    <span>@(view.FileNames.Count == 1 ? view.FileNames[0] : $"{view.FileNames.Count} selected files") · exchange version @summary.ExportVersion · @(view.FileNames.Count > 1 ? "combined partial room batch" : summary.IsPartialRoomDump == true ? "partial room package" : summary.IsPartialRoomDump == false ? "complete room catalogue" : "snapshot package")</span>
                     <span>maps: @summary.MapCount · groups: @summary.GroupCount · rooms: @summary.RoomCount · subrooms: @summary.SubroomCount · transitions: @summary.TransitionCount · connections: @summary.ConnectionCount · checks: @summary.CheckCount</span>
                     @if (!view.Started)
                     {
                         <div class="distributed-import-options">
-                            @if (package.AreaMap is not null) { <label><input type="checkbox" @bind="view.ApplyAreaMap" /> apply area map</label> }
-                            @if (package.RoomGroupings is not null && package.IsPartialRoomDump != true) { <label><input type="checkbox" @bind="view.ApplyGroups" /> apply room groups</label> }
+                            @if (package.AreaMap is not null) { <label><input type="checkbox" disabled="@busy" @bind="view.ApplyAreaMap" /> apply area map</label> }
+                            @if (package.RoomGroupings is not null && package.IsPartialRoomDump != true) { <label><input type="checkbox" disabled="@busy" @bind="view.ApplyGroups" /> apply room groups</label> }
                             @if (package.RoomGroupings is not null && package.IsPartialRoomDump == true) { <span>room-group context is informational and will not be applied.</span> }
                         </div>
                         <p class="warning">Starting commits selected map and group stages, accepted rooms, and any final sweep independently. They cannot be rolled back as one package. Copy the database first where appropriate; import creates no automatic backup.</p>
@@ -55,7 +55,7 @@
                 <div>
                     @if (view.Started && !view.Completed && !view.CloseWarning)
                     {
-                        <button type="button" disabled="@(!CanGoPrevious)" @onclick="Previous">previous</button>
+                        <button type="button" disabled="@(!CanGoPrevious)" @onclick="PreviousAsync">previous</button>
                         <button type="button" disabled="@(!CanGoNext)" @onclick="NextAsync">next</button>
                         <button type="button" disabled="@(!CanKeepMaster)" @onclick="(() => DecideAsync(new KeepMasterRoom(view.CurrentComparison!.RoomId)))">keep master room</button>
                         <button type="button" disabled="@(!CanSkipRoom)" @onclick="(() => DecideAsync(new SkipIncomingRoom(view.CurrentComparison!.RoomId)))">skip room</button>
@@ -63,7 +63,7 @@
                     }
                 </div>
                 <div>
-                    @if (view.CloseWarning) { <span class="warning">Completed operations remain committed.</span><button type="button" @onclick="CloseConfirmed">close anyway</button> }
+                    @if (view.CloseWarning) { <span class="warning">Completed operations remain committed.</span><button type="button" disabled="@busy" @onclick="CloseConfirmed">close anyway</button> }
                     else if (view.Completed)
                     {
                         <button type="button" disabled="@(!CanGenerateSceneImages)" @onclick="GenerateSceneImagesAsync">generate missing room scenes</button>
@@ -80,6 +80,10 @@
                 </div>
             </footer>
             <div class="distributed-import-scroll-viewport">
+                @if (view.FileNames.Count > 1)
+                {
+                    <div class="distributed-import-summary"><strong>selected files</strong><ul>@foreach (var fileName in view.FileNames) { <li>@fileName</li> }</ul></div>
+                }
                 @if (view.ParseErrors.Count > 0)
                 {
                     <div class="distributed-import-summary danger"><ul>@foreach (var error in view.ParseErrors) { <li>@error</li> }</ul></div>
@@ -124,30 +128,82 @@
 @code {
     private WizardView? view;
     private bool busy;
+    private int inputVersion;
+    private const long MaxUploadBytes = 128L * 1024 * 1024;
 
     private async Task ReadPackageAsync(InputFileChangeEventArgs args)
     {
+        if (busy || args.FileCount == 0 || view?.Started == true || view?.State?.HasStarted == true) return;
         busy = true;
+        view = null;
+        var files = args.GetMultipleFiles(args.FileCount);
+        var names = files.Select(file => file.Name).ToArray();
         try
         {
-            await using var stream = args.File.OpenReadStream(128 * 1024 * 1024);
-            using var memory = new MemoryStream(); await stream.CopyToAsync(memory);
-            var result = Parser.Parse(memory.ToArray());
-            view = result switch
+            long total = 0;
+            foreach (var file in files)
             {
-                DistributedImportPackageValidated valid => new(args.File.Name, valid.Package, valid.Summary, []),
-                DistributedImportPackageRejected rejected => new(args.File.Name, null, null, rejected.Errors),
-                _ => new(args.File.Name, null, null, ["Package parsing returned an unknown outcome."])
-            };
+                if (file.Size > MaxUploadBytes - total)
+                {
+                    view = new(names, null, null, [$"{string.Join(", ", names)}: total selected file size exceeds 128 MiB (134217728 bytes)."]);
+                    return;
+                }
+                total += file.Size;
+            }
+            var parsed = new List<DistributedImportFilePackage>();
+            var errors = new List<string>();
+            long bytesRead = 0;
+            foreach (var file in files)
+            {
+                try
+                {
+                    await using var stream = file.OpenReadStream(MaxUploadBytes);
+                    using var memory = new MemoryStream();
+                    var buffer = new byte[81920];
+                    int count;
+                    while ((count = await stream.ReadAsync(buffer)) != 0)
+                    {
+                        if (count > MaxUploadBytes - bytesRead)
+                        {
+                            view = new(names, null, null, [$"{string.Join(", ", names)}: total selected content exceeds 128 MiB (134217728 bytes)."]);
+                            return;
+                        }
+                        bytesRead += count;
+                        memory.Write(buffer, 0, count);
+                    }
+                    var result = Parser.Parse(memory.ToArray());
+                    if (result is DistributedImportPackageValidated valid) parsed.Add(new(file.Name, valid.Package));
+                    else if (result is DistributedImportPackageRejected rejected) errors.AddRange(rejected.Errors.Select(error => $"{file.Name}: {error}"));
+                    else throw new InvalidOperationException("Package parsing returned an unknown outcome.");
+                }
+                catch (IOException) { errors.Add($"{file.Name}: the selected file could not be read. Close and reselect the files to retry."); }
+            }
+            if (errors.Count != 0) { view = new(names, null, null, errors); return; }
+            var composed = Parser.ComposePartialSelection(parsed);
+            if (composed is DistributedImportPackageRejected batchRejected) { view = new(names, null, null, batchRejected.Errors); return; }
+            var combined = (DistributedImportPackageValidated)composed;
+            var admission = await Importer.PrepareAsync(combined.Package);
+            view = admission is DistributedImportRejected rejectedAdmission
+                ? new(names, null, null, rejectedAdmission.Errors.Select(error => names.Length == 1 ? $"{names[0]}: {error}" : error).ToArray())
+                : new(names, combined.Package, combined.Summary, []);
         }
-        catch (Exception exception) { view = new(args.File.Name, null, null, [$"Could not read package: {exception.Message}"]); }
+        catch (Exception exception) { view = new(names, null, null, [$"{string.Join(", ", names)}: selection validation could not finish because of an unexpected error. Consult the diagnostic details and server logs, then close and reselect to retry."]); Diagnostics.Show(exception.ToString()); }
         finally { busy = false; }
     }
 
-    private async Task StartAsync() { if (view?.Package is null) return; await StartAttemptAsync(view.State); }
+    private async Task StartAsync() { if (busy || view?.Package is null || view.Started || view.ParseErrors.Count != 0) return; await StartAttemptAsync(view.State); }
     private async Task RetryAsync()
     {
+        if (busy) return;
         if (view?.RetryIntent is { } retry && view.State is not null && view.CurrentComparison is not null) await DecideAsync(retry);
+        else if (view?.RetrySweepArchive is { } archive) await DecideSweepAsync(archive);
+        else if (view is { Started: true, State: not null })
+        {
+            busy = true;
+            try { view.Failure = null; await LoadCurrentAsync(view.AdvanceIdentical); }
+            catch (Exception exception) { RecordUnexpectedFailure("read preparation", exception); }
+            finally { busy = false; }
+        }
         else if (view?.Package is not null) await StartAttemptAsync(view.State);
     }
     private async Task StartAttemptAsync(DistributedImportOrchestrationState? prior)
@@ -157,34 +213,75 @@
         {
             var current = view!;
             var outcome = await Importer.StartAsync(new(current.Package!, current.ApplyAreaMap, current.ApplyGroups), prior);
-            if (outcome is DistributedImportStarted started) { current.State = started.State; current.RoomIds = started.State.ReviewRoomIds?.ToList() ?? []; current.Started = true; current.Failure = null; await LoadCurrentAsync(); WorkspaceChanges.NotifyChanged(); }
+            if (outcome is DistributedImportStarted started) { current.State = started.State; current.Started = true; current.Failure = null; WorkspaceChanges.NotifyChanged(); await LoadCurrentAsync(); }
             else if (outcome is DistributedImportFailed failed) { current.Failure = failed; current.State = failed.State; current.Failed++; }
             else if (outcome is DistributedImportRejected rejected) current.ParseErrors = rejected.Errors.ToList();
         }
-        catch (Exception exception) { Diagnostics.Show(exception.ToString()); }
+        catch (DistributedImportInterruptedException exception) { view!.State = exception.State; RecordUnexpectedFailure("start import", exception); }
+        catch (Exception exception) { RecordUnexpectedFailure(view?.Started == true ? "read preparation" : "start import", exception); }
         finally { busy = false; }
     }
-    private async Task LoadCurrentAsync()
+    private async Task LoadCurrentAsync(bool advanceIdentical = true)
     {
         if (view is null || view.State is null) return;
+        view.AdvanceIdentical = advanceIdentical;
+        if (view.State.ReviewRoomIds is null)
+        {
+            var preparation = await Importer.PrepareRoomsAsync(view.State);
+            if (preparation is DistributedImportStarted prepared)
+            {
+                view.State = prepared.State;
+                view.RoomIds = prepared.State.ReviewRoomIds!.ToList();
+                view.Skipped = prepared.State.DecidedRoomIds.Count;
+            }
+            else if (preparation is DistributedImportRejected rejected) { view.ParseErrors = rejected.Errors.ToList(); return; }
+            else if (preparation is DistributedImportFailed failed) { view.Failure = failed; view.Failed++; return; }
+        }
         while (view.RoomIndex < view.RoomIds.Count)
         {
+            if (view.Reviews.TryGetValue(view.RoomIndex, out var reviewed))
+            {
+                if (advanceIdentical && view.DecidedRoomIndexes.Contains(view.RoomIndex)) { view.CurrentComparison = null; view.RoomIndex++; continue; }
+                view.CurrentComparison = reviewed;
+                return;
+            }
             var outcome = await Importer.PrepareRoomAsync(view.State, view.RoomIds[view.RoomIndex]);
-            if (outcome is DistributedImportRoomSkipped skipped) { view.State = skipped.State; view.Skipped++; view.RoomIndex++; continue; }
+            if (outcome is DistributedImportRoomSkipped skipped)
+            {
+                view.State = skipped.State;
+                if (view.DecidedRoomIndexes.Add(view.RoomIndex)) view.Skipped++;
+                SetCurrentComparison(skipped.Comparison!);
+                if (!advanceIdentical) return;
+                view.CurrentComparison = null;
+                view.RoomIndex++;
+                continue;
+            }
             if (outcome is DistributedImportRoomPrepared prepared) { SetCurrentComparison(prepared.Comparison); return; }
             if (outcome is DistributedImportFailed failed) { view.Failure = failed; view.Failed++; return; }
             if (outcome is DistributedImportRejected rejected) { view.ParseErrors = rejected.Errors.ToList(); return; }
         }
+        if (view.State.PendingRoomIds.Count > 0)
+        {
+            // Navigation may have left earlier rooms undecided. Never complete a
+            // package (or sweep) merely because the visible index reached its end.
+            view.RoomIndex = view.RoomIds.FindIndex(view.State.PendingRoomIds.Contains);
+            await LoadCurrentAsync(advanceIdentical);
+            return;
+        }
+        view.CurrentComparison = null;
         var sweep = await Importer.PrepareSweepAsync(view.State);
         if (sweep is DistributedImportSweepPrepared preparedSweep && preparedSweep.Rooms.Count > 0) view.Sweep = preparedSweep;
-        else view.Completed = true;
+        else if (sweep is DistributedImportSweepPrepared) view.Completed = true;
+        else if (sweep is DistributedImportRejected rejected) view.ParseErrors = rejected.Errors.ToList();
+        else if (sweep is DistributedImportFailed failed) { view.Failure = failed; view.Failed++; }
     }
     private async Task DecideAsync(DistributedRoomDecisionIntent intent)
     {
-        if (view?.State is null || view.CurrentComparison is null) return; busy = true;
+        if (busy || view?.State is null || view.CurrentComparison is null || !HasCurrentUndecidedComparison) return; busy = true;
         try
         {
             view.RoomStatuses.Remove(intent.RoomId);
+            view.RetryIntent = intent;
             var outcome = await Importer.DecideRoomAsync(view.State, intent, view.CurrentComparison);
             if (outcome is DistributedImportComparisonRefreshed fresh)
             {
@@ -204,16 +301,15 @@
                 view.RoomStatuses.Remove(identical.RoomId);
                 view.State = identical.State;
                 view.Reviews[view.RoomIndex] = identical.Comparison;
-                view.Skipped++;
-                view.DecidedRoomIndexes.Add(view.RoomIndex);
+                if (view.DecidedRoomIndexes.Add(view.RoomIndex)) view.Skipped++;
                 view.CurrentComparison = null;
                 view.RoomIndex++;
                 await LoadCurrentAsync();
                 return;
             }
-            if (outcome is DistributedImportRoomApplied applied) { view.State = applied.State; view.Applied++; WorkspaceChanges.NotifyChanged(); }
-            if (outcome is DistributedImportRoomSkipped skipped) { view.State = skipped.State; view.Skipped++; }
-            if (outcome is DistributedImportRoomKept kept) { view.State = kept.State; view.Skipped++; }
+            if (outcome is DistributedImportRoomApplied applied) { view.State = applied.State; if (view.DecidedRoomIndexes.Add(view.RoomIndex)) view.Applied++; }
+            if (outcome is DistributedImportRoomSkipped skipped) { view.State = skipped.State; if (view.DecidedRoomIndexes.Add(view.RoomIndex)) view.Skipped++; }
+            if (outcome is DistributedImportRoomKept kept) { view.State = kept.State; if (view.DecidedRoomIndexes.Add(view.RoomIndex)) view.Skipped++; }
             if (outcome is DistributedImportFailed failed) { view.Failure = failed; view.RetryIntent = intent; view.Failed++; return; }
             if (outcome is DistributedImportRejected rejected)
             {
@@ -222,12 +318,23 @@
                 view.RoomStatuses[intent.RoomId] = new($"Room decision was not accepted. {string.Join(" ", rejected.Errors)}", null);
                 return;
             }
+            if (outcome is not (DistributedImportRoomApplied or DistributedImportRoomSkipped or DistributedImportRoomKept))
+                throw new InvalidOperationException("Room application returned an unknown outcome.");
             view.Failure = null; view.RetryIntent = null;
             view.RoomStatuses.Remove(intent.RoomId);
             view.DecidedRoomIndexes.Add(view.RoomIndex);
-            view.CurrentComparison = null; view.RoomIndex++; await LoadCurrentAsync();
+            view.CurrentComparison = null; view.RoomIndex++;
+            view.AdvanceIdentical = true;
+            // All committed bookkeeping is durable in this wizard before cleanup
+            // diagnostics, workspace notification, or any next-room read can fail.
+            if (outcome is DistributedImportRoomApplied committed)
+            {
+                if (committed.CleanupException is { } cleanup) Diagnostics.Show(cleanup.ToString());
+                WorkspaceChanges.NotifyChanged();
+            }
+            await LoadCurrentAsync();
         }
-        catch (Exception exception) { Diagnostics.Show(exception.ToString()); }
+        catch (Exception exception) { RecordUnexpectedFailure(view?.RetryIntent is null ? "read preparation" : "room", exception); }
         finally { busy = false; }
     }
     private Task ImportRoomAsync()
@@ -246,32 +353,60 @@
     }
     private async Task DecideSweepAsync(bool archive)
     {
-        if (view?.State is null || view.Sweep is null) return; busy = true;
-        try { var result = await Importer.DecideSweepAsync(view.State, view.Sweep.Review, archive); if (result is DistributedImportFailed failed) { view.Failure = failed; view.Failed++; return; } if (archive) { view.Applied++; WorkspaceChanges.NotifyChanged(); } else view.Skipped++; view.Sweep = null; view.Completed = true; }
-        catch (Exception exception) { Diagnostics.Show(exception.ToString()); }
+        if (busy || view?.State is null || view.Sweep is null) return; busy = true;
+        try
+        {
+            view.RetrySweepArchive = archive;
+            var result = await Importer.DecideSweepAsync(view.State, view.Sweep.Review, archive);
+            if (result is DistributedImportFailed failed) { view.Failure = failed; view.Failed++; return; }
+            if (result is DistributedImportRejected rejected) { view.RetrySweepArchive = null; view.ParseErrors = rejected.Errors.ToList(); return; }
+            if (result is DistributedImportSweepCompleted completed)
+            {
+                if (completed.Archived) view.Applied++; else view.Skipped++;
+                view.Sweep = null; view.Completed = true; view.Failure = null; view.RetrySweepArchive = null;
+                if (completed.Archived) WorkspaceChanges.NotifyChanged();
+            }
+        }
+        catch (Exception exception) { RecordUnexpectedFailure("final-sweep", exception); }
         finally { busy = false; }
     }
     private async Task GenerateSceneImagesAsync()
     {
-        if (view is not { Completed: true, State: not null }) return;
+        if (busy || view is not { Completed: true, State: not null }) return;
         busy = true;
         try { view.SceneImageResult = await SceneImages.RebuildPackageRoomsAsync(new(view.State.Package.Rooms.Select(room => room.Id).ToArray())); }
         catch (Exception exception) { Diagnostics.Show(exception.ToString()); }
         finally { busy = false; }
     }
-    private void Previous() { if (view is null || view.RoomIndex == 0) return; view.RoomIndex--; view.CurrentComparison = view.Reviews.GetValueOrDefault(view.RoomIndex); }
+    private async Task PreviousAsync()
+    {
+        if (!CanGoPrevious) return;
+        busy = true;
+        try { view!.RoomIndex--; view.CurrentComparison = null; await LoadCurrentAsync(false); }
+        catch (Exception exception) { RecordUnexpectedFailure("read preparation", exception); }
+        finally { busy = false; }
+    }
     private async Task NextAsync()
     {
-        if (view is null || view.RoomIndex + 1 >= view.RoomIds.Count) return;
-        view.RoomIndex++;
-        if (view.Reviews.TryGetValue(view.RoomIndex, out var prior)) { view.CurrentComparison = prior; return; }
-        var outcome = await Importer.PrepareRoomAsync(view.State!, view.RoomIds[view.RoomIndex]);
-        if (outcome is DistributedImportRoomPrepared prepared) { SetCurrentComparison(prepared.Comparison); }
-        else if (outcome is DistributedImportRoomSkipped skipped) { view.State = skipped.State; view.CurrentComparison = null; view.Skipped++; }
+        if (!CanGoNext) return;
+        busy = true;
+        try { view!.RoomIndex++; view.CurrentComparison = null; await LoadCurrentAsync(false); }
+        catch (Exception exception) { RecordUnexpectedFailure("read preparation", exception); }
+        finally { busy = false; }
     }
-    private void RequestClose() { if (view?.Started == true && !view.Completed) { view.CloseWarning = true; } else view = null; }
-    private void CloseConfirmed() => view = null;
-    private bool HasCurrentUndecidedComparison => view?.CurrentComparison is not null && !view.DecidedRoomIndexes.Contains(view.RoomIndex);
+    private void RecordUnexpectedFailure(string stage, Exception exception)
+    {
+        if (view is not null)
+        {
+            view.Failure = new(stage, "An unexpected error has occurred. Consult the diagnostic details and server logs.", view.State);
+            view.Failed++;
+        }
+        Diagnostics.Show(exception.ToString());
+    }
+    private void RequestClose() { if (busy) return; if (view is { Completed: false } current && (current.Started || current.State?.HasStarted == true)) { current.CloseWarning = true; } else ClearView(); }
+    private void CloseConfirmed() { if (!busy) ClearView(); }
+    private void ClearView() { view = null; fullDetailRoomId = null; inputVersion++; }
+    private bool HasCurrentUndecidedComparison => view?.CurrentComparison is { } comparison && view.State?.PendingRoomIds.Contains(comparison.RoomId) == true && !view.DecidedRoomIndexes.Contains(view.RoomIndex);
     private bool HasVisibleNewOrChangedComparison => view?.CurrentComparison?.Kind is DistributedRoomComparisonKind.New or DistributedRoomComparisonKind.Changed;
     private bool CanGoPrevious => view is not null && !busy && view.Failure is null && view.Started && !view.Completed && view.RoomIndex > 0;
     private bool CanGoNext => view is not null && !busy && view.Failure is null && view.Started && !view.Completed && view.RoomIndex + 1 < view.RoomIds.Count;
@@ -324,6 +459,33 @@
     }
 
     private sealed record RoomStatus(string Error, string? Warning);
-    private sealed class WizardView(string fileName, DistributedImportPackage? package, DistributedImportPackageSummary? summary, IReadOnlyList<string> errors)
-    { public string FileName { get; } = fileName; public DistributedImportPackage? Package { get; } = package; public DistributedImportPackageSummary? Summary { get; } = summary; public List<string> ParseErrors { get; set; } = errors.ToList(); public bool ApplyAreaMap { get; set; } = true; public bool ApplyGroups { get; set; } = false; public bool Started { get; set; } public bool Completed { get; set; } public bool CloseWarning { get; set; } public int RoomIndex { get; set; } public int Applied { get; set; } public int Skipped { get; set; } public int Failed { get; set; } public DistributedImportOrchestrationState? State { get; set; } public DistributedImportFailed? Failure { get; set; } public DistributedRoomDecisionIntent? RetryIntent { get; set; } public DistributedRoomComparison? CurrentComparison { get; set; } public DistributedImportSweepPrepared? Sweep { get; set; } public SceneImageRebuildResult? SceneImageResult { get; set; } public List<Guid> RoomIds { get; set; } = []; public Dictionary<int, DistributedRoomComparison> Reviews { get; } = []; public HashSet<int> DecidedRoomIndexes { get; } = []; public Dictionary<Guid, Dictionary<DistributedChildDecisionKey, DistributedChildChoice>> ChildPlans { get; } = []; public Dictionary<Guid, RoomStatus> RoomStatuses { get; } = []; }
+    private sealed class WizardView(IReadOnlyList<string> fileNames, DistributedImportPackage? package, DistributedImportPackageSummary? summary, IReadOnlyList<string> errors)
+    {
+        public IReadOnlyList<string> FileNames { get; } = fileNames;
+        public DistributedImportPackage? Package { get; } = package;
+        public DistributedImportPackageSummary? Summary { get; } = summary;
+        public List<string> ParseErrors { get; set; } = errors.ToList();
+        public bool ApplyAreaMap { get; set; } = true;
+        public bool ApplyGroups { get; set; }
+        public bool Started { get; set; }
+        public bool Completed { get; set; }
+        public bool CloseWarning { get; set; }
+        public int RoomIndex { get; set; }
+        public int Applied { get; set; }
+        public int Skipped { get; set; }
+        public int Failed { get; set; }
+        public bool AdvanceIdentical { get; set; } = true;
+        public bool? RetrySweepArchive { get; set; }
+        public DistributedImportOrchestrationState? State { get; set; }
+        public DistributedImportFailed? Failure { get; set; }
+        public DistributedRoomDecisionIntent? RetryIntent { get; set; }
+        public DistributedRoomComparison? CurrentComparison { get; set; }
+        public DistributedImportSweepPrepared? Sweep { get; set; }
+        public SceneImageRebuildResult? SceneImageResult { get; set; }
+        public List<Guid> RoomIds { get; set; } = [];
+        public Dictionary<int, DistributedRoomComparison> Reviews { get; } = [];
+        public HashSet<int> DecidedRoomIndexes { get; } = [];
+        public Dictionary<Guid, Dictionary<DistributedChildDecisionKey, DistributedChildChoice>> ChildPlans { get; } = [];
+        public Dictionary<Guid, RoomStatus> RoomStatuses { get; } = [];
+    }
 }
