@@ -58,7 +58,10 @@ public static class DistributedRoomComparisonService
             ("sceneMinX", current?.SceneMinX, incoming.SceneMinX), ("sceneMinY", current?.SceneMinY, incoming.SceneMinY), ("sceneMaxX", current?.SceneMaxX, incoming.SceneMaxX), ("sceneMaxY", current?.SceneMaxY, incoming.SceneMaxY),
             ("sceneImagePixelsPerUnitX", current?.SceneImagePixelsPerUnitX, incoming.SceneImagePixelsPerUnitX), ("sceneImagePixelsPerUnitY", current?.SceneImagePixelsPerUnitY, incoming.SceneImagePixelsPerUnitY),
             ("sceneImagePixelOffsetX", current?.SceneImagePixelOffsetX, incoming.SceneImagePixelOffsetX), ("sceneImagePixelOffsetY", current?.SceneImagePixelOffsetY, incoming.SceneImagePixelOffsetY), ("useSceneImage", current?.UseSceneImage, incoming.UseSceneImage),
-            ("isSceneImageStale", current?.IsSceneImageStale, incoming.IsSceneImageStale), ("sortOrder", current?.SortOrder, incoming.SortOrder), ("isArchived", current?.IsArchived, incoming.IsArchived), ("archivedUtc", current?.ArchivedUtc, incoming.ArchivedUtc), ("createdUtc", current?.CreatedUtc, incoming.CreatedUtc), ("updatedUtc", current?.UpdatedUtc, incoming.UpdatedUtc)
+            ("useUploadedSceneImage", current?.UseUploadedSceneImage, incoming.UseUploadedSceneImage),
+            ("sceneImageOriginalHash", current?.SceneImageOriginalHash, incoming.SceneImageOriginalHash),
+            ("sceneImageCropHash", current?.SceneImageCropHash, incoming.SceneImageCropHash),
+            ("sortOrder", current?.SortOrder, incoming.SortOrder), ("isArchived", current?.IsArchived, incoming.IsArchived), ("archivedUtc", current?.ArchivedUtc, incoming.ArchivedUtc), ("createdUtc", current?.CreatedUtc, incoming.CreatedUtc), ("updatedUtc", current?.UpdatedUtc, incoming.UpdatedUtc)
         };
         var exact = current is null ? new HashSet<string>() : ExactRoomFields(current, incoming);
         return values.Select(x => current is null ? new DistributedComparisonValue(x.Name, null, Text(x.Incoming), DistributedComparisonEvidence.Incoming) : Matches(x.Name, x.Current, x.Incoming, exact) ? new DistributedComparisonValue(x.Name, Text(x.Current), Text(x.Incoming), DistributedComparisonEvidence.Neutral) : new DistributedComparisonValue(x.Name, Text(x.Current), Text(x.Incoming), DistributedComparisonEvidence.Changed)).ToArray();
@@ -85,10 +88,11 @@ public static class DistributedRoomComparisonService
         return fields.Select(x => currentOnly ? new DistributedComparisonValue(x.Item1, Text(x.Item2), null, DistributedComparisonEvidence.Current) : incomingOnly ? new DistributedComparisonValue(x.Item1, null, Text(x.Item3), DistributedComparisonEvidence.Incoming) : Matches(x.Item1, x.Item2, x.Item3, exact) ? new DistributedComparisonValue(x.Item1, Text(x.Item2), Text(x.Item3), DistributedComparisonEvidence.Neutral) : new DistributedComparisonValue(x.Item1, Text(x.Item2), Text(x.Item3), DistributedComparisonEvidence.Changed)).ToArray();
     }
 
-    // Evidence keeps both unmodified serialized sides, including tolerated values:
-    // SameComparison's exact pre-write guard must still detect tiny local edits.
+    // Evidence keeps both unmodified serialized sides, including neutral timestamps
+    // and tolerated numbers: SameComparison must still detect exact local edits.
     private static bool Matches(string name, object? current, object? incoming, IReadOnlySet<string> exact)
     {
+        if (name is "createdUtc" or "updatedUtc" or "archivedUtc") return true;
         if (Equals(current, incoming)) return true;
         if (exact.Contains(name) || current is not double c || incoming is not double i || !double.IsFinite(c) || !double.IsFinite(i)) return false;
         var tolerance = name switch

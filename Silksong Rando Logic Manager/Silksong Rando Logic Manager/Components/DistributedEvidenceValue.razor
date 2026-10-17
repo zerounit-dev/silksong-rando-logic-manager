@@ -1,0 +1,34 @@
+@{
+    var evidence = DistributedEvidencePresentation.Evidence(Name, Fields);
+    var incoming = Delta || evidence == DistributedComparisonEvidence.Incoming;
+    var css = incoming ? "distributed-import-incoming" : evidence is DistributedComparisonEvidence.Changed or DistributedComparisonEvidence.Current ? "distributed-import-current" : null;
+}
+@if (!Delta || evidence == DistributedComparisonEvidence.Changed)
+{
+    @if (!(IsRoomProse && Name == "id") && DistributedEvidencePresentation.IsIcon(Name))
+    {
+        var details = DistributedEvidencePresentation.Details(Name, Fields, incoming);
+        <span class="distributed-import-detail @css" tabindex="0" role="img" title="@details" aria-label="@details"><i class="fa-solid @DistributedEvidencePresentation.Icon(Name, Fields, incoming) fa-fw" aria-hidden="true"></i><span class="distributed-import-detail-tooltip" aria-hidden="true">@details</span></span>
+    }
+    else
+    {
+        var raw = DistributedEvidencePresentation.Raw(Name, Fields, incoming);
+        var formatted = DistributedEvidencePresentation.Format(Name, raw);
+        @if (!IsRoomProse && Name == "updatedUtc" && formatted is not null)
+        {
+            <span class="distributed-import-timestamp @css" title="@DistributedEvidencePresentation.Details(Name, Fields, incoming)"><span class="distributed-import-nowrap">@formatted[..10]</span> <span class="distributed-import-nowrap">@formatted[11..]</span></span>
+        }
+        else
+        {
+            <span class="@css @(!IsRoomProse && DistributedEvidencePresentation.IsNoWrapTableValue(Name) ? "distributed-import-nowrap" : null)" title="@DistributedEvidencePresentation.Details(Name, Fields, incoming)">@formatted</span>
+        }
+    }
+}
+
+@code {
+    [Parameter, EditorRequired] public string Name { get; set; } = "";
+    [Parameter, EditorRequired] public IReadOnlyList<DistributedComparisonValue> Fields { get; set; } = [];
+    [Parameter] public bool Delta { get; set; }
+    // Room prose has no table-width constraint; only its ID stays fully inline.
+    [Parameter] public bool IsRoomProse { get; set; }
+}

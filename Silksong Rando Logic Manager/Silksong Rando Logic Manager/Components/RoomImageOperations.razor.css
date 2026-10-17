@@ -1,0 +1,4 @@
+.room-image-operations { width: min(34rem, calc(100vw - 3rem)); max-height: calc(100vh - 3rem); overflow-y: auto; }
+.room-image-actions { display: flex; flex-direction: column; align-items: flex-start; gap: .5rem; }
+.room-image-trigger { flex: 0 0 auto; }
+.room-image-operations h2 { text-transform: none; }

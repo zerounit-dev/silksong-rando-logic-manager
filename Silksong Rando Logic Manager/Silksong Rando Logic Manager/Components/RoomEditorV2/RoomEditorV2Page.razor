@@ -36,7 +36,7 @@ else
             </div>
             <RoomReminderFooterPresentation View="new RoomReminderFooterView(ReminderFooterProse)" Intent="HandleReminderFooterIntentAsync" />
         </article>
-        <V2PageModalHost Content="modalState?.Content" Stage="modalState?.Stage" FocusRequested="modalFocusRequested" SceneCaptureCorrectionFocusVersion="sceneCaptureCorrectionFocusVersion" MetadataDraft="modalState?.TransitionMetadataOperation?.Draft" MetadataDraftChanged="SetTransitionMetadataDraft" CheckMetadataDraft="modalState?.CheckMetadataOperation?.Draft" CheckMetadataDraftChanged="SetCheckMetadataDraft" SubroomGeometryDraftChanged="SetSubroomGeometryDraft" SceneImageCaptureDraftChanged="SetSceneImageCaptureDraft" SceneImageCaptureReset="ResetSceneImageCaptureEstimateAsync" SceneBoundsClear="ClearSceneBoundsAsync" ManageRequirementCatalogue="NavigateToRequirementCatalogueAsync" Cancel="CancelModalAsync" Apply="ApplyModalAsync" DoNotUpdate="DoNotUpdateModalAsync" />
+        <V2PageModalHost Content="modalState?.Content" Stage="modalState?.Stage" FocusRequested="modalFocusRequested" SceneCaptureCorrectionFocusVersion="sceneCaptureCorrectionFocusVersion" MetadataDraft="modalState?.TransitionMetadataOperation?.Draft" MetadataDraftChanged="SetTransitionMetadataDraft" CheckMetadataDraft="modalState?.CheckMetadataOperation?.Draft" CheckMetadataDraftChanged="SetCheckMetadataDraft" SubroomGeometryDraftChanged="SetSubroomGeometryDraft" SceneImageCaptureDraftChanged="SetSceneImageCaptureDraft" SceneImageSourceChanged="SelectSceneImageSourceAsync" SceneImagePreparationChanged="SetSceneImagePreparationAsync" SceneImageCaptureReset="ResetSceneImageCaptureEstimateAsync" SceneBoundsClear="ClearSceneBoundsAsync" ManageRequirementCatalogue="NavigateToRequirementCatalogueAsync" Cancel="CancelModalAsync" Apply="ApplyModalAsync" DoNotUpdate="DoNotUpdateModalAsync" />
         <div data-v2-requirements-expanded-host></div>
     </div>
 }
@@ -723,7 +723,9 @@ else
                 return;
             }
             var scene = view?.Scene;
-            var preview = scene is not null ? new V2SceneImageCapturePreviewView(CaptureViewport(scene, draft), scene.Frames, scene.Markers) : null;
+            var roomBounds = scene is { HasValidBounds: true, SceneUnitWidth: { } width, SceneUnitHeight: { } height }
+                ? new SceneViewportBounds(scene.SceneMinX, scene.SceneMinY, width, height) : null;
+            var preview = SceneImageCapturePreviewProjection.Create(view!.Transitions.ActiveRows, ActiveCheckRows, roomBounds, draft);
             var content = CaptureContent(draft, outcome.Message, preview);
             sceneActionStatus = outcome.Message;
             modalState = new(content, "scene-image-capture", null, V2ModalRuntimeStage.ProposalOpen, SceneImageCaptureOperation: new(content));
@@ -755,20 +757,33 @@ else
     }
     private Task SetSceneImageCaptureDraft(V2SceneImageCaptureDialogView draft)
     {
-        if (modalState?.SceneImageCaptureOperation is { } operation && modalState.Stage == V2ModalRuntimeStage.ProposalOpen) modalState = modalState with { Content = draft, SceneImageCaptureOperation = operation with { Draft = draft } };
+        if (modalState?.SceneImageCaptureOperation is { } operation && modalState.Stage == V2ModalRuntimeStage.ProposalOpen && !operation.Draft.SourcePreparing && !draft.SourcePreparing && draft.DialogOwner == operation.Draft.DialogOwner && draft.SourcePreparationRevision == operation.Draft.SourcePreparationRevision) modalState = modalState with { Content = draft, SceneImageCaptureOperation = operation with { Draft = draft } };
+        return Task.CompletedTask;
+    }
+    private Task SetSceneImagePreparationAsync(V2SceneImagePreparationIntent intent)
+    {
+        if (disposed || modalState is not { Stage: V2ModalRuntimeStage.ProposalOpen, SceneImageCaptureOperation: { } operation } state || operation.Draft.DialogOwner != intent.DialogOwner) return Task.CompletedTask;
+        var current = operation.Draft;
+        if (intent.Pending ? current.SourcePreparing || intent.Revision <= current.SourcePreparationRevision : !current.SourcePreparing || intent.Revision != current.SourcePreparationRevision) return Task.CompletedTask;
+        var content = current with { SourcePreparing = intent.Pending, SourcePreparationRevision = intent.Revision };
+        modalState = state with { Content = content, SceneImageCaptureOperation = operation with { Draft = content } };
+        StateHasChanged();
         return Task.CompletedTask;
     }
     private Task ResetSceneImageCaptureEstimateAsync()=>PageEventAsync(ResetSceneImageCaptureEstimateCoreAsync);
     private async Task ResetSceneImageCaptureEstimateCoreAsync()
     {
         if (disposed || modalState is not { Stage: V2ModalRuntimeStage.ProposalOpen, SceneImageCaptureOperation: { } operation } state) return;
+        if (operation.Draft.SourcePreparing) return;
         var owner=CaptureCheckOwner();var sourceRoom = owner.Room;
         if (!TryParseSceneImageDraft(operation.Draft, out var current, false)) return;
         var outcome = await Commands.ResetSceneImageCaptureEstimateAsync(sourceRoom, current);
         if (!OwnsCheckPage(owner) || modalState != state || refresh!.RequiresCheckRoomReload) return;
         if (outcome.Status == V2SceneImageCaptureCommandStatus.Committed && outcome.Draft is { } estimate)
         {
-            var fresh = CaptureContent(estimate, outcome.Message, operation.Draft.Preview) with { BrowserResetVersion = operation.Draft.BrowserResetVersion + 1 };
+            var fresh = CaptureContent(estimate, outcome.Message, operation.Draft.Preview) with { BrowserResetVersion = operation.Draft.BrowserResetVersion + 1, DialogOwner = operation.Draft.DialogOwner, SourcePreparationRevision = operation.Draft.SourcePreparationRevision,
+                MapMapping = operation.Draft.MapMapping, UploadMapping = operation.Draft.UploadMapping,
+                UploadCustomTarget = operation.Draft.UploadCustomTarget };
             sceneActionStatus = outcome.Message;
             modalState = state with { Content = fresh, SceneImageCaptureOperation = operation with { Draft = fresh } };
         }
@@ -1006,6 +1021,39 @@ else
         // Consume even when a dialog takes precedence: closing it is not an arm.
         reconciledPlacementFocusRequest = request;
         return explicitArm && !SceneDialogOpen;
+    }
+    private async Task SelectSceneImageSourceAsync(V2SceneImageSourceIntent intent)
+    {
+        if (disposed || modalState is not { Stage: V2ModalRuntimeStage.ProposalOpen, SceneImageCaptureOperation: { } operation } state) return;
+        if (!operation.Draft.SourcePreparing || operation.Draft.DialogOwner != intent.DialogOwner || operation.Draft.SourcePreparationRevision != intent.Revision) return;
+        var owner = CaptureCheckOwner();
+        // Source admission is not Apply admission. Keep all correction text (including
+        // blank minima) in the page draft; the service needs only saved baseline and
+        // owned source metadata to attach/inspect a source, never parsed draft bounds.
+        var before = RememberSceneImageMapping(operation.Draft);
+        var draft = SceneImageSourceDraft(before);
+        var result = await Commands.SelectSceneImageSourceAsync(owner.Room, draft, intent.Uploaded, intent.Upload);
+        if (!OwnsCheckPage(owner) || modalState is not { Stage: V2ModalRuntimeStage.ProposalOpen, SceneImageCaptureOperation: { } current } owned || !current.Draft.SourcePreparing || current.Draft.DialogOwner != intent.DialogOwner || current.Draft.SourcePreparationRevision != intent.Revision) return;
+        var content = before with { AvailabilitySummary = result.Message ?? "Source unavailable." };
+        if (result.Draft is { } selected)
+        {
+            // New uploads alone establish new Native mapping. Otherwise restore only
+            // a mapping known within this dialog, not another source's calibration.
+            var mapping = intent.Upload is not null
+                ? new V2SceneImageMappingText(FormatDimension(selected.PixelsPerUnitX), FormatDimension(selected.PixelsPerUnitY), FormatDimension(selected.PixelOffsetX), FormatDimension(selected.PixelOffsetY))
+                : intent.Uploaded is { } uploaded ? (uploaded ? before.UploadMapping : before.MapMapping) ?? new("", "", "", "")
+                : new(before.PixelsPerUnitX, before.PixelsPerUnitY, before.PixelOffsetX, before.PixelOffsetY);
+            content = before with { AvailabilitySummary = result.Message ?? "", UseSceneImage = selected.UseSceneImage,
+                UseUploadedSceneImage = selected.UseUploadedSceneImage, OriginalHash = selected.OriginalHash, UploadHandle = selected.UploadHandle,
+                UploadPreparation = selected.UploadPreparation, UploadCustomTarget = intent.Upload is not null ? "" : before.UploadCustomTarget,
+                SourcePixelWidth = selected.SourcePixelWidth, SourcePixelHeight = selected.SourcePixelHeight, PreviewUrl = selected.PreviewUrl,
+                PixelsPerUnitX = mapping.PixelsPerUnitX, PixelsPerUnitY = mapping.PixelsPerUnitY, PixelOffsetX = mapping.PixelOffsetX, PixelOffsetY = mapping.PixelOffsetY,
+                BrowserResetVersion = current.Draft.BrowserResetVersion + 1, DialogOwner = intent.DialogOwner,
+                SourcePreparationRevision = intent.Revision, SourcePreparing = true };
+            content = RememberSceneImageMapping(content);
+        }
+        modalState = owned with { Content = content, SceneImageCaptureOperation = current with { Draft = content } };
+        if (result.Status == V2SceneImageCaptureCommandStatus.Unexpected) Diagnostics.Show(result.Message ?? "Scene source preparation failed unexpectedly.");
     }
     // Scene callbacks can wait behind another durable command. Recheck this one
     // page-owned boundary after acquiring that gate, rather than letting each
@@ -2037,6 +2085,7 @@ else
     private async Task CompleteSceneImageCaptureModalAsync(bool clearBounds = false)
     {
         if (modalState is not { Stage: V2ModalRuntimeStage.ProposalOpen, SceneImageCaptureOperation: { } operation } state) return;
+        if (operation.Draft.SourcePreparing) return;
         var owner=CaptureCheckOwner();
         if (!TryParseSceneImageDraft(operation.Draft, out var draft) && !clearBounds)
         {
@@ -2059,10 +2108,27 @@ else
                 return;
             }
             if (outcome.RequiresRoomReload || modalState?.Content is V2CheckRoomReloadView) return;
-            if (outcome.Status == V2SceneImageCaptureCommandStatus.Committed) { SetRefreshDiagnostic(); ResetHeaderDraft(); QueueModalFocus(state, V2ModalFocusOutcome.Initiator); ClearModalState(false); }
+            if (outcome.Status == V2SceneImageCaptureCommandStatus.Committed) { sceneActionStatus = null; SetRefreshDiagnostic(); ResetHeaderDraft(); QueueModalFocus(state, V2ModalFocusOutcome.Initiator); ClearModalState(false); if (outcome.Message is { } diagnostic) Diagnostics.Show(diagnostic); }
             else
             {
                 var failed = operation.Draft with { AvailabilitySummary = outcome.Message ?? "Scene image capture failed.", Baseline = outcome.FreshBaseline ?? operation.Draft.Baseline, UpdatedUtc = outcome.FreshBaseline?.UpdatedUtc ?? operation.Draft.UpdatedUtc };
+                if (outcome.FreshBaseline is { } fresh && failed.UploadHandle is null)
+                {
+                    // Rebase retained ownership, not the user's bounds/alignment/mode
+                    // corrections. A staged replacement remains owned by this draft.
+                    failed = failed with { OriginalHash = fresh.OriginalHash,
+                        PreviewUrl = failed.UseUploadedSceneImage ? null : failed.PreviewUrl };
+                    if (failed.UseUploadedSceneImage && failed.UseSceneImage)
+                    {
+                        var source = await Commands.SelectSceneImageSourceAsync(sourceRoom, draft with
+                        { Baseline = fresh, UpdatedUtc = fresh.UpdatedUtc, OriginalHash = fresh.OriginalHash }, true, null);
+                        if (!OwnsCheckPage(owner) || modalState?.Stage != V2ModalRuntimeStage.Committing) return;
+                        if (source.Draft is { } reconciled)
+                            failed = failed with { SourcePixelWidth = reconciled.SourcePixelWidth, SourcePixelHeight = reconciled.SourcePixelHeight,
+                                PreviewUrl = reconciled.PreviewUrl, AvailabilitySummary = source.Message is { } message ? $"{failed.AvailabilitySummary} {message}" : failed.AvailabilitySummary };
+                        else failed = failed with { AvailabilitySummary = source.Message ?? "The retained original is unavailable. Replace it or choose another source." };
+                    }
+                }
                 modalState = state with { Content = failed, Stage = V2ModalRuntimeStage.ProposalOpen, SceneImageCaptureOperation = operation with { Draft = failed } };
                 if (!clearBounds) sceneCaptureCorrectionFocusVersion++;
                 else QueueModalFocus(state, V2ModalFocusOutcome.Correction);
@@ -2071,19 +2137,26 @@ else
         }
         finally { commandGate.Release(); }
     }
-    private static SceneViewportBounds CaptureViewport(SceneLayoutView scene, SceneImageCaptureDraft draft)
-    {
-        // The modal inspects the white origin reference and cyan controls as well
-        // as effective geometry; this changes only its initial camera, not content.
-        var markers = scene.Markers.Concat(new[] {
-            new SceneMarkerView(Guid.Empty, "reference", "", null, 0, 0),
-            new SceneMarkerView(Guid.Empty, "minimum", "", null, draft.MinX, draft.MinY),
-            new SceneMarkerView(Guid.Empty, "maximum", "", null, draft.MaxX ?? 0, draft.MaxY ?? 0) }).ToArray();
-        return SceneViewportMath.Initial(scene with { Markers = markers });
-    }
     private static V2SceneImageCaptureDialogView CaptureContent(SceneImageCaptureDraft d, string? information, V2SceneImageCapturePreviewView? preview) =>
-        new(information ?? "", FormatDimension(d.MinX), FormatDimension(d.MinY), FormatDimension(d.MaxX), FormatDimension(d.MaxY),
-            FormatDimension(d.PixelsPerUnitX), FormatDimension(d.PixelsPerUnitY), FormatDimension(d.PixelOffsetX), FormatDimension(d.PixelOffsetY), d.UseSceneImage, d.UpdatedUtc, d.Baseline, true, "Apply", preview);
+        RememberSceneImageMapping(new V2SceneImageCaptureDialogView(information ?? "", FormatDimension(d.MinX), FormatDimension(d.MinY), FormatDimension(d.MaxX), FormatDimension(d.MaxY),
+            FormatDimension(d.PixelsPerUnitX), FormatDimension(d.PixelsPerUnitY), FormatDimension(d.PixelOffsetX), FormatDimension(d.PixelOffsetY), d.UseSceneImage, d.UpdatedUtc, d.Baseline, true, "Apply", preview)
+        { UseUploadedSceneImage = d.UseUploadedSceneImage, OriginalHash = d.OriginalHash, UploadHandle = d.UploadHandle,
+            UploadPreparation = d.UploadPreparation, UploadCustomTarget = FormatDimension(d.UploadPreparation?.CustomTarget),
+            SourcePixelWidth = d.SourcePixelWidth, SourcePixelHeight = d.SourcePixelHeight, PreviewUrl = d.PreviewUrl }, includeOptedOut: true);
+    private static V2SceneImageCaptureDialogView RememberSceneImageMapping(V2SceneImageCaptureDialogView text, bool includeOptedOut = false)
+    {
+        if (!text.UseSceneImage && !includeOptedOut) return text;
+        var mapping = new V2SceneImageMappingText(text.PixelsPerUnitX, text.PixelsPerUnitY, text.PixelOffsetX, text.PixelOffsetY);
+        return text.UseUploadedSceneImage ? text with { UploadMapping = mapping } : text with { MapMapping = mapping };
+    }
+    private static SceneImageCaptureDraft SceneImageSourceDraft(V2SceneImageCaptureDialogView text)
+    {
+        var saved = text.Baseline;
+        return new(saved.MinX, saved.MinY, saved.MaxX, saved.MaxY, saved.PixelsPerUnitX, saved.PixelsPerUnitY,
+            saved.PixelOffsetX, saved.PixelOffsetY, text.UseSceneImage, text.UpdatedUtc, saved)
+        { UseUploadedSceneImage = text.UseUploadedSceneImage, OriginalHash = text.OriginalHash, UploadHandle = text.UploadHandle,
+            UploadPreparation = text.UploadPreparation, SourcePixelWidth = text.SourcePixelWidth, SourcePixelHeight = text.SourcePixelHeight, PreviewUrl = text.PreviewUrl };
+    }
     private static bool TryParseSceneImageDraft(V2SceneImageCaptureDialogView text, out SceneImageCaptureDraft draft, bool requireUsable = true)
     {
         bool Parse(string value, out double? number)
@@ -2096,7 +2169,17 @@ else
         ok &= Parse(text.MaxX, out var maxX); ok &= Parse(text.MaxY, out var maxY);
         ok &= Parse(text.PixelsPerUnitX, out var sx); ok &= Parse(text.PixelsPerUnitY, out var sy);
         ok &= Parse(text.PixelOffsetX, out var px); ok &= Parse(text.PixelOffsetY, out var py);
-        draft = new(minX ?? 0, minY ?? 0, maxX, maxY, sx, sy, px, py, text.UseSceneImage, text.UpdatedUtc, text.Baseline);
+        draft = new(minX ?? 0, minY ?? 0, maxX, maxY, sx, sy, px, py, text.UseSceneImage, text.UpdatedUtc, text.Baseline)
+        { UseUploadedSceneImage = text.UseUploadedSceneImage, OriginalHash = text.OriginalHash, UploadHandle = text.UploadHandle,
+            UploadPreparation = text.UploadPreparation, SourcePixelWidth = text.SourcePixelWidth, SourcePixelHeight = text.SourcePixelHeight, PreviewUrl = text.PreviewUrl };
+        // None ignores all hidden numeric edits, including malformed/incomplete ones.
+        if (!text.UseSceneImage) return true;
+        if (text.UseUploadedSceneImage && text.UploadPreparation is { } preparation)
+        {
+            var customOk = Parse(text.UploadCustomTarget, out var custom);
+            draft = draft with { UploadPreparation = preparation with { CustomTarget = custom } };
+            if (requireUsable && preparation.Resolution == "custom") ok &= customOk && custom is > 0;
+        }
         return ok && minX is not null && minY is not null && (!requireUsable ||
             SceneBounds.TryGetSize(draft.MinX, draft.MinY, maxX, maxY, out _, out _) && SceneBounds.HasUsableScales(sx, sy) && (!text.UseSceneImage || SceneBounds.HasUsablePixelOffsets(px, py)));
     }
@@ -2151,6 +2234,7 @@ else
             if(!OwnsCheckOwner(owner,outcome.Status==V2RoomLifecycleCommandStatus.Committed?1:0)||!ReferenceEquals(modalState?.Content,state.Content))return;
             if (outcome.Status == V2RoomLifecycleCommandStatus.Committed)
             {
+                if (outcome.Message is not null) Diagnostics.Show(outcome.Message);
                 // The missing refresh has cleared the complete room view. Successful
                 // deletion intentionally follows its lifecycle destination, not field focus.
                 headerBaseline = null; headerDraft = null; pendingDrafts.Clear(); showArchivedChildren = false;

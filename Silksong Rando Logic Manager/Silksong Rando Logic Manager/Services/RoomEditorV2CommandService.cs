@@ -15,6 +15,7 @@ public interface IRoomEditorV2CommandService
     Task<V2SceneImageCaptureCommandOutcome> ClearRoomSceneBoundsAsync(Guid roomId, SceneImageCaptureBaseline baseline);
     Task<V2SceneImageCaptureCommandOutcome> PrepareSceneImageCaptureAsync(Guid roomId) => throw new NotSupportedException();
     Task<V2SceneImageCaptureCommandOutcome> ResetSceneImageCaptureEstimateAsync(Guid roomId, SceneImageCaptureDraft draft);
+    Task<V2SceneImageCaptureCommandOutcome> SelectSceneImageSourceAsync(Guid roomId, SceneImageCaptureDraft draft, bool? uploaded, RoomImageUpload? upload);
     Task<V2SceneImageCaptureCommandOutcome> ApplySceneImageCaptureAsync(Guid roomId, SceneImageCaptureDraft draft) => throw new NotSupportedException();
     Task<V2SubroomCommandOutcome> SaveSubroomAsync(Guid roomId, SubroomDurableBaseline baseline, SubroomDraft draft);
     Task<V2SubroomCommandOutcome> PrepareSubroomReferenceRenameAsync(Guid roomId, SubroomDurableBaseline baseline, SubroomDraft draft) => SaveSubroomAsync(roomId, baseline, draft);
@@ -94,9 +95,20 @@ public sealed class RoomEditorV2CommandService(LogicCatalogService catalog, Requ
         catch (InvalidOperationException ex) { return new(V2SceneImageCaptureCommandStatus.ExpectedFailure, ex.Message); }
         catch (Exception ex) { logger?.LogError(ex, "Scene recommendation failed for room {RoomId}", roomId); return new(V2SceneImageCaptureCommandStatus.Unexpected, "Scene recommendation failed unexpectedly. Technical details were logged."); }
     }
+    public async Task<V2SceneImageCaptureCommandOutcome> SelectSceneImageSourceAsync(Guid roomId, SceneImageCaptureDraft draft, bool? uploaded, RoomImageUpload? upload)
+    {
+        try
+        {
+            if (sceneImages is null) throw new InvalidOperationException("The scene-image capture service is unavailable.");
+            var result = await sceneImages.SelectSourceAsync(roomId, draft, uploaded, upload);
+            return new(V2SceneImageCaptureCommandStatus.Committed, result.Information, result.Draft);
+        }
+        catch (InvalidOperationException ex) { return new(V2SceneImageCaptureCommandStatus.ExpectedFailure, ex.Message); }
+        catch (Exception ex) { logger?.LogError(ex, "Scene source preparation failed for room {RoomId}", roomId); return new(V2SceneImageCaptureCommandStatus.Unexpected, "Scene source preparation failed unexpectedly. Technical details were logged."); }
+    }
     public async Task<V2SceneImageCaptureCommandOutcome> ApplySceneImageCaptureAsync(Guid roomId, SceneImageCaptureDraft draft)
     {
-        try { if (sceneImages is null) throw new InvalidOperationException("The scene-image capture service is unavailable."); await sceneImages.ApplyAsync(roomId, draft); return new(V2SceneImageCaptureCommandStatus.Committed); }
+        try { if (sceneImages is null) throw new InvalidOperationException("The scene-image capture service is unavailable."); var result = await sceneImages.ApplyAsync(roomId, draft); return new(V2SceneImageCaptureCommandStatus.Committed, result.CleanupException is null ? null : "Scene image committed; postcommit cleanup failed. Technical details were logged."); }
         catch (SceneImageCaptureConflictException ex) { return new(V2SceneImageCaptureCommandStatus.ExpectedFailure, ex.Message, FreshBaseline: ex.Baseline); }
         catch (InvalidOperationException ex) { return new(V2SceneImageCaptureCommandStatus.ExpectedFailure, ex.Message); }
         catch (Exception ex) when (ex is ImageMagick.MagickException or OutOfMemoryException) { logger?.LogError(ex, "Scene image processing failed for room {RoomId}", roomId); return new(V2SceneImageCaptureCommandStatus.ExpectedFailure, "Image processing failed. Check source tiles or reduce output size, then retry the retained draft."); }
@@ -346,6 +358,11 @@ public sealed class RoomEditorV2CommandService(LogicCatalogService catalog, Requ
     public async Task<V2RoomLifecycleCommandOutcome> DeleteRoomAsync(Guid roomId)
     {
         try { return new(V2RoomLifecycleCommandStatus.Committed, SceneImageDeleteElapsed: await catalog.DeleteRoomPermanentlyWithSceneImageTimingAsync(roomId)); }
+        catch (RoomImageDeletionCleanupException ex)
+        {
+            logger?.LogError(ex, "Permanent deletion committed for {RoomId}; image cleanup failed", roomId);
+            return new(V2RoomLifecycleCommandStatus.Committed, "Room deleted; image cleanup failed. Technical details were logged.", SceneImageDeleteElapsed: ex.Elapsed);
+        }
         catch (InvalidOperationException ex) { return new(V2RoomLifecycleCommandStatus.ExpectedFailure, ex.Message); }
         catch (Exception ex) { return new(V2RoomLifecycleCommandStatus.Unexpected, ex.Message); }
     }

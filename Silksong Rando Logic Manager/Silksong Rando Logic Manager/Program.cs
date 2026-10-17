@@ -74,6 +74,7 @@ builder.Services.AddScoped<AreaMapLoader>();
 builder.Services.AddScoped<IAreaMapLoader>(provider => provider.GetRequiredService<AreaMapLoader>());
 builder.Services.AddSingleton<SceneImageFileService>();
 builder.Services.AddScoped<SceneImageCaptureService>();
+builder.Services.AddScoped<RoomImageOperationsService>();
 builder.Services.AddSingleton<DiagnosticState>();
 builder.Services.AddSingleton<WorkspaceChangeNotifier>();
 builder.Services.AddScoped<RoomEditorV2LogicLoader>();
@@ -128,8 +129,9 @@ if (!isPortableRelease)
 app.UseAntiforgery();
 
 app.MapStaticAssets();
-app.MapGet("/data/scenes/{roomId:guid}.webp", (Guid roomId, SceneImageFileService sceneImages) =>
+app.MapGet("/data/scenes/{roomId:guid}.webp", async (Guid roomId, SceneImageFileService sceneImages, HttpContext context) =>
 {
+    context.Response.RegisterForDispose(await sceneImages.AcquireLifecycleAsync(context.RequestAborted));
     var stream = sceneImages.OpenRead(roomId);
     return stream is null ? Results.NotFound() : Results.File(stream, "image/webp");
 });
@@ -137,6 +139,21 @@ app.MapGet("/data/scene-source/preview.webp", (SceneImageFileService sceneImages
 {
     var stream = sceneImages.OpenPreview();
     return stream is null ? Results.NotFound() : Results.File(stream, "image/webp");
+});
+app.MapGet("/room-image-drafts/{handle:guid}", async (Guid handle, SceneImageFileService images, HttpContext context) =>
+{
+    context.Response.RegisterForDispose(await images.AcquireLifecycleAsync(context.RequestAborted));
+    var image = images.OpenStagedPreview(handle);
+    return image is null ? Results.NotFound() : Results.File(image, "image/webp");
+});
+app.MapGet("/room-image-originals/{roomId:guid}", async (Guid roomId, string? v, SceneImageFileService images, IDbContextFactory<LogicDbContext> contexts, HttpContext context) =>
+{
+    context.Response.RegisterForDispose(await images.AcquireLifecycleAsync(context.RequestAborted));
+    await using var db = await contexts.CreateDbContextAsync();
+    var hash = await db.Rooms.AsNoTracking().Where(x => x.Id == roomId).Select(x => x.SceneImageOriginalHash).SingleOrDefaultAsync();
+    var path = images.GetOriginalPath(roomId);
+    if (v is null || v != hash || !SceneImageFileService.Matches(path, hash)) return Results.NotFound();
+    return Results.File(SceneImageFileService.PreviewBytes(path), "image/webp");
 });
 app.MapLocalExchangeDownloadEndpoints();
 app.MapLocalRequirementCatalogueDownloadEndpoints();

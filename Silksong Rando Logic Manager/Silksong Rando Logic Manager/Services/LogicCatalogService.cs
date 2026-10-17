@@ -28,10 +28,26 @@ public sealed class LogicCatalogService(IDbContextFactory<LogicDbContext> dbCont
             .AsNoTracking()
             .OrderBy(x => x.SortOrder)
             .ThenBy(x => x.FriendlyName)
-            .Select(x => new { x.Id, x.RoomGroupId, x.FriendlyName, x.SortOrder, x.IsArchived })
+            .Select(x => new { x.Id, x.RoomGroupId, x.FriendlyName, x.InGameId, x.SortOrder, x.IsArchived,
+                x.UseSceneImage, x.UseUploadedSceneImage, x.IsSceneImageStale, x.SceneImagePixelsPerUnitX, x.SceneImagePixelsPerUnitY })
             .ToListAsync(cancellationToken);
 
-        return new SidebarWorkspaceSnapshot(groups, rooms.Select(x => new SidebarRoom(x.Id, x.RoomGroupId, x.FriendlyName, x.SortOrder, x.IsArchived, statuses.GetValueOrDefault(x.Id))).ToList());
+        return new SidebarWorkspaceSnapshot(groups, rooms.Select(x => new SidebarRoom(
+            x.Id, x.RoomGroupId, x.FriendlyName, x.InGameId, x.SortOrder, x.IsArchived, statuses.GetValueOrDefault(x.Id),
+            GetSidebarImageState(x.Id, x.IsArchived, x.UseSceneImage, x.UseUploadedSceneImage, x.IsSceneImageStale,
+                x.SceneImagePixelsPerUnitX, x.SceneImagePixelsPerUnitY))).ToList());
+    }
+
+    private SidebarRoomImageState GetSidebarImageState(Guid roomId, bool isArchived, bool useSceneImage, bool uploaded,
+        bool isStale, double? scaleX, double? scaleY)
+    {
+        if (isArchived) return SidebarRoomImageState.None;
+        if (!useSceneImage) return SidebarRoomImageState.Disabled;
+        if (isStale) return SidebarRoomImageState.NeedsRecapture;
+        if (sceneImages?.Exists(roomId) != true) return SidebarRoomImageState.Missing;
+        return !uploaded && (scaleX != 6.35 || scaleY != 6.35)
+            ? SidebarRoomImageState.NonstandardScale
+            : SidebarRoomImageState.None;
     }
 
     public async Task<IReadOnlyList<SidebarLocationSearchEntry>> GetSidebarLocationSearchAsync(CancellationToken cancellationToken = default)
@@ -788,6 +804,7 @@ public sealed class LogicCatalogService(IDbContextFactory<LogicDbContext> dbCont
     /// </summary>
     public async Task<TimeSpan> DeleteRoomPermanentlyWithSceneImageTimingAsync(Guid roomId, CancellationToken cancellationToken = default)
     {
+        using var imageAdmission = sceneImages is null ? null : await sceneImages.AcquireLifecycleAsync(cancellationToken);
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         var room = await db.Rooms.SingleAsync(x => x.Id == roomId && x.IsArchived, cancellationToken);
@@ -814,7 +831,13 @@ public sealed class LogicCatalogService(IDbContextFactory<LogicDbContext> dbCont
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         var fileStopwatch = System.Diagnostics.Stopwatch.StartNew();
-        if (sceneImages is not null) await sceneImages.DeleteAsync(roomId, cancellationToken);
+        if (sceneImages is not null)
+        {
+            List<Exception> failures = [];
+            try { await sceneImages.DeleteAsync(roomId, cancellationToken); } catch (Exception ex) { failures.Add(ex); }
+            try { await sceneImages.DeleteOriginalAsync(roomId, cancellationToken); } catch (Exception ex) { failures.Add(ex); }
+            if (failures.Count != 0) throw new RoomImageDeletionCleanupException(fileStopwatch.Elapsed, failures);
+        }
         fileStopwatch.Stop();
         return fileStopwatch.Elapsed;
     }
@@ -962,9 +985,23 @@ public sealed class LogicCatalogService(IDbContextFactory<LogicDbContext> dbCont
             CheckLocation value => value.RequirementsParseSucceeded,
             _ => null
         };
+        var localImageStale = (persistedEntity as Room)?.IsSceneImageStale;
+        var localUploadedSource = (persistedEntity as Room)?.UseUploadedSceneImage;
+        var localOriginalHash = (persistedEntity as Room)?.SceneImageOriginalHash;
+        var localCropHash = (persistedEntity as Room)?.SceneImageCropHash;
         entry.CurrentValues.SetValues(entity);
         switch (persistedEntity)
         {
+            case Room value:
+                value.IsSceneImageStale = localImageStale!.Value;
+                entry.Property(nameof(Room.IsSceneImageStale)).IsModified = false;
+                value.UseUploadedSceneImage = localUploadedSource!.Value;
+                value.SceneImageOriginalHash = localOriginalHash;
+                value.SceneImageCropHash = localCropHash;
+                entry.Property(nameof(Room.UseUploadedSceneImage)).IsModified = false;
+                entry.Property(nameof(Room.SceneImageOriginalHash)).IsModified = false;
+                entry.Property(nameof(Room.SceneImageCropHash)).IsModified = false;
+                break;
             case RoomTransition value: value.RequirementsParseSucceeded = originalRequirementStatus; break;
             case SubroomConnection value: value.RequirementsParseSucceeded = originalRequirementStatus; break;
             case CheckLocation value: value.RequirementsParseSucceeded = originalRequirementStatus; break;
@@ -1460,7 +1497,8 @@ public sealed record SidebarWorkspaceSnapshot(
     IReadOnlyList<SidebarRoom> Rooms);
 
 public sealed record SidebarRoomGroup(Guid Id, string FriendlyName, int SortOrder);
-public sealed record SidebarRoom(Guid Id, Guid? RoomGroupId, string FriendlyName, int SortOrder, bool IsArchived, AppliedRoomStatus Status);
+public sealed record SidebarRoom(Guid Id, Guid? RoomGroupId, string FriendlyName, string? InGameId, int SortOrder, bool IsArchived, AppliedRoomStatus Status, SidebarRoomImageState ImageState);
+public enum SidebarRoomImageState { None, Disabled, NeedsRecapture, Missing, NonstandardScale }
 public sealed record SidebarLocationSearchEntry(Guid RoomId, string FriendlyName);
 public sealed record SidebarRequirementSearchEntry(Guid RoomId, string Requirements);
 public sealed record SidebarRequirementsSearchSnapshot(

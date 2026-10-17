@@ -4,7 +4,7 @@ using System.Text;
 
 namespace Silksong_Rando_Logic_Manager.Services;
 
-/// <summary>Bounded lexical descriptors, derived only from the fifteen approved choices.
+/// <summary>Bounded lexical descriptors, derived only from the sixteen approved choices.
 /// No identity resolution or parser-result sharing between the independent parsers.</summary>
 internal static class RequirementOperandSyntax
 {

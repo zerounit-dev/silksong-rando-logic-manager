@@ -25,7 +25,7 @@
                 case V2PermanentDeleteDialogView delete: <V2PermanentDeleteDialogContent View="delete" Cancel="Cancel" Confirm="Apply" Disabled="@(Stage == V2ModalRuntimeStage.Committing)" /> break;
                 case V2InGameMetadataDialogView metadata when MetadataDraft is not null: <V2InGameMetadataDialogContent View="metadata" Draft="MetadataDraft" Disabled="@(Stage == V2ModalRuntimeStage.Committing)" DraftChanged="MetadataDraftChanged" Cancel="Cancel" Apply="Apply" /> break;
                 case V2InGameMetadataDialogView metadata when CheckMetadataDraft is not null: <V2CheckInGameMetadataDialogContent View="metadata" Draft="CheckMetadataDraft" Disabled="@(Stage == V2ModalRuntimeStage.Committing)" DraftChanged="CheckMetadataDraftChanged" Cancel="Cancel" Apply="Apply" /> break;
-                case V2SceneImageCaptureDialogView capture: <V2SceneImageCaptureDialogContent View="capture" Disabled="@(Stage == V2ModalRuntimeStage.Committing)" CorrectionFocusVersion="SceneCaptureCorrectionFocusVersion" DraftChanged="SceneImageCaptureDraftChanged" Reset="SceneImageCaptureReset" Clear="SceneBoundsClear" Cancel="Cancel" Apply="Apply" /> break;
+                case V2SceneImageCaptureDialogView capture: <V2SceneImageCaptureDialogContent View="capture" Disabled="@(Stage == V2ModalRuntimeStage.Committing)" CorrectionFocusVersion="SceneCaptureCorrectionFocusVersion" DraftChanged="SceneImageCaptureDraftChanged" SourceChanged="SceneImageSourceChanged" PreparationChanged="SceneImagePreparationChanged" Reset="SceneImageCaptureReset" Clear="SceneBoundsClear" Cancel="Cancel" Apply="Apply" /> break;
                 case V2SceneImageGenerationProgressView progress: <section data-scene-image-generation-progress="true" role="status" aria-live="assertive"><h2 id="v2-page-modal-title">generating scene image</h2><p id="v2-page-modal-description">@progress.Message</p></section> break;
                 case V2CheckDisableDialogView checkDisable: <V2CheckDisableDialogContent View="checkDisable" /> break;
                 case V2ConnectionRemoveDialogView connectionRemove: <V2ConnectionRemoveDialogContent View="connectionRemove" Cancel="Cancel" Confirm="Apply" Disabled="@(Stage == V2ModalRuntimeStage.Committing)" /> break;
@@ -54,6 +54,8 @@
     [Parameter] public EventCallback SceneBoundsClear { get; set; }
     [Parameter] public EventCallback<V2SceneImageCaptureDialogView> SceneImageCaptureDraftChanged { get; set; }
     [Parameter] public EventCallback SceneImageCaptureReset { get; set; }
+    [Parameter] public EventCallback<V2SceneImageSourceIntent> SceneImageSourceChanged { get; set; }
+    [Parameter] public EventCallback<V2SceneImagePreparationIntent> SceneImagePreparationChanged { get; set; }
     [Parameter] public EventCallback ManageRequirementCatalogue { get; set; }
     private Task Backdrop() => Stage == V2ModalRuntimeStage.ProposalOpen ? Cancel.InvokeAsync() : Task.CompletedTask;
     private Task KeyDown(KeyboardEventArgs args) => args.Key == "Escape" && Stage == V2ModalRuntimeStage.ProposalOpen ? Cancel.InvokeAsync() : Task.CompletedTask;

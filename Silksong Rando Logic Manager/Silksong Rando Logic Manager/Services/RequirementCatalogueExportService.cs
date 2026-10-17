@@ -23,7 +23,7 @@ public sealed class RequirementCatalogueExportService(IDbContextFactory<LogicDbC
         var countables = await db.RequirementCountables.AsNoTracking().OrderBy(x => x.SortOrder).ThenBy(x => x.Id)
             .Select(x => new RequirementCatalogueExchangeItem(x.Id, x.Name, x.Category, x.OutputValue, x.Notes, x.SortOrder, x.Aliases))
             .ToListAsync(cancellationToken);
-        var enemyTypes = await db.RequirementEnemyTypes.AsNoTracking().OrderBy(x => x.SortOrder).ThenBy(x => x.Id)
+        var souls = await db.RequirementSouls.AsNoTracking().OrderBy(x => x.SortOrder).ThenBy(x => x.Id)
             .Select(x => new RequirementCatalogueExchangeItem(x.Id, x.Name, x.Category, x.OutputValue, x.Notes, x.SortOrder, x.Aliases))
             .ToListAsync(cancellationToken);
 
@@ -31,7 +31,7 @@ public sealed class RequirementCatalogueExportService(IDbContextFactory<LogicDbC
             .Select(x => new RequirementCatalogueExchangeItem(x.Id, x.Name, x.Category, x.OutputValue, x.Notes, x.SortOrder, x.Aliases))
             .ToListAsync(cancellationToken);
 
-        var document = new RequirementCatalogueExchangeDocument(3, predicates, crests, items, countables, enemyTypes);
+        var document = new RequirementCatalogueExchangeDocument(4, predicates, crests, items, countables, souls);
         var timestamp = timeProvider.GetUtcNow().ToString("yyyyMMdd-HHmmss-fff", CultureInfo.InvariantCulture);
         return new($"silksong-requirement-catalogue-{timestamp}.json", JsonSerializer.SerializeToUtf8Bytes(document, jsonOptions));
     }

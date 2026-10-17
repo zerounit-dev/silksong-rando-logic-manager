@@ -40,10 +40,10 @@ public sealed record DistributedRoomComparisonSummary(DistributedUpdatedUtcCompa
 public sealed record DistributedChildComparison<T>(Guid EntityId, DistributedComparisonEvidence Evidence, IReadOnlyList<DistributedComparisonValue> Fields);
 public static class DistributedChildComparisonColumns
 {
-    public static readonly IReadOnlyList<string> Subrooms = ["id", "referenceId", "friendlyName", "notes", "sceneUnitX", "sceneUnitY", "sceneUnitWidth", "sceneUnitHeight", "enableAnnotation", "sortOrder", "isArchived", "archivedUtc", "createdUtc", "updatedUtc"];
-    public static readonly IReadOnlyList<string> Transitions = ["id", "alias", "friendlyName", "inGameId", "inGamePositionX", "inGamePositionY", "inGamePositionZ", "localPositionX", "localPositionY", "localPositionZ", "annotationSceneUnitX", "annotationSceneUnitY", "enableAnnotation", "sourceSubroomReferenceText", "destinationRoomReferenceText", "destinationTransitionAliasText", "requirements", "notes", "sortOrder", "isTodo", "isVerified", "isArchived", "archivedUtc", "createdUtc", "updatedUtc", "isUnsafeArrival"];
-    public static readonly IReadOnlyList<string> Connections = ["id", "alias", "friendlyName", "sourceSubroomReferenceText", "destinationSubroomReferenceText", "requirements", "notes", "enableAnnotation", "sceneUnitX", "sceneUnitY", "sortOrder", "isTodo", "isVerified", "isArchived", "archivedUtc", "createdUtc", "updatedUtc"];
-    public static readonly IReadOnlyList<string> Checks = ["id", "friendlyName", "inGameId", "inGamePositionX", "inGamePositionY", "inGamePositionZ", "localPositionX", "localPositionY", "localPositionZ", "annotationSceneUnitX", "annotationSceneUnitY", "subroomReferenceText", "requirements", "notes", "locationType", "enableAnnotation", "sortOrder", "isTodo", "isVerified", "isArchived", "archivedUtc", "createdUtc", "updatedUtc"];
+    public static readonly IReadOnlyList<string> Subrooms = ["friendlyName", "referenceId", "notes", "id", "sortOrder", "enableAnnotation", "sceneUnitX", "sceneUnitY", "sceneUnitWidth", "sceneUnitHeight", "isArchived", "archivedUtc", "createdUtc", "updatedUtc"];
+    public static readonly IReadOnlyList<string> Transitions = ["alias", "friendlyName", "sourceSubroomReferenceText", "destinationRoomReferenceText", "destinationTransitionAliasText", "isUnsafeArrival", "requirements", "notes", "isTodo", "isVerified", "inGameId", "inGamePositionX", "inGamePositionY", "inGamePositionZ", "localPositionX", "localPositionY", "localPositionZ", "id", "sortOrder", "enableAnnotation", "annotationSceneUnitX", "annotationSceneUnitY", "isArchived", "archivedUtc", "createdUtc", "updatedUtc"];
+    public static readonly IReadOnlyList<string> Connections = ["alias", "friendlyName", "sourceSubroomReferenceText", "destinationSubroomReferenceText", "requirements", "notes", "isTodo", "isVerified", "id", "sortOrder", "enableAnnotation", "sceneUnitX", "sceneUnitY", "isArchived", "archivedUtc", "createdUtc", "updatedUtc"];
+    public static readonly IReadOnlyList<string> Checks = ["locationType", "friendlyName", "subroomReferenceText", "requirements", "notes", "isTodo", "isVerified", "inGameId", "inGamePositionX", "inGamePositionY", "inGamePositionZ", "localPositionX", "localPositionY", "localPositionZ", "id", "sortOrder", "enableAnnotation", "annotationSceneUnitX", "annotationSceneUnitY", "isArchived", "archivedUtc", "createdUtc", "updatedUtc"];
 }
 public sealed record DistributedRoomComparison(
     Guid RoomId,
@@ -75,7 +75,8 @@ public abstract record DistributedRoomDecisionIntent(Guid RoomId);
 public sealed record SkipIncomingRoom(Guid RoomId) : DistributedRoomDecisionIntent(RoomId);
 public sealed record ImportIncomingRoom(Guid RoomId) : DistributedRoomDecisionIntent(RoomId);
 public sealed record KeepMasterRoom(Guid RoomId) : DistributedRoomDecisionIntent(RoomId);
-public sealed record ImportChangedRoom(Guid RoomId, DistributedRoomChildPlan ChildPlan) : DistributedRoomDecisionIntent(RoomId);
+public enum DistributedOriginalChoice { Keep, Remove }
+public sealed record ImportChangedRoom(Guid RoomId, DistributedRoomChildPlan ChildPlan, DistributedOriginalChoice? OriginalChoice) : DistributedRoomDecisionIntent(RoomId);
 public sealed record DistributedImportProgress(string Stage, int Completed, int Total, string? Detail);
 public abstract record DistributedImportOutcome;
 public sealed record DistributedImportPrepared(DistributedImportPackageSummary Summary) : DistributedImportOutcome;
@@ -133,7 +134,7 @@ public sealed record DistributedImportRoomProjection(
     Guid Id, Guid? RoomGroupId, string ReferenceId, string FriendlyName, string? InGameId,
     string? Contributors, string? Comments, double SceneMinX, double SceneMinY, double? SceneMaxX, double? SceneMaxY,
     double? SceneImagePixelsPerUnitX, double? SceneImagePixelsPerUnitY, double? SceneImagePixelOffsetX,
-    double? SceneImagePixelOffsetY, bool UseSceneImage, bool IsSceneImageStale, int SortOrder, bool IsArchived,
+    double? SceneImagePixelOffsetY, bool UseSceneImage, bool UseUploadedSceneImage, string? SceneImageOriginalHash, string? SceneImageCropHash, int SortOrder, bool IsArchived,
     DateTime? ArchivedUtc, DateTime CreatedUtc, DateTime UpdatedUtc,
     IReadOnlyList<DistributedImportSubroomProjection> Subrooms,
     IReadOnlyList<DistributedImportTransitionProjection> Transitions,
@@ -148,8 +149,8 @@ public static class DistributedImportProjectionMapper
 {
     public static DistributedRoomDocument MapRoom(DistributedImportRoomProjection source) => new(
         source.Id, source.RoomGroupId, source.ReferenceId, source.FriendlyName, source.InGameId, source.Contributors, source.Comments,
-        source.SceneMinX, source.SceneMinY, source.SceneMaxX, source.SceneMaxY, source.SceneImagePixelsPerUnitX, source.SceneImagePixelsPerUnitY, source.SceneImagePixelOffsetX, source.SceneImagePixelOffsetY, source.UseSceneImage,
-        source.IsSceneImageStale, source.SortOrder, source.IsArchived, source.ArchivedUtc, source.CreatedUtc, source.UpdatedUtc,
+        source.SceneMinX, source.SceneMinY, source.SceneMaxX, source.SceneMaxY, source.SceneImagePixelsPerUnitX, source.SceneImagePixelsPerUnitY, source.SceneImagePixelOffsetX, source.SceneImagePixelOffsetY, source.UseSceneImage, source.UseUploadedSceneImage, source.SceneImageOriginalHash, source.SceneImageCropHash,
+        source.SortOrder, source.IsArchived, source.ArchivedUtc, source.CreatedUtc, source.UpdatedUtc,
         source.Subrooms.Select(x => new DistributedSubroom(x.Id, x.ReferenceId, x.FriendlyName, x.Notes, x.SceneUnitX, x.SceneUnitY, x.SceneUnitWidth, x.SceneUnitHeight, x.EnableAnnotation, x.SortOrder, x.IsArchived, x.ArchivedUtc, x.CreatedUtc, x.UpdatedUtc)).ToArray(),
         source.Transitions.Select(x => new DistributedTransition(x.Id, x.Alias, x.FriendlyName, x.InGameId, x.InGamePositionX, x.InGamePositionY, x.InGamePositionZ, x.LocalPositionX, x.LocalPositionY, x.LocalPositionZ, x.AnnotationSceneUnitX, x.AnnotationSceneUnitY, x.EnableAnnotation, x.SourceSubroomReferenceText, x.DestinationRoomReferenceText, x.DestinationTransitionAliasText, x.Requirements, x.Notes, x.SortOrder, x.IsTodo, x.IsVerified, x.IsArchived, x.ArchivedUtc, x.CreatedUtc, x.UpdatedUtc, x.IsUnsafeArrival)).ToArray(),
         source.Connections.Select(x => new DistributedConnection(x.Id, x.Alias, x.FriendlyName, x.SourceSubroomReferenceText, x.DestinationSubroomReferenceText, x.Requirements, x.Notes, x.EnableAnnotation, x.SceneUnitX, x.SceneUnitY, x.SortOrder, x.IsTodo, x.IsVerified, x.IsArchived, x.ArchivedUtc, x.CreatedUtc, x.UpdatedUtc)).ToArray(),

@@ -79,13 +79,39 @@ public sealed record CheckInGameMetadataDraft(string? InGameId, double? InGamePo
 /// <summary>Typed capture dialog state.  It is a page draft, never a Room entity.</summary>
 public sealed record V2SceneImageCaptureDialogView(string AvailabilitySummary, string MinX, string MinY, string MaxX, string MaxY,
     string PixelsPerUnitX, string PixelsPerUnitY, string PixelOffsetX, string PixelOffsetY, bool UseSceneImage, DateTime UpdatedUtc, SceneImageCaptureBaseline Baseline,
-    bool IsAvailable, string ApplyLabel = "Apply", V2SceneImageCapturePreviewView? Preview = null, long BrowserResetVersion = 0) : V2PageModalContentView;
-/// <summary>Typed, read-only scene projection used only by the page-owned capture draft.</summary>
+    bool IsAvailable, string ApplyLabel = "Apply", V2SceneImageCapturePreviewView? Preview = null, long BrowserResetVersion = 0) : V2PageModalContentView
+{
+    public bool UseUploadedSceneImage { get; init; }
+    public Guid DialogOwner { get; init; } = Guid.NewGuid();
+    public long SourcePreparationRevision { get; init; }
+    public bool SourcePreparing { get; init; }
+    public string? OriginalHash { get; init; }
+    public Guid? UploadHandle { get; init; }
+    public SceneImageUploadPreparation? UploadPreparation { get; init; }
+    public string UploadCustomTarget { get; init; } = "";
+    public V2SceneImageMappingText? MapMapping { get; init; }
+    public V2SceneImageMappingText? UploadMapping { get; init; }
+    public double SourcePixelWidth { get; init; } = SceneImageCaptureService.SourceWidth;
+    public double SourcePixelHeight { get; init; } = SceneImageCaptureService.SourceHeight;
+    public string? PreviewUrl { get; init; }
+}
+/// <summary>Known source-local correction text, owned only by the open dialog.</summary>
+public sealed record V2SceneImageMappingText(string PixelsPerUnitX, string PixelsPerUnitY, string PixelOffsetX, string PixelOffsetY);
+public sealed record V2SceneImageSourceIntent(Guid DialogOwner, long Revision, bool? Uploaded, RoomImageUpload? Upload = null);
+public sealed record V2SceneImagePreparationIntent(Guid DialogOwner, long Revision, bool Pending);
+/// <summary>Read-only game-position snapshot used only by the page-owned capture draft.</summary>
 public sealed record V2SceneImageCapturePreviewView(SceneViewportBounds InitialViewport,
-    IReadOnlyList<SceneSubroomFrameView> Frames, IReadOnlyList<SceneMarkerView> Markers);
+    IReadOnlyList<V2SceneImageCaptureMarkerView> Markers);
+/// <summary>Modal-only marker; X/Y are imported game coordinates, never annotation geometry.</summary>
+public sealed record V2SceneImageCaptureMarkerView(string Kind, string Label, double X, double Y, bool IsEnemy = false);
 /// <summary>Browser-local preview values transferred once into the typed capture draft at Apply.</summary>
 public sealed record V2SceneImageCapturePreviewValues(string MinX, string MinY, string MaxX, string MaxY,
-    string PixelsPerUnitX, string PixelsPerUnitY, string PixelOffsetX, string PixelOffsetY, bool UseSceneImage);
+    string PixelsPerUnitX, string PixelsPerUnitY, string PixelOffsetX, string PixelOffsetY, bool UseSceneImage)
+{
+    public bool NativeUpload { get; init; }
+    public string UploadResolution { get; init; } = "recommended";
+    public string UploadCustomTarget { get; init; } = "";
+}
 /// <summary>Non-dismissible page-owned state while the approved slower image generation is completion-bound.</summary>
 public sealed record V2SceneImageGenerationProgressView(string Message = "Generating scene image…") : V2PageModalContentView;
 public sealed record V2SceneImageCaptureModalOperation(V2SceneImageCaptureDialogView Draft);
@@ -391,9 +417,9 @@ public sealed record RequirementsParserContextView(IReadOnlyList<RequirementsPar
     IReadOnlyList<RequirementsParserPredicateView> Predicates,
     IReadOnlyList<RequirementsParserItemView> Items,
     IReadOnlyList<RequirementsParserCountableView> Countables,
-    IReadOnlyList<RequirementsParserEnemyView> Enemies,
+    IReadOnlyList<RequirementsParserSoulView> Souls,
     IReadOnlyList<RequirementsParserCrestView> Crests);
 
 public sealed record RequirementsParserCountableView(IReadOnlyList<string> Aliases);
-public sealed record RequirementsParserEnemyView(IReadOnlyList<string> Aliases);
+public sealed record RequirementsParserSoulView(IReadOnlyList<string> Aliases);
 public sealed record RequirementsParserCrestView(IReadOnlyList<string> Aliases);

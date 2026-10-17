@@ -530,12 +530,19 @@ window.clearV2SceneLayoutSelection = (svg, ownerGeneration, revision) => svg?.__
 
 /* Separate modal-local V2 owner. Pointer edits remain browser-local; all numeric
    bounds, mapping and mode reconcile together at field/reset/Apply boundaries. */
-window.initializeV2SceneImageCapturePreview = (svg, minX, minY, maxX, maxY, scaleX, scaleY, pixelOffsetX, pixelOffsetY, useSceneImage, annotationToggle) => {
+window.initializeV2SceneImageCapturePreview = (svg, minX, minY, maxX, maxY, scaleX, scaleY, pixelOffsetX, pixelOffsetY, useSceneImage, annotationToggle,
+    interpretation, resolution, customTarget, preparationSummary, initial) => {
     if (!(svg instanceof SVGElement)) return;
     svg.__v2SceneImageCapturePreview?.dispose();
     const base = String(svg.dataset.baseViewbox).split(" ").map(Number);
     if (base.length !== 4 || !base.every(Number.isFinite)) return;
-    let down = null, active = true, disabled = false, annotationsShown = true;
+    let down = null, active = true, disabled = false, frozen = false, annotationsShown = true;
+    // Canonical offsets remain oriented INPUT pixels. Only their displayed native
+    // fields are retained pixels; reduction changes never move the source.
+    let inputOffsetX = initial.pixelOffsetX, inputOffsetY = initial.pixelOffsetY, ratios = null;
+    const pending = () => svg.dataset.pendingUpload === "true" && useSceneImage.checked;
+    const native = () => pending() && interpretation.value === "native";
+    const alignment = () => useSceneImage.checked && !native();
     const showAnnotations = () => {
         if (!active) return;
         for (const node of svg.querySelectorAll("[data-v2-scene-capture-frame=true],[data-v2-scene-capture-marker]")) node.style.display = annotationsShown ? "" : "none";
@@ -547,26 +554,54 @@ window.initializeV2SceneImageCapturePreview = (svg, minX, minY, maxX, maxY, scal
     const toggleAnnotations = () => { if (!active || !svg.isConnected) return; annotationsShown = !annotationsShown; showAnnotations(); };
     const point = (x, y) => { const value = svg.createSVGPoint(); value.x = x; value.y = y; return value.matrixTransform(svg.getScreenCTM().inverse()); };
     const value = input => { const text = input?.value; return text == null || text.trim() === "" ? NaN : Number(text); };
+    const number = text => String(text ?? "").trim() === "" ? NaN : Number(text);
+    const roundEven = n => { const floor = Math.floor(n), fraction = n - floor; return fraction === .5 ? (floor % 2 === 0 ? floor : floor + 1) : Math.round(n); };
+    const preparation = () => {
+        if (!pending()) { ratios = { x:1, y:1 }; return; }
+        const l=value(minX), b=value(minY), r=value(maxX), t=value(maxY), sx=value(scaleX), sy=value(scaleY);
+        const validBounds=[l,b,r,t,r-l,t-b].every(Number.isFinite) && r>l && t>b;
+        const longest=Math.max(r-l,t-b), recommended=validBounds ? (longest<=40?64:longest<=80?32:longest<=160?16:8) : null;
+        const target=resolution.value==="recommended" ? recommended : resolution.value==="custom" ? value(customTarget) : Number(resolution.value);
+        const w=Number(svg.dataset.sourceWidth), h=Number(svg.dataset.sourceHeight);
+        ratios=null;
+        if (resolution.value==="recommended" && recommended===null) { preparationSummary.textContent="Set scene bounds to calculate recommended resolution."; return; }
+        if (!(sx>0 && sy>0 && [sx,sy,w,h].every(Number.isFinite) && w>0 && h>0) || resolution.value!=="keep" && !(target>0 && Number.isFinite(target))) {
+            preparationSummary.textContent="Enter positive finite input calibration and target pixels/unit."; return;
+        }
+        const factor=resolution.value==="keep" ? 1 : Math.min(1,target/sx,target/sy);
+        const width=Math.max(1,roundEven(w*factor)), height=Math.max(1,roundEven(h*factor));
+        ratios={x:width/w,y:height/h};
+        const format=n=>Number(n.toPrecision(8)).toString();
+        preparationSummary.textContent=`${w} × ${h} input → ${width} × ${height} retained; ${format(sx*ratios.x)} / ${format(sy*ratios.y)} retained pixels/unit (X/Y).` +
+            (resolution.value==="recommended" ? ` Recommended target: ${recommended} pixels/unit.` : "") +
+            (width>16383||height>16383 ? " Exceeds WebP's 16383-pixel axis limit; choose a lower resolution." : " Lossless WebP.");
+    };
     // Do not dispatch bound input events here: a wheel/pointer movement is not a
     // draft edit or server event. Apply reads these local displayed values once.
     // Keep the reference image itself aligned with browser-local calibration
     // values. This is direct SVG feedback, not a bound input/.NET callback.
     const updateSource = () => {
         if (!active) return;
-        const source = svg.querySelector("[data-v2-scene-capture-source=true]"), reference = svg.querySelector("[data-v2-scene-capture-reference=true]"), black = svg.querySelector("[data-v2-scene-capture-black=true]");
-        const l = value(minX), b = value(minY), r = value(maxX), t = value(maxY), sx = value(scaleX), sy = value(scaleY), px = value(pixelOffsetX), py = value(pixelOffsetY), imageEnabled = !!useSceneImage.checked;
-        const validBounds = [l,b,r,t,r-l,t-b].every(Number.isFinite) && r > l && t > b;
+        preparation();
+        const source = svg.querySelector("[data-v2-scene-capture-source=true]"), reference = svg.querySelector("[data-v2-scene-capture-reference=true]");
+        const l = value(minX), b = value(minY), r = value(maxX), t = value(maxY), sx = value(scaleX), sy = value(scaleY), px = number(inputOffsetX), py = number(inputOffsetY), imageEnabled = !!useSceneImage.checked;
         const rect = (node, x, y, w, h, shown) => { if (!node) return; node.style.display = shown ? "" : "none"; if (shown) { node.setAttribute("x", x); node.setAttribute("y", y); node.setAttribute("width", w); node.setAttribute("height", h); } };
         rect(reference, Math.min(0,r), -Math.max(0,t), Math.abs(r), Math.abs(t), Number.isFinite(r) && Number.isFinite(t));
-        rect(black, l, -t, r-l, t-b, !imageEnabled && validBounds);
-        const imageWidth = 20500 / sx, imageHeight = 15000 / sy;
-        const imageX = -px / sx, imageY = (py - 15000) / sy;
+        const sourceWidth = Number(svg.dataset.sourceWidth), sourceHeight = Number(svg.dataset.sourceHeight);
+        const imageWidth = sourceWidth / sx, imageHeight = sourceHeight / sy;
+        const imageX = -px / sx, imageY = (py - sourceHeight) / sy;
         rect(source, imageX, imageY, imageWidth, imageHeight, imageEnabled && sx > 0 && sy > 0 && [px,py,imageWidth,imageHeight,imageX,imageY].every(Number.isFinite));
-        pixelOffsetX.disabled = disabled || !imageEnabled; pixelOffsetY.disabled = disabled || !imageEnabled;
+        for (const input of [minX,minY,maxX,maxY]) input.disabled=disabled||!imageEnabled;
+        for (const input of [scaleX,scaleY]) input.disabled=disabled||!alignment();
+        pixelOffsetX.disabled = disabled || !alignment() || !ratios; pixelOffsetY.disabled = disabled || !alignment() || !ratios;
+        pixelOffsetX.value = ratios && Number.isFinite(px) ? String(px*ratios.x) : "";
+        pixelOffsetY.value = ratios && Number.isFinite(py) ? String(py*ratios.y) : "";
+        interpretation.disabled=disabled||!pending(); resolution.disabled=disabled||!pending();
+        customTarget.disabled=disabled||!pending()||resolution.value!=="custom";
         for (const axis of ["x", "y"]) for (const node of svg.querySelectorAll(`[data-v2-scene-minimum='${axis}'],[data-v2-scene-minimum-hit='${axis}']`)) {
             const at = axis === "x" ? l : -b;
             const maximum = axis === "x" ? t : r;
-            node.style.display = Number.isFinite(at) && Number.isFinite(maximum) ? "" : "none"; node.style.pointerEvents = disabled ? "none" : "stroke";
+            node.style.display = imageEnabled && Number.isFinite(at) && Number.isFinite(maximum) ? "" : "none"; node.style.pointerEvents = disabled || !imageEnabled ? "none" : "stroke";
             if (!Number.isFinite(at) || !Number.isFinite(maximum)) continue;
             node.setAttribute("x1", axis === "x" ? at : 0); node.setAttribute("x2", axis === "x" ? at : maximum);
             node.setAttribute("y1", axis === "y" ? at : 0); node.setAttribute("y2", axis === "y" ? at : -maximum);
@@ -575,8 +610,9 @@ window.initializeV2SceneImageCapturePreview = (svg, minX, minY, maxX, maxY, scal
     const change = (input, next) => { if (!active || !input || !Number.isFinite(next)) return; input.value = String(next); updateSource(); };
     const wheel = event => {
         if (!active) return; event.preventDefault();
+        if (frozen) return;
         if (event.ctrlKey) {
-            if (disabled) return;
+            if (disabled || !alignment()) return;
             const pixels = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? svg.clientHeight : 1);
             const x = value(scaleX), y = value(scaleY), factor = Math.exp(Math.max(-.06, Math.min(.06, -pixels * .003)));
             if (x > 0 && y > 0 && Number.isFinite(x*factor) && Number.isFinite(y*factor)) { change(scaleX, x * factor); change(scaleY, y * factor); }
@@ -586,47 +622,74 @@ window.initializeV2SceneImageCapturePreview = (svg, minX, minY, maxX, maxY, scal
         view[2] *= factor; view[3] *= factor; view[0] = at.x - (at.x - view[0]) * factor; view[1] = at.y - (at.y - view[1]) * factor; svg.setAttribute("viewBox", view.join(" ")); updateSource();
     };
     const start = event => {
-        if (!active || event.button !== 0) return;
+        if (!active || frozen || event.button !== 0) return;
         const minimum = event.target?.getAttribute?.("data-v2-scene-minimum-hit") || event.target?.getAttribute?.("data-v2-scene-minimum");
         if (!minimum && event.ctrlKey && event.shiftKey) return;
         const mode = minimum ? `minimum-${minimum}` : event.ctrlKey ? "pan-image" : "inspect";
-        if (disabled && mode !== "inspect" || mode === "pan-image" && !useSceneImage.checked) return;
+        if (disabled && mode !== "inspect" || mode === "pan-image" && !alignment() || minimum && !useSceneImage.checked) return;
         event.preventDefault(); down = { id:event.pointerId, x:event.clientX, y:event.clientY, mode }; svg.setPointerCapture(event.pointerId);
     };
     const move = event => {
-        if (!active || !down || event.pointerId !== down.id) return;
+        if (!active || frozen || !down || event.pointerId !== down.id) return;
         const previous = point(down.x, down.y), current = point(event.clientX, event.clientY);
         if (down.mode === "minimum-x") change(minX, Math.round(current.x));
         else if (down.mode === "minimum-y") change(minY, Math.round(-current.y));
-        else if (down.mode === "pan-image") { change(pixelOffsetX, value(pixelOffsetX) - (current.x - previous.x) * value(scaleX)); change(pixelOffsetY, value(pixelOffsetY) + (current.y - previous.y) * value(scaleY)); }
+        else if (down.mode === "pan-image") {
+            if (!alignment()) { down=null; return; }
+            const x=number(inputOffsetX)-(current.x-previous.x)*value(scaleX), y=number(inputOffsetY)+(current.y-previous.y)*value(scaleY);
+            if (Number.isFinite(x)&&Number.isFinite(y)) { inputOffsetX=String(x); inputOffsetY=String(y); updateSource(); }
+        }
         else { const view = String(svg.getAttribute("viewBox")).split(" ").map(Number); view[0] -= current.x - previous.x; view[1] -= current.y - previous.y; svg.setAttribute("viewBox", view.join(" ")); updateSource(); }
         down.x = event.clientX; down.y = event.clientY;
     };
     const end = event => { if (down?.id === event.pointerId) { if (svg.hasPointerCapture(event.pointerId)) svg.releasePointerCapture(event.pointerId); down = null; } };
+    const numeric = event => {
+        if (!active || disabled || frozen) return;
+        const input=event.currentTarget;
+        if (input===pixelOffsetX && ratios && alignment()) inputOffsetX=Number.isFinite(value(input)) ? String(value(input)/ratios.x) : input.value;
+        if (input===pixelOffsetY && ratios && alignment()) inputOffsetY=Number.isFinite(value(input)) ? String(value(input)/ratios.y) : input.value;
+        updateSource();
+    };
+    const prepareChoice = () => {
+        if (!active || disabled || frozen || !pending()) return;
+        if (native()) { scaleX.value="64"; scaleY.value="64"; inputOffsetX="0"; inputOffsetY="0"; }
+        if (down) { if(svg.hasPointerCapture(down.id)) svg.releasePointerCapture(down.id); down=null; }
+        updateSource();
+    };
+    const numericInputs=[minX,minY,maxX,maxY,scaleX,scaleY,pixelOffsetX,pixelOffsetY,customTarget];
+    for (const input of numericInputs) input.addEventListener("input",numeric);
+    interpretation.addEventListener("change",prepareChoice); resolution.addEventListener("change",prepareChoice);
     svg.addEventListener("wheel", wheel, { passive:false }); svg.addEventListener("pointerdown", start); svg.addEventListener("pointermove", move); svg.addEventListener("pointerup", end); svg.addEventListener("pointercancel", end);
     annotationToggle?.addEventListener("click", toggleAnnotations);
     updateSource(); showAnnotations();
     svg.__v2SceneImageCapturePreview = {
-        reconcile: (nextDisabled, nextToggle) => {
+        reconcile: (nextDisabled, nextToggle, nextFrozen) => {
             if (!active) return;
             if (annotationToggle !== nextToggle) {
                 annotationToggle?.removeEventListener("click", toggleAnnotations);
                 annotationToggle = nextToggle;
                 annotationToggle?.addEventListener("click", toggleAnnotations);
             }
-            disabled = !!nextDisabled; if (disabled && down?.mode !== "inspect") down = null; updateSource(); showAnnotations();
+            frozen = !!nextFrozen;
+            disabled = !!nextDisabled;
+            if (down && (frozen || disabled && down.mode !== "inspect")) { if (svg.hasPointerCapture(down.id)) svg.releasePointerCapture(down.id); down = null; }
+            if (annotationToggle) annotationToggle.disabled = disabled;
+            updateSource(); showAnnotations();
         },
         reset: next => {
             if (!active) return;
-            for (const [input,key] of [[minX,"minX"],[minY,"minY"],[maxX,"maxX"],[maxY,"maxY"],[scaleX,"pixelsPerUnitX"],[scaleY,"pixelsPerUnitY"],[pixelOffsetX,"pixelOffsetX"],[pixelOffsetY,"pixelOffsetY"]]) input.value = String(next[key]);
+            for (const [input,key] of [[minX,"minX"],[minY,"minY"],[maxX,"maxX"],[maxY,"maxY"],[scaleX,"pixelsPerUnitX"],[scaleY,"pixelsPerUnitY"]]) input.value = String(next[key]);
+            inputOffsetX=next.pixelOffsetX; inputOffsetY=next.pixelOffsetY;
+            interpretation.value=next.nativeUpload ? "native" : "advanced"; resolution.value=next.uploadResolution; customTarget.value=next.uploadCustomTarget;
             useSceneImage.checked = next.useSceneImage;
             updateSource();
         },
-        values: () => active ? { minX:minX.value, minY:minY.value, maxX:maxX.value, maxY:maxY.value, pixelsPerUnitX:scaleX.value, pixelsPerUnitY:scaleY.value, pixelOffsetX:pixelOffsetX.value, pixelOffsetY:pixelOffsetY.value, useSceneImage:useSceneImage.checked } : null,
-        dispose: () => { active = false; down = null; annotationToggle?.removeEventListener("click", toggleAnnotations); svg.removeEventListener("wheel", wheel); svg.removeEventListener("pointerdown", start); svg.removeEventListener("pointermove", move); svg.removeEventListener("pointerup", end); svg.removeEventListener("pointercancel", end); }
+        values: () => active ? { minX:minX.value, minY:minY.value, maxX:maxX.value, maxY:maxY.value, pixelsPerUnitX:scaleX.value, pixelsPerUnitY:scaleY.value, pixelOffsetX:String(inputOffsetX), pixelOffsetY:String(inputOffsetY), useSceneImage:useSceneImage.checked,
+            nativeUpload:interpretation.value==="native", uploadResolution:resolution.value, uploadCustomTarget:customTarget.value } : null,
+        dispose: () => { active = false; down = null; for(const input of numericInputs) input.removeEventListener("input",numeric); interpretation.removeEventListener("change",prepareChoice); resolution.removeEventListener("change",prepareChoice); annotationToggle?.removeEventListener("click", toggleAnnotations); svg.removeEventListener("wheel", wheel); svg.removeEventListener("pointerdown", start); svg.removeEventListener("pointermove", move); svg.removeEventListener("pointerup", end); svg.removeEventListener("pointercancel", end); }
     };
 };
-window.reconcileV2SceneImageCapturePreview = (svg, disabled, annotationToggle) => svg?.__v2SceneImageCapturePreview?.reconcile?.(disabled, annotationToggle);
+window.reconcileV2SceneImageCapturePreview = (svg, disabled, annotationToggle, frozen = false) => svg?.__v2SceneImageCapturePreview?.reconcile?.(disabled, annotationToggle, frozen);
 window.resetV2SceneImageCapturePreview = (svg, values) => svg?.__v2SceneImageCapturePreview?.reset?.(values);
 window.readV2SceneImageCapturePreview = svg => {
     const state = svg?.__v2SceneImageCapturePreview;
@@ -641,7 +704,7 @@ window.createV2SceneCaptureFocusOwner = (fields, ...inputs) => {
     if (!(fields instanceof HTMLElement) || !(dialog instanceof HTMLElement) || !fields.isConnected || !dialog.isConnected) return null;
     fields.__v2SceneCaptureFocusOwner?.dispose();
     let active = true, lastNumeric = null;
-    const usable = input => input instanceof HTMLInputElement && input.type === "number" && input.isConnected && fields.contains(input) && !input.disabled;
+    const usable = input => input instanceof HTMLInputElement && input.type === "number" && input.isConnected && fields.contains(input) && !input.disabled && !input.closest("[hidden]");
     lastNumeric = inputs.find(input => input === document.activeElement && usable(input)) || null;
     const remember = event => { if (active && usable(event.currentTarget)) lastNumeric = event.currentTarget; };
     inputs.forEach(input => input?.addEventListener("focus", remember));
@@ -649,7 +712,7 @@ window.createV2SceneCaptureFocusOwner = (fields, ...inputs) => {
         restore: () => {
             if (!active || fields.__v2SceneCaptureFocusOwner !== owner || !fields.isConnected || !dialog.isConnected || !dialog.contains(fields) || dialog.dataset.v2ModalStage !== "ProposalOpen") return;
             // Committing temporarily disables every numeric control; do not clear
-            // the context then. Black-mode pixel offsets remain ineligible at restoration.
+            // the context then. Hidden Native/None fields remain ineligible at restoration.
             if (usable(lastNumeric)) lastNumeric.focus(); else dialog.focus();
         },
         dispose: () => {
@@ -981,7 +1044,7 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
       const existing = root[v2ChildInteractionOwnerKey];
       if(existing?.isLive?.())throw new Error("A V2 child interaction owner is already installed for this page root.");
       existing?.dispose?.();
-       const owners = {}, configs = {}, tabSources = new WeakSet(), feedback = new Map(); let drag = null, disposed = false, requirementsContext = initialRequirementsContext ?? { rooms: [], checks: [], predicates: [], items: [], countables: [], enemies: [], crests: [] }, activeRequirement = null, suppressedRequirementBlur = null, closingRequirement = false, pointerRequirementCaret = null;
+       const owners = {}, configs = {}, tabSources = new WeakSet(), feedback = new Map(); let drag = null, disposed = false, requirementsContext = initialRequirementsContext ?? { rooms: [], checks: [], predicates: [], items: [], countables: [], souls: [], crests: [] }, activeRequirement = null, suppressedRequirementBlur = null, closingRequirement = false, pointerRequirementCaret = null;
      const config = kind => configs[kind];
      const control = x => x instanceof HTMLInputElement || x instanceof HTMLTextAreaElement || x instanceof HTMLSelectElement;
       const requirementEditor = x => x instanceof HTMLTextAreaElement && x.matches("[data-v2-requirements-editor]");
@@ -996,13 +1059,13 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
             matches.uniqueDefinition=matches.length===1?definition:matches.uniqueDefinition===definition?definition:null;
         };
          const compileRequirementsLookups = context => {
-             const roomsByReference=new Map(),checksByName=new Map(),checksByRoom=new Map(),itemAliases=new Map(),countableAliases=new Map(),enemyAliases=new Map(),crestAliases=new Map(),predicateAliasesByFirstToken=new Map(),predicateAliases=[];
+              const roomsByReference=new Map(),checksByName=new Map(),checksByRoom=new Map(),itemAliases=new Map(),countableAliases=new Map(),soulAliases=new Map(),crestAliases=new Map(),predicateAliasesByFirstToken=new Map(),predicateAliases=[];
              for(const room of context.rooms||[])addRequirementLookup(roomsByReference,identify(room.referenceId),room);
              for(const check of context.checks||[]){const name=identify(check.friendlyName);addRequirementLookup(checksByName,name,check);let roomChecks=checksByRoom.get(check.roomId);if(!roomChecks){roomChecks=new Map();checksByRoom.set(check.roomId,roomChecks);}addRequirementLookup(roomChecks,name,check);}
-             for(const [rows,map] of [[context.items,itemAliases],[context.countables,countableAliases],[context.enemies,enemyAliases],[context.crests,crestAliases]])
+              for(const [rows,map] of [[context.items,itemAliases],[context.countables,countableAliases],[context.souls,soulAliases],[context.crests,crestAliases]])
                  for(const row of rows||[])for(const alias of row.aliases||[])addFriendlyNameAliasLookup(map,identify(alias),row);
              for(const predicate of context.predicates||[])for(const alias of predicate.aliases||[]){const normalized=identify(alias),tokens=normalized?normalized.split(" "):[];if(tokens.length){const candidate={predicate,tokens,normalizedAlias:normalized};addRequirementLookup(predicateAliasesByFirstToken,tokens[0],candidate);predicateAliases.push(candidate);}}
-             return {roomsByReference,checksByName,checksByRoom,itemAliases,countableAliases,enemyAliases,crestAliases,predicateAliasesByFirstToken,predicateAliases};
+              return {roomsByReference,checksByName,checksByRoom,itemAliases,countableAliases,soulAliases,crestAliases,predicateAliasesByFirstToken,predicateAliases};
          };
        let requirementsLookups=compileRequirementsLookups(requirementsContext);
         const friendlyNameEditor = field => field instanceof HTMLTextAreaElement && field.matches("[data-v2-friendly-name-space]");
@@ -1010,7 +1073,7 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
             if(disposed||!friendlyNameEditor(field))return;
             const identity=identify(field.value), space=field.dataset.v2FriendlyNameSpace;
             let role=null;
-             const namespaces=space==="enemies"?[[requirementsLookups.enemyAliases,"enemy"]]:space==="checks"?[[requirementsLookups.itemAliases,"item"],[requirementsLookups.countableAliases,"countable"]]:[];
+              const namespaces=space==="enemies"?[[requirementsLookups.soulAliases,"soul"]]:space==="checks"?[[requirementsLookups.itemAliases,"item"],[requirementsLookups.countableAliases,"countable"]]:[];
              if(identity&&namespaces.length){
                  const probe=phrase=>namespaces.map(([lookup])=>lookup.get(phrase));
                  const exact=probe(identity), maximal=[];
@@ -1052,11 +1115,11 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
           const codePointAt=(text,index)=>index>=text.length?"":String.fromCodePoint(text.codePointAt(index));
           const identifierCodePoint=value=>/[\p{L}\p{Nd}]/u.test(value);
           const wordAt=(word,index)=>source.slice(index,index+word.length)===word&&!identifierCodePoint(codePointBefore(source,index))&&!identifierCodePoint(codePointAt(source,index+word.length));
-              const syntax = { only:"{predicate}", optional:"{difficulty?} {predicate}", required:"{difficulty} {predicate}", direction:"{predicate} [{direction}]", optionalDirection:"{predicate} [{direction?}]", item:"{predicate} {item}", check:"{predicate} {check}", quantity:"{predicate} {quantity}", enemy:"{difficulty} {predicate} [{enemy}]", countable:"{predicate} {quantity} {countable}", countableFirst:"{predicate} {countable} {quantity}", crestDirection:"[{crest}] {predicate} {direction}", difficultyCrest:"{difficulty} [{crest}] {predicate}", optionalCrestDirection:"[{crest?}] {predicate} {direction}", difficultyOptionalCrest:"{difficulty} [{crest?}] {predicate}" };
+               const syntax = { only:"{predicate}", optional:"{difficulty?} {predicate}", required:"{difficulty} {predicate}", direction:"{predicate} [{direction}]", optionalDirection:"{predicate} [{direction?}]", item:"{predicate} {item}", check:"{predicate} {check}", quantity:"{predicate} {quantity}", difficultySoul:"{difficulty} {predicate} [{soul}]", soul:"{predicate} [{soul}]", countable:"{predicate} {quantity} {countable}", countableFirst:"{predicate} {countable} {quantity}", crestDirection:"[{crest}] {predicate} {direction}", difficultyCrest:"{difficulty} [{crest}] {predicate}", optionalCrestDirection:"[{crest?}] {predicate} {direction}", difficultyOptionalCrest:"{difficulty} [{crest?}] {predicate}" };
           const operandShapes=new Map(Object.values(syntax).filter(pattern=>pattern.includes("[")).map(pattern=>[pattern,pattern.split(" ").map(marker=>({role:marker.replace(/[\[\]{}?]/gu,""),optional:marker.includes("?"),list:marker.startsWith("[")}))]));
           const difficulty = new Set(["easy","medium","hard"]), direction = new Set(["left","right","up","down","both","either","any","all"]);
            const tokenizeAtom = text => { const chunks=[...text.matchAll(/\S+/gu)].map(match=>({start:match.index,end:match.index+match[0].length,identity:identify(match[0])})),meaningful=chunks.filter(chunk=>chunk.identity);return {text,chunks,meaningful}; };
-             const matchingCandidates = tokens => { if(!tokens.length)return [];const matches=(requirementsLookups.predicateAliasesByFirstToken.get(tokens[0].identity)||[]).map(candidate=>({candidate,difficultyEnabled:false,invalidDifficulty:false}));if(tokens.length>1)for(const candidate of requirementsLookups.predicateAliasesByFirstToken.get(tokens[1].identity)||[]){const input=candidate.predicate.inputSyntax;if(difficulty.has(tokens[0].identity)&&(input===syntax.optional||input===syntax.required||input===syntax.enemy))matches.push({candidate,difficultyEnabled:true,invalidDifficulty:false});else if(!difficulty.has(tokens[0].identity)&&(input===syntax.required||input===syntax.enemy))matches.push({candidate,difficultyEnabled:false,invalidDifficulty:true});}return matches; };
+              const matchingCandidates = tokens => { if(!tokens.length)return [];const matches=(requirementsLookups.predicateAliasesByFirstToken.get(tokens[0].identity)||[]).map(candidate=>({candidate,difficultyEnabled:false,invalidDifficulty:false}));if(tokens.length>1)for(const candidate of requirementsLookups.predicateAliasesByFirstToken.get(tokens[1].identity)||[]){const input=candidate.predicate.inputSyntax;if(difficulty.has(tokens[0].identity)&&(input===syntax.optional||input===syntax.required||input===syntax.difficultySoul))matches.push({candidate,difficultyEnabled:true,invalidDifficulty:false});else if(!difficulty.has(tokens[0].identity)&&(input===syntax.required||input===syntax.difficultySoul))matches.push({candidate,difficultyEnabled:false,invalidDifficulty:true});}return matches; };
            const matchedPrefix = (tokens,candidate,start) => { if(start+candidate.tokens.length>tokens.length)return null;for(let index=0;index<candidate.tokens.length;index++)if(tokens[start+index].identity!==candidate.tokens[index])return null;return {next:start+candidate.tokens.length,prefixEnd:tokens[start+candidate.tokens.length-1].end}; };
             const argumentStart = (text,prefixEnd) => prefixEnd+(text.slice(prefixEnd).length-text.slice(prefixEnd).trimStart().length);
           const scoped = (raw, prefixEnd) => { const rest=raw.slice(prefixEnd).trimStart(), words=[]; for(let index=0;index<rest.length;){const word=wordAtIn(rest,"IN",index)?"IN":wordAtIn(rest,"THE",index)?"THE":wordAtIn(rest,"GLOBAL",index)?"GLOBAL":null;if(word){words.push({word,index});index+=word.length;}else index++;} if(words.some(x=>x.word==="GLOBAL"))return { state:"unknown" }; if(words.length===0)return { state:"local", name:rest }; if(words.length!==1)return { state:"malformed" }; const qualifier=words[0]; if(qualifier.word==="THE"&&qualifier.index===0)return rest.slice(3).trim()?{state:"the",name:rest.slice(3).trimStart(),qualifier}:{state:"malformed"}; if(qualifier.word==="IN"&&qualifier.index>0&&rest.slice(qualifier.index+2).trim())return {state:"in",name:rest.slice(0,qualifier.index).trimEnd(),room:rest.slice(qualifier.index+2).trimStart(),qualifier}; return {state:"malformed"}; };
@@ -1137,7 +1200,7 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
                               const identity=identify(text.slice(value.start,value.end));
                               if(slot.role==="difficulty")valid=difficulty.has(identity);
                               else if(slot.role==="direction")valid=direction.has(identity);
-                              else {const map=slot.role==="crest"?requirementsLookups.crestAliases:requirementsLookups.enemyAliases;valid=(map.get(identity)?.length??0)===1;}
+                               else {const map=slot.role==="crest"?requirementsLookups.crestAliases:requirementsLookups.soulAliases;valid=(map.get(identity)?.length??0)===1;}
                               if(!valid)break;
                               roles.push({...value,className:`requirements-${slot.role}`});
                           }
@@ -1470,7 +1533,7 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
             beforeFocus:()=>{if(!disposed)reconcileBoundaryFacts();},
             register:(reference,kind,descriptor)=>{if(!disposed&&typeof kind==="string"&&descriptor&&["method","blur","drop","row","table","grip","field","client","directionPrefix","before","tail","tailRow"].every(key=>typeof descriptor[key]==="string"&&descriptor[key])){pointerRequirementCaret=null;if(activeRequirement&&kindOf(activeRequirement.inline)===kind)closeRequirements(false);clear(kind);if(drag?.kind===kind)drag=null;configs[kind]=Object.freeze({...descriptor});owners[kind]=reference;reconcileAttention();}},
             unregister:kind=>{pointerRequirementCaret=null;if(activeRequirement&&kindOf(activeRequirement.inline)===kind)closeRequirements(false);clear(kind);if(drag?.kind===kind)drag=null;delete owners[kind];delete configs[kind];reconcileAttention();},
-              setRequirementsContext:context=>{requirementsContext=context??{rooms:[],checks:[],predicates:[],items:[],countables:[],enemies:[],crests:[]};requirementsLookups=compileRequirementsLookups(requirementsContext);reconcileBoundaryFacts();reconcileRequirement();root.querySelectorAll("textarea[data-v2-requirements-editor]").forEach(renderInlineRequirement);root.querySelectorAll(".requirements-preview").forEach(renderArchivedRequirements);reconcileFriendlyNames();reconcileAttention();},
+               setRequirementsContext:context=>{requirementsContext=context??{rooms:[],checks:[],predicates:[],items:[],countables:[],souls:[],crests:[]};requirementsLookups=compileRequirementsLookups(requirementsContext);reconcileBoundaryFacts();reconcileRequirement();root.querySelectorAll("textarea[data-v2-requirements-editor]").forEach(renderInlineRequirement);root.querySelectorAll(".requirements-preview").forEach(renderArchivedRequirements);reconcileFriendlyNames();reconcileAttention();},
             commitActiveRequirement:async()=>{let field;if(activeRequirement){const state=activeRequirement;closeRequirements(true);field=root.querySelector(`#${CSS.escape(state.id)}`);}else{const focused=document.activeElement;if(!requirementEditor(focused)||!root.contains(focused))return true;field=focused;}const kind=kindOf(field),c=kind&&config(kind),owner=kind&&owners[kind];if(!requirementEditor(field)||!c||!owner?.invokeMethodAsync||!field.dataset[c.client])return false;suppressedRequirementBlur=field;field.blur();if(suppressedRequirementBlur===field)suppressedRequirementBlur=null;try{return await owner.invokeMethodAsync(c.blur,field.dataset[c.client],field.dataset[c.field],null,field.value)!==false;}catch{return false;}},
             focus:id=>{if(!disposed)window.focusEditorField(id);},
             clear,

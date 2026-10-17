@@ -10,7 +10,7 @@
         <button id="requirement-syntax-guide-tab-crests" type="button" role="tab" aria-selected="@(tab == GuideTab.Crests)" aria-controls="requirement-syntax-guide-content" class="@(tab == GuideTab.Crests ? "selected" : null)" @onclick="() => tab = GuideTab.Crests">Crests</button>
         <button id="requirement-syntax-guide-tab-items" type="button" role="tab" aria-selected="@(tab == GuideTab.Items)" aria-controls="requirement-syntax-guide-content" class="@(tab == GuideTab.Items ? "selected" : null)" @onclick="() => tab = GuideTab.Items">Items</button>
         <button id="requirement-syntax-guide-tab-countables" type="button" role="tab" aria-selected="@(tab == GuideTab.Countables)" aria-controls="requirement-syntax-guide-content" class="@(tab == GuideTab.Countables ? "selected" : null)" @onclick="() => tab = GuideTab.Countables">Countables</button>
-        <button id="requirement-syntax-guide-tab-enemy-types" type="button" role="tab" aria-selected="@(tab == GuideTab.EnemyTypes)" aria-controls="requirement-syntax-guide-content" class="@(tab == GuideTab.EnemyTypes ? "selected" : null)" @onclick="() => tab = GuideTab.EnemyTypes">Enemy Types</button>
+        <button id="requirement-syntax-guide-tab-souls" type="button" role="tab" aria-selected="@(tab == GuideTab.Souls)" aria-controls="requirement-syntax-guide-content" class="@(tab == GuideTab.Souls ? "selected" : null)" @onclick="() => tab = GuideTab.Souls">Souls</button>
     </div>
     <div id="requirement-syntax-guide-content" class="requirement-syntax-guide-content" role="tabpanel" aria-labelledby="@ActiveTabId">
         @if (tab == GuideTab.HowToWrite)
@@ -19,7 +19,7 @@
                 <section>
                     <h3>Write a requirement</h3>
                     <p>A requirement is a recognized phrase such as <code><span class="guide-token-requirement">dash</span></code>, <code><span class="guide-token-requirement">break vines</span> <span class="guide-token-direction">left</span></code>, or <code><span class="guide-token-difficulty">hard</span> <span class="guide-token-requirement">spike pogo</span></code>.</p>
-                    <p>The Requirement types view shows each accepted pattern. Words in braces are replaced with the described value, and <code>?</code> marks an optional value. Requirement types, Crests, Items, Countables, and Enemy Types are the current accepted vocabulary.</p>
+                    <p>The Requirement types view shows each accepted pattern. Words in braces are replaced with the described value, and <code>?</code> marks an optional value. Requirement types, Crests, Items, Countables, and Souls are the current accepted vocabulary.</p>
                     <p>Use <code><span class="guide-token-requirement">none</span></code> when nothing is required. Use <code><span class="guide-token-requirement">invalid</span></code> when the requirement can never be met.</p>
                 </section>
                 <section>
@@ -60,8 +60,8 @@
                     <p>Use an amount with a <span class="guide-token-countable">countable name</span>, for example <code><span class="guide-token-requirement">get</span> <span class="guide-token-amount">5</span> <span class="guide-token-countable">mossberries</span></code>, <code><span class="guide-token-requirement">at least</span> <span class="guide-token-amount">2</span> <span class="guide-token-countable">tool slots unlocked</span></code>, or <code><span class="guide-token-requirement">spend</span> <span class="guide-token-amount">20</span> <span class="guide-token-countable">rosaries</span></code>.</p>
                 </section>
                 <section>
-                    <h3>Require an enemy type</h3>
-                    <p>Replace <code class="guide-token-enemy">{enemy}</code> with an <span class="guide-token-enemy">enemy name</span>, such as <code class="guide-token-enemy">Mossgrub</code>.</p>
+                    <h3>Require a soul</h3>
+                    <p>Replace <code class="guide-token-soul">{soul}</code> with a <span class="guide-token-soul">soul name</span>, such as <code class="guide-token-soul">Mossgrub</code>. Souls encompass enemies, bosses, and NPCs.</p>
                 </section>
                 <section>
                     <h3>Refer to another check</h3>
@@ -159,17 +159,17 @@
             }
             </tbody></table>
         }
-        else if (tab == GuideTab.EnemyTypes)
+        else if (tab == GuideTab.Souls)
         {
-            <label class="requirement-syntax-guide-search">search <input aria-label="Search enemy types" @bind="enemyTypeSearch" @bind:event="oninput" /></label>
-            <table class="requirement-syntax-guide-table requirement-syntax-guide-reference requirement-syntax-guide-notes-reference"><colgroup><col /><col /><col class="requirement-syntax-guide-notes-column" /></colgroup><thead><tr><th>Enemy type name</th><th>Other accepted names</th><th>Notes</th></tr></thead><tbody>
-            @foreach (var group in EnemyTypeGroups)
+            <label class="requirement-syntax-guide-search">search <input aria-label="Search souls" @bind="soulSearch" @bind:event="oninput" /></label>
+            <table class="requirement-syntax-guide-table requirement-syntax-guide-reference requirement-syntax-guide-notes-reference"><colgroup><col /><col /><col class="requirement-syntax-guide-notes-column" /></colgroup><thead><tr><th>Soul name</th><th>Other accepted names</th><th>Notes</th></tr></thead><tbody>
+            @foreach (var group in SoulGroups)
             {
                 @if (group.Category is not null) { <tr class="requirement-syntax-guide-category"><th colspan="3">@group.Category</th></tr> }
-                @foreach (var enemyType in group.Rows)
+                @foreach (var soul in group.Rows)
                 {
-                    var aliases = enemyType.ParsedAliases;
-                    <tr class="requirement-syntax-guide-reference-row"><td class="guide-token-enemy">@aliases[0]</td><td class="guide-token-enemy">@string.Join(", ", aliases.Skip(1))</td><td class="guide-token-note">@enemyType.Notes</td></tr>
+                    var aliases = soul.ParsedAliases;
+                    <tr class="requirement-syntax-guide-reference-row"><td class="guide-token-soul">@aliases[0]</td><td class="guide-token-soul">@string.Join(", ", aliases.Skip(1))</td><td class="guide-token-note">@soul.Notes</td></tr>
                 }
             }
             </tbody></table>
@@ -179,19 +179,19 @@
 </section>
 
 @code {
-    private enum GuideTab { HowToWrite, LocationTypes, RequirementTypes, Crests, Items, Countables, EnemyTypes }
+    private enum GuideTab { HowToWrite, LocationTypes, RequirementTypes, Crests, Items, Countables, Souls }
     private sealed record PredicateGroup(string? Category, IReadOnlyList<RequirementPredicateReferenceView> Rows);
     private sealed record CrestGroup(string? Category, IReadOnlyList<RequirementCrestReferenceView> Rows);
     private sealed record ItemGroup(string? Category, IReadOnlyList<RequirementItemReferenceView> Rows);
     private sealed record CountableGroup(string? Category, IReadOnlyList<RequirementCountableReferenceView> Rows);
-    private sealed record EnemyTypeGroup(string? Category, IReadOnlyList<RequirementEnemyTypeReferenceView> Rows);
+    private sealed record SoulGroup(string? Category, IReadOnlyList<RequirementSoulReferenceView> Rows);
 
     [Parameter, EditorRequired] public RequirementCatalogueReferenceView Reference { get; set; } = null!;
     [Parameter] public EventCallback Manage { get; set; }
     [Parameter] public EventCallback Close { get; set; }
 
     private GuideTab tab;
-    private string predicateSearch = "", crestSearch = "", itemSearch = "", countableSearch = "", enemyTypeSearch = "";
+    private string predicateSearch = "", crestSearch = "", itemSearch = "", countableSearch = "", soulSearch = "";
     private string ActiveTabId => tab switch
     {
         GuideTab.HowToWrite => "requirement-syntax-guide-tab-how-to-write",
@@ -200,14 +200,14 @@
         GuideTab.Crests => "requirement-syntax-guide-tab-crests",
         GuideTab.Items => "requirement-syntax-guide-tab-items",
         GuideTab.Countables => "requirement-syntax-guide-tab-countables",
-        _ => "requirement-syntax-guide-tab-enemy-types"
+        _ => "requirement-syntax-guide-tab-souls"
     };
 
     private IReadOnlyList<PredicateGroup> PredicateGroups => GroupPredicates(Reference.Predicates, predicateSearch);
     private IReadOnlyList<CrestGroup> CrestGroups => GroupCrests(Reference.Crests, crestSearch);
     private IReadOnlyList<ItemGroup> ItemGroups => GroupItems(Reference.Items, itemSearch);
     private IReadOnlyList<CountableGroup> CountableGroups => GroupCountables(Reference.Countables, countableSearch);
-    private IReadOnlyList<EnemyTypeGroup> EnemyTypeGroups => GroupEnemyTypes(Reference.EnemyTypes, enemyTypeSearch);
+    private IReadOnlyList<SoulGroup> SoulGroups => GroupSouls(Reference.Souls, soulSearch);
 
     private static IReadOnlyList<PredicateGroup> GroupPredicates(IReadOnlyList<RequirementPredicateReferenceView> rows, string search)
     {
@@ -273,16 +273,16 @@
             groups.Add(new(category, matches));
     }
 
-    private static IReadOnlyList<EnemyTypeGroup> GroupEnemyTypes(IReadOnlyList<RequirementEnemyTypeReferenceView> rows, string search)
+    private static IReadOnlyList<SoulGroup> GroupSouls(IReadOnlyList<RequirementSoulReferenceView> rows, string search)
     {
-        var groups = new List<EnemyTypeGroup>();
-        AddEnemyTypeGroup(groups, null, rows.Where(x => string.IsNullOrWhiteSpace(x.Category)), search);
+        var groups = new List<SoulGroup>();
+        AddSoulGroup(groups, null, rows.Where(x => string.IsNullOrWhiteSpace(x.Category)), search);
         foreach (var category in rows.Where(x => !string.IsNullOrWhiteSpace(x.Category)).Select(x => x.Category!).Distinct(StringComparer.Ordinal))
-            AddEnemyTypeGroup(groups, category, rows.Where(x => string.Equals(x.Category, category, StringComparison.Ordinal)), search);
+            AddSoulGroup(groups, category, rows.Where(x => string.Equals(x.Category, category, StringComparison.Ordinal)), search);
         return groups;
     }
 
-    private static void AddEnemyTypeGroup(List<EnemyTypeGroup> groups, string? category, IEnumerable<RequirementEnemyTypeReferenceView> candidates, string search)
+    private static void AddSoulGroup(List<SoulGroup> groups, string? category, IEnumerable<RequirementSoulReferenceView> candidates, string search)
     {
         var matches = candidates.Where(x => Matches(search, x.Name, x.Category, x.Aliases)).ToArray();
         if (matches.Length > 0)
@@ -320,7 +320,7 @@
                 "{crest}" or "{crest?}" => "guide-token-crest",
                 "{item}" => "guide-token-item",
                 "{countable}" => "guide-token-countable",
-                "{enemy}" => "guide-token-enemy",
+                "{soul}" => "guide-token-soul",
                 "{quantity}" => "guide-token-amount",
                 "{check}" => "guide-token-check-local",
                 _ => "guide-token-requirement"

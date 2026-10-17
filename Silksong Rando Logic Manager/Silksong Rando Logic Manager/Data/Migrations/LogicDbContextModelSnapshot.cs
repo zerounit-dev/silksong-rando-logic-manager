@@ -168,7 +168,7 @@ namespace Silksong_Rando_Logic_Manager.Data.Migrations
                     b.ToTable("RequirementCrests");
                 });
 
-            modelBuilder.Entity("Silksong_Rando_Logic_Manager.Data.RequirementEnemyType", b =>
+            modelBuilder.Entity("Silksong_Rando_Logic_Manager.Data.RequirementSoul", b =>
                 {
                     b.Property<Guid>("Id").ValueGeneratedOnAdd().HasColumnType("TEXT");
                     b.Property<string>("Name").IsRequired().HasColumnType("TEXT");
@@ -178,7 +178,7 @@ namespace Silksong_Rando_Logic_Manager.Data.Migrations
                     b.Property<string>("Notes").IsRequired().HasColumnType("TEXT");
                     b.Property<int>("SortOrder").HasColumnType("INTEGER");
                     b.HasKey("Id");
-                    b.ToTable("RequirementEnemyTypes");
+                    b.ToTable("RequirementSouls");
                 });
 
             modelBuilder.Entity("Silksong_Rando_Logic_Manager.Data.Map", b =>
@@ -433,6 +433,14 @@ namespace Silksong_Rando_Logic_Manager.Data.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER")
                         .HasDefaultValue(true);
+
+                    b.Property<bool>("UseUploadedSceneImage")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(false);
+
+                    b.Property<string>("SceneImageOriginalHash").HasColumnType("TEXT");
+                    b.Property<string>("SceneImageCropHash").HasColumnType("TEXT");
 
                     b.Property<double?>("SceneMaxX")
                         .HasColumnType("REAL");

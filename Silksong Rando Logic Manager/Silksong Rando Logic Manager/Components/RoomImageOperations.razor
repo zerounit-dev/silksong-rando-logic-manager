@@ -1,0 +1,129 @@
+@implements IAsyncDisposable
+@inject RoomImageOperationsService Operations
+@inject DiagnosticState Diagnostics
+@inject IJSRuntime JS
+
+<button @ref="trigger" type="button" class="scene-picker room-image-trigger" title="Room images" aria-label="Room images" @onclick="Open"><i class="fa-regular fa-image" aria-hidden="true"></i></button>
+@if (open)
+{
+    <div class="confirmation-backdrop" @onclick="Close">
+        <section @ref="dialog" class="confirmation-modal room-image-operations" role="dialog" aria-modal="true" aria-labelledby="room-images-title" tabindex="-1" @onclick:stopPropagation="true" @onkeydown="KeyDown">
+            <h2 id="room-images-title">Room images</h2>
+            <div class="room-image-actions">
+                <button type="button" disabled="@(busy || checking)" @onclick="(() => Regenerate(SceneImageRebuildMode.MissingOrStale))">Regenerate stale images</button>
+                <button type="button" disabled="@(busy || checking)" @onclick="(() => Regenerate(SceneImageRebuildMode.AllUploaded))">Regenerate all images</button>
+                <button type="button" disabled="@(busy || checking || scan?.Complete != true || scan.Candidates.Count == 0)" @onclick="ConfirmCleanup">Delete unused images</button>
+            </div>
+            <p role="status" aria-live="polite">@(checking ? "Checking image files" : status)</p>
+            @if (!checking && scan is { } current) { <p>@current.Candidates.Count unused files · @Size(current.Bytes)@(!current.Complete ? " · check incomplete; cleanup unavailable" : "")</p> }
+            @if (confirm && scan is { } confirmed)
+            {
+                <p>Delete @confirmed.Candidates.Count unused image files (@Size(confirmed.Bytes))? References and file identities will be checked again before deletion.</p>
+                <div class="confirmation-actions"><button type="button" disabled="@busy" @onclick="(() => confirm = false)">Cancel deletion</button><button type="button" disabled="@busy" @onclick="Delete">Delete unused files</button></div>
+            }
+            @foreach (var blocker in blockers) { <p class="danger"><strong>@blocker.FriendlyName</strong>: @blocker.Instruction</p> }
+            <div class="confirmation-actions"><button type="button" disabled="@busy" @onclick="Close">Close</button></div>
+        </section>
+    </div>
+}
+
+@code {
+    private bool open, busy, generating, checking, confirm, disposed;
+    private ElementReference trigger, dialog;
+    private RoomImageScan? scan;
+    private string status = "Ready";
+    private IReadOnlyList<RoomImageBlocker> blockers = [];
+    private long lifetime;
+    private IJSObjectReference? focusModule, focusOwner;
+    private bool focusInitializing;
+    private async Task Open()
+    {
+        if (open || disposed) return;
+        open = true; lifetime++; scan = null; confirm = false; blockers = []; status = "Ready";
+        checking = true;
+        await InvokeAsync(StateHasChanged);
+        await RefreshScan();
+    }
+    private async Task RefreshScan()
+    {
+        var owner = lifetime;
+        checking = true;
+        try { var result = await Task.Run(Operations.ScanAsync); if (!disposed && open && owner == lifetime) scan = result; }
+        catch (Exception ex) { if (!disposed && open && owner == lifetime) { scan = new([], false); Diagnostics.Show(ex.ToString()); } }
+        finally { if (owner == lifetime) checking = false; }
+    }
+    private async Task Regenerate(SceneImageRebuildMode mode)
+    {
+        if (busy || checking || disposed) return;
+        busy = true; generating = true; confirm = false; blockers = []; status = "Rebuilding images 0 of 0";
+        var progress = new ImageProgress(value => _ = InvokeAsync(() => { if (!disposed && open && generating) { status = $"Rebuilding images {value.Completed} of {value.Total}"; StateHasChanged(); } }));
+        try
+        {
+            var result = await Task.Run(() => Operations.RegenerateAsync(mode, progress));
+            generating = false;
+            status = result.Generated == 0 && result.Failed == 0 && result.Blockers.Count == 0 && !result.Interrupted ? "No images need rebuilding" : $"Rebuilt {result.Generated} images";
+            blockers = result.Blockers;
+            if (result.Interrupted) status += "; rebuilding stopped unexpectedly. Consult diagnostics.";
+            else if (result.Failed != 0) status += $"; {result.Failed} images could not be rebuilt.";
+            if (result.Diagnostics.Count != 0) { status += " Consult diagnostics."; Diagnostics.Show(new AggregateException(result.Diagnostics).ToString()); }
+        }
+        catch (Exception ex) { generating = false; status = "Image rebuilding stopped unexpectedly. Consult diagnostics."; Diagnostics.Show(ex.ToString()); }
+        finally { await RefreshScan(); busy = false; }
+    }
+    private void ConfirmCleanup() { if (!busy && !checking && scan is { Complete: true, Candidates.Count: > 0 }) confirm = true; }
+    private async Task Delete()
+    {
+        if (busy || !confirm || scan is not { Complete: true } confirmed) return;
+        busy = true; confirm = false; blockers = [];
+        try
+        {
+            var result = await Task.Run(() => Operations.DeleteUnusedAsync(confirmed));
+            status = $"Deleted {result.Deleted} unused files / freed {Size(result.Bytes)}";
+            if (result.Failures.Count != 0) { status += "; some files could not be removed. Consult diagnostics."; Diagnostics.Show(new AggregateException(result.Failures).ToString()); }
+        }
+        catch (Exception ex) { status = "Image cleanup stopped unexpectedly. Consult diagnostics."; Diagnostics.Show(ex.ToString()); }
+        finally { await RefreshScan(); busy = false; }
+    }
+    private async Task Close()
+    {
+        if (busy || Diagnostics.ErrorDetails is not null) return;
+        lifetime++; open = false; confirm = false;
+        await ReleaseFocusOwner();
+        if (!disposed && Diagnostics.ErrorDetails is null) await trigger.FocusAsync();
+    }
+    private Task KeyDown(KeyboardEventArgs args) => args.Key == "Escape" && Diagnostics.ErrorDetails is null ? Close() : Task.CompletedTask;
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (disposed || !open || focusInitializing) return;
+        if (focusOwner is null)
+        {
+            var owner = lifetime; focusInitializing = true;
+            try
+            {
+                focusModule ??= await JS.InvokeAsync<IJSObjectReference>("import", "./room-image-modal.js");
+                if (disposed) { await focusModule.DisposeAsync(); focusModule = null; return; }
+                if (disposed || !open || owner != lifetime) return;
+                var candidate = await focusModule.InvokeAsync<IJSObjectReference>("create", dialog);
+                if (disposed || !open || owner != lifetime) { await candidate.InvokeVoidAsync("dispose"); await candidate.DisposeAsync(); return; }
+                focusOwner = candidate;
+            }
+            finally { focusInitializing = false; if (!disposed && open && owner != lifetime && focusOwner is null) StateHasChanged(); }
+        }
+        if (focusOwner is not null) await focusOwner.InvokeVoidAsync("reconcile");
+    }
+    private async Task ReleaseFocusOwner()
+    {
+        var owner = focusOwner; focusOwner = null;
+        if (owner is null) return;
+        try { await owner.InvokeVoidAsync("dispose"); await owner.DisposeAsync(); }
+        catch (JSDisconnectedException) { }
+    }
+    public async ValueTask DisposeAsync()
+    {
+        disposed = true; lifetime++;
+        await ReleaseFocusOwner();
+        if (focusModule is not null) { try { await focusModule.DisposeAsync(); } catch (JSDisconnectedException) { } }
+    }
+    private static string Size(long bytes) => $"{bytes / 1048576d:0.##} MiB";
+    private sealed class ImageProgress(Action<SceneImageRebuildProgress> report) : IProgress<SceneImageRebuildProgress> { public void Report(SceneImageRebuildProgress value) => report(value); }
+}

@@ -31,6 +31,9 @@ public sealed class Room : ArchivableEntity
     public double? SceneImagePixelOffsetY { get; set; }
 
     public bool UseSceneImage { get; set; } = true;
+    public bool UseUploadedSceneImage { get; set; }
+    public string? SceneImageOriginalHash { get; set; }
+    public string? SceneImageCropHash { get; set; }
 
     public bool IsSceneImageStale { get; set; }
 

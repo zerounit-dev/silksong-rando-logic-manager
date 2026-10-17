@@ -35,7 +35,7 @@ public sealed class SceneImportService(IDbContextFactory<LogicDbContext> dbConte
                 EnemyEquivalence = new(x.RequirementsParseSucceeded, x.IsTodo, x.IsVerified, x.EnableAnnotation,
                     x.AnnotationSceneUnitX, x.AnnotationSceneUnitY, x.SubroomReferenceText, x.ResolvedSubroomId,
                     x.LocalPositionX, x.LocalPositionY, x.LocalPositionZ) }).ToListAsync(cancellationToken);
-        var enemyNames = await db.RequirementEnemyTypes.AsNoTracking()
+        var enemyNames = await db.RequirementSouls.AsNoTracking()
             .Select(x => new SceneImportEnemyName(x.Id, x.OutputValue, x.Name)).ToListAsync(cancellationToken);
         var sceneRooms = rooms.Where(x => Matches(x.InGameId, review.SceneName)).ToArray();
         var matches = Flatten(review.RootObjects)
@@ -390,8 +390,8 @@ public sealed record SceneImportRoom(Guid Id, string FriendlyName, string Refere
     public bool IsStale { get; init; }
     public long ImageVersion { get; init; }
     public string? ImageUrl { get; init; }
-    public bool ImageEligible => !IsStale && SceneBounds.TryGetSize(SceneMinX, SceneMinY, SceneMaxX, SceneMaxY, out _, out _) &&
-        SceneBounds.HasUsableScales(ScaleX, ScaleY) && (!UseSceneImage || SceneBounds.HasUsablePixelOffsets(OffsetX, OffsetY));
+    public bool ImageEligible => UseSceneImage && !IsStale && SceneBounds.TryGetSize(SceneMinX, SceneMinY, SceneMaxX, SceneMaxY, out _, out _) &&
+        SceneBounds.HasUsableScales(ScaleX, ScaleY) && SceneBounds.HasUsablePixelOffsets(OffsetX, OffsetY);
 }
 public sealed record SceneImportPreview(IReadOnlyList<SceneImportRoom> MatchingRooms, IReadOnlyList<SceneImportObjectMatch> ObjectMatches, IReadOnlyList<SceneImportSelectableRecord> Transitions, IReadOnlyList<SceneImportSelectableRecord> Checks, IReadOnlyList<SceneImportEnemyName> EnemyNames);
 public sealed record SceneImportEnemyName(Guid Id, string OutputValue, string Name);

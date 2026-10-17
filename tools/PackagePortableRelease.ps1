@@ -26,6 +26,7 @@ $sourceData = Join-Path $projectDirectory 'Data'
 $sourceDatabase = Join-Path $sourceData 'silksong-rando-logic.db'
 $sourceScenes = Join-Path $sourceData 'scenes'
 $sourceSceneSource = Join-Path $sourceData 'scene-source'
+$sourceSceneOriginals = Join-Path $sourceData 'scene-originals'
 $sourceReadmeDirectory = Join-Path $repositoryRoot 'readme'
 $sourceReadme = Join-Path $sourceReadmeDirectory 'README.md'
 $sourceLogicGuide = Join-Path $sourceReadmeDirectory 'LOGIC.md'
@@ -148,6 +149,9 @@ try {
     New-Item -ItemType Directory -Path $packageData -Force | Out-Null
     Copy-Item -LiteralPath $snapshot.FullName -Destination (Join-Path $packageData 'silksong-rando-logic.db')
     Copy-Item -LiteralPath $sourceScenes -Destination (Join-Path $packageData 'scenes') -Recurse
+    if (Test-Path -LiteralPath $sourceSceneOriginals) {
+        Copy-Item -LiteralPath $sourceSceneOriginals -Destination (Join-Path $packageData 'scene-originals') -Recurse
+    }
     $packageSceneSource = Join-Path $packageData 'scene-source'
     New-Item -ItemType Directory -Path $packageSceneSource -Force | Out-Null
     Get-ChildItem -LiteralPath $sourceSceneSource -Force |

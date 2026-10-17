@@ -38,7 +38,7 @@ window.requirementCatalogueDrag = (() => {
         const required = {
             "{predicate}": [], "{difficulty?} {predicate}": ["difficulty"], "{difficulty} {predicate}": ["difficulty"],
             "{predicate} [{direction}]": ["direction"], "{predicate} [{direction?}]": ["direction"], "{predicate} {item}": ["item"], "{predicate} {check}": ["check"], "{predicate} {quantity}": ["quantity"],
-            "{difficulty} {predicate} [{enemy}]": ["difficulty", "enemy"], "{predicate} {quantity} {countable}": ["quantity", "countable"],
+            "{difficulty} {predicate} [{soul}]": ["difficulty", "soul"], "{predicate} [{soul}]": ["soul"], "{predicate} {quantity} {countable}": ["quantity", "countable"],
             "{predicate} {countable} {quantity}": ["countable", "quantity"],
             "[{crest}] {predicate} {direction}": ["crest", "direction"], "{difficulty} [{crest}] {predicate}": ["difficulty", "crest"],
             "[{crest?}] {predicate} {direction}": ["crest", "direction"],
@@ -54,7 +54,7 @@ window.requirementCatalogueDrag = (() => {
             if (close < 0) return "Output syntax has an unmatched opening brace.";
             const token = output.slice(index + 1, close);
             if (token.includes("{")) return "Output syntax has malformed braces.";
-            if (!["difficulty", "direction", "item", "quantity", "check", "enemy", "countable", "crest"].includes(token)) return `Output syntax placeholder '{${token}}' is not supported.`;
+            if (!["difficulty", "direction", "item", "quantity", "check", "soul", "countable", "crest"].includes(token)) return `Output syntax placeholder '{${token}}' is not supported.`;
             tokens.push(token); index = close;
         }
         for (const token of tokens) {
@@ -116,7 +116,7 @@ window.requirementCatalogueDrag = (() => {
         definition.inFlightToken = token;
         validateDefinition(modal);
         try {
-            const method = { predicate: "ApplyPredicateDraft", crest: "ApplyCrestDraft", item: "ApplyItemDraft", countable: "ApplyCountableDraft", "enemy-type": "ApplyEnemyTypeDraft" }[modal.dataset.definitionKind];
+            const method = { predicate: "ApplyPredicateDraft", crest: "ApplyCrestDraft", item: "ApplyItemDraft", countable: "ApplyCountableDraft", soul: "ApplySoulDraft" }[modal.dataset.definitionKind];
             if (!method) throw new Error("Unknown catalogue definition kind.");
             await dotnet.invokeMethodAsync(method, Number(sequence), command(modal));
         } finally {

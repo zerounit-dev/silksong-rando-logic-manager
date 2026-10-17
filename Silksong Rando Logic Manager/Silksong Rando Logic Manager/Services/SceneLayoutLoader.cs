@@ -25,7 +25,7 @@ public sealed class SceneLayoutLoader(IDbContextFactory<LogicDbContext> contexts
     public async Task<SceneLayoutView?> LoadAsync(LogicDbContext db, Guid roomId, CancellationToken cancellationToken)
     {
         var room = await db.Rooms.AsNoTracking().Where(x => x.Id == roomId)
-            .Select(x => new SceneRoomLoad(x.Id, x.IsArchived, x.SceneMinX, x.SceneMinY, x.SceneMaxX, x.SceneMaxY, x.SceneImagePixelsPerUnitX, x.SceneImagePixelsPerUnitY, x.SceneImagePixelOffsetX, x.SceneImagePixelOffsetY, x.UseSceneImage, x.IsSceneImageStale, x.UpdatedUtc)).SingleOrDefaultAsync(cancellationToken);
+            .Select(x => new SceneRoomLoad(x.Id, x.IsArchived, x.SceneMinX, x.SceneMinY, x.SceneMaxX, x.SceneMaxY, x.SceneImagePixelsPerUnitX, x.SceneImagePixelsPerUnitY, x.SceneImagePixelOffsetX, x.SceneImagePixelOffsetY, x.UseSceneImage, x.UseUploadedSceneImage, x.IsSceneImageStale, x.UpdatedUtc)).SingleOrDefaultAsync(cancellationToken);
         if (room is null || room.Archived) return null;
         var subrooms = await db.Subrooms.AsNoTracking().Where(x => x.RoomId == roomId && !x.IsArchived)
             .Select(x => new SceneSubroomLoad(x.Id, x.FriendlyName, x.SceneUnitX, x.SceneUnitY, x.SceneUnitWidth, x.SceneUnitHeight, x.EnableAnnotation)).ToListAsync(cancellationToken);
@@ -36,11 +36,11 @@ public sealed class SceneLayoutLoader(IDbContextFactory<LogicDbContext> contexts
         var connections = await db.SubroomConnections.AsNoTracking().Where(x => x.RoomId == roomId && !x.IsArchived)
             .OrderBy(x => x.SortOrder).ThenBy(x => x.Id)
             .Select(x => new SceneConnectionLoad(x.Id, x.Alias, x.FriendlyName, x.SourceSubroomReferenceText, x.DestinationSubroomReferenceText, x.ResolvedSourceSubroomId, x.ResolvedDestinationSubroomId, x.EnableAnnotation, x.SceneUnitX, x.SceneUnitY)).ToListAsync(cancellationToken);
-        return SceneLayoutMapper.Map(room, subrooms, transitions, checks, connections, images?.Exists(room.Id) == true);
+        return SceneLayoutMapper.Map(room, subrooms, transitions, checks, connections, room.UseSceneImage && images?.Exists(room.Id) == true);
     }
 }
 
-internal sealed record SceneRoomLoad(Guid Id, bool Archived, double MinX, double MinY, double? MaxX, double? MaxY, double? ScaleX, double? ScaleY, double? PixelOffsetX, double? PixelOffsetY, bool UseSceneImage, bool IsStale, DateTime UpdatedUtc);
+internal sealed record SceneRoomLoad(Guid Id, bool Archived, double MinX, double MinY, double? MaxX, double? MaxY, double? ScaleX, double? ScaleY, double? PixelOffsetX, double? PixelOffsetY, bool UseSceneImage, bool UseUploadedSceneImage, bool IsStale, DateTime UpdatedUtc);
 internal sealed record SceneSubroomLoad(Guid Id, string FriendlyName, double? X, double? Y, double? Width, double? Height, bool Enabled);
 internal sealed record SceneTransitionLoad(Guid Id, string Alias, string FriendlyName, double? OverrideX, double? OverrideY, Guid? SourceSubroomId);
 internal sealed record SceneCheckLoad(Guid Id, string FriendlyName, double? OverrideX, double? OverrideY, Guid? SubroomId, string? LocationType);
@@ -78,14 +78,14 @@ internal static class SceneLayoutMapper
                 foreach (var endpointId in rows.SelectMany(x => new[] { x.SourceId, x.DestinationId }).OfType<Guid>().Distinct())
                     AddThread(threads, marker, endpointId, framesById, rows.Length == 1);
             }
-        var hasTransform = SceneBounds.HasUsableScales(room.ScaleX, room.ScaleY) && (!room.UseSceneImage || SceneBounds.HasUsablePixelOffsets(room.PixelOffsetX, room.PixelOffsetY));
+        var hasTransform = room.UseSceneImage && SceneBounds.HasUsableScales(room.ScaleX, room.ScaleY) && SceneBounds.HasUsablePixelOffsets(room.PixelOffsetX, room.PixelOffsetY);
         var mappingPresent = room.ScaleX is not null || room.ScaleY is not null || room.PixelOffsetX is not null || room.PixelOffsetY is not null;
         var boundsImageSeverity = !room.UseSceneImage ? V2Severity.Neutral
             : room.IsStale || !imageExists ? V2Severity.Danger
-            : room.ScaleX != SceneImageCaptureService.RecommendedScale || room.ScaleY != SceneImageCaptureService.RecommendedScale ? V2Severity.Warning
+            : !room.UseUploadedSceneImage && (room.ScaleX != SceneImageCaptureService.RecommendedScale || room.ScaleY != SceneImageCaptureService.RecommendedScale) ? V2Severity.Warning
             : V2Severity.Neutral;
-        return new(validBounds, room.MinX, room.MinY, room.MaxX, room.MaxY, frames, markers.OrderBy(x => x.Kind).ThenBy(x => x.Label, StringComparer.OrdinalIgnoreCase).ToArray(), new(hasTransform, room.IsStale, imageExists, room.UpdatedUtc.Ticks) { BoundsImageSeverity = boundsImageSeverity }, threads)
-        { BoundsImageDiagnostic = !validBounds ? "scene bounds unavailable or unusable" : mappingPresent && !hasTransform ? "scene image mapping incomplete or unusable" : null };
+        return new(validBounds, room.MinX, room.MinY, room.MaxX, room.MaxY, frames, markers.OrderBy(x => x.Kind).ThenBy(x => x.Label, StringComparer.OrdinalIgnoreCase).ToArray(), new(hasTransform, room.UseSceneImage && room.IsStale, imageExists, room.UpdatedUtc.Ticks) { BoundsImageSeverity = boundsImageSeverity }, threads)
+        { BoundsImageDiagnostic = !validBounds ? "scene bounds unavailable or unusable" : room.UseSceneImage && mappingPresent && !hasTransform ? "scene image mapping incomplete or unusable" : null };
     }
 
     private static SceneMarkerView? AddAnnotation(List<SceneMarkerView> markers, Guid id, string kind, string label, string friendly, double? overrideX, double? overrideY, bool isEnemy = false)

@@ -34,7 +34,7 @@
         <button id="requirement-catalogue-tab-crests" type="button" role="tab" aria-selected="@(tab == CatalogueTab.Crests)" aria-controls="requirement-catalogue-panel-crests" class="@(tab == CatalogueTab.Crests ? "selected" : null)" @onclick="() => SelectTabAsync(CatalogueTab.Crests)" disabled="@(DefinitionModalOpen || CatalogueBusy)">Crests</button>
         <button id="requirement-catalogue-tab-items" type="button" role="tab" aria-selected="@(tab == CatalogueTab.Items)" aria-controls="requirement-catalogue-panel-items" class="@(tab == CatalogueTab.Items ? "selected" : null)" @onclick="() => SelectTabAsync(CatalogueTab.Items)" disabled="@(DefinitionModalOpen || CatalogueBusy)">Items</button>
         <button id="requirement-catalogue-tab-countables" type="button" role="tab" aria-selected="@(tab == CatalogueTab.Countables)" aria-controls="requirement-catalogue-panel-countables" class="@(tab == CatalogueTab.Countables ? "selected" : null)" @onclick="() => SelectTabAsync(CatalogueTab.Countables)" disabled="@(DefinitionModalOpen || CatalogueBusy)">Countables</button>
-        <button id="requirement-catalogue-tab-enemy-types" type="button" role="tab" aria-selected="@(tab == CatalogueTab.EnemyTypes)" aria-controls="requirement-catalogue-panel-enemy-types" class="@(tab == CatalogueTab.EnemyTypes ? "selected" : null)" @onclick="() => SelectTabAsync(CatalogueTab.EnemyTypes)" disabled="@(DefinitionModalOpen || CatalogueBusy)">Enemy Types</button>
+        <button id="requirement-catalogue-tab-souls" type="button" role="tab" aria-selected="@(tab == CatalogueTab.Souls)" aria-controls="requirement-catalogue-panel-souls" class="@(tab == CatalogueTab.Souls ? "selected" : null)" @onclick="() => SelectTabAsync(CatalogueTab.Souls)" disabled="@(DefinitionModalOpen || CatalogueBusy)">Souls</button>
     </div>
     @if (tab == CatalogueTab.Predicates)
     {
@@ -116,22 +116,22 @@
             </table>
         </section>
     }
-    @if (tab == CatalogueTab.EnemyTypes)
+    @if (tab == CatalogueTab.Souls)
     {
-        <section id="requirement-catalogue-panel-enemy-types" role="tabpanel" aria-labelledby="requirement-catalogue-tab-enemy-types">
-            <div class="requirement-catalogue-toolbar"><label>search <input @bind="enemyTypeSearch" @bind:event="oninput" disabled="@(DefinitionModalOpen || CatalogueBusy)" /></label><div class="requirement-catalogue-content-actions"><button type="button" class="requirement-catalogue-action" @onclick="NewEnemyType" disabled="@(DefinitionModalOpen || CatalogueBusy)"><i class="fa-solid fa-plus" aria-hidden="true"></i>add enemy type</button></div></div>
-            <table class="requirement-catalogue-table" data-requirement-catalogue-table="enemy-type">
+        <section id="requirement-catalogue-panel-souls" role="tabpanel" aria-labelledby="requirement-catalogue-tab-souls">
+            <div class="requirement-catalogue-toolbar"><label>search <input @bind="soulSearch" @bind:event="oninput" disabled="@(DefinitionModalOpen || CatalogueBusy)" /></label><div class="requirement-catalogue-content-actions"><button type="button" class="requirement-catalogue-action" @onclick="NewSoul" disabled="@(DefinitionModalOpen || CatalogueBusy)"><i class="fa-solid fa-plus" aria-hidden="true"></i>add soul</button></div></div>
+            <table class="requirement-catalogue-table" data-requirement-catalogue-table="soul">
                 <thead><tr><th>drag</th><th>Name</th><th>Category</th><th>Aliases</th><th>Output Value</th><th>actions</th></tr></thead>
                 <tbody>
-                    @foreach (var row in view.EnemyTypes.Where(x => Matches(enemyTypeSearch, x.Name, x.Category, x.Aliases)))
+                    @foreach (var row in view.Souls.Where(x => Matches(soulSearch, x.Name, x.Category, x.Aliases)))
                     {
-                        <tr @key="row.Id" data-requirement-catalogue-row data-catalogue-kind="enemy-type" data-catalogue-id="@row.Id">
-                            <td class="reorder-cell"><button type="button" draggable="true" class="reorder-handle catalogue-drag-handle" data-requirement-catalogue-grip disabled="@(EnemyTypeFiltered || DefinitionModalOpen || CatalogueBusy)" title="@(EnemyTypeFiltered ? "clear search to reorder" : "drag to reorder")" aria-label="@(EnemyTypeFiltered ? "clear search to reorder" : "drag enemy type")"><i class="fa-solid fa-grip-vertical" aria-hidden="true"></i></button></td>
+                        <tr @key="row.Id" data-requirement-catalogue-row data-catalogue-kind="soul" data-catalogue-id="@row.Id">
+                            <td class="reorder-cell"><button type="button" draggable="true" class="reorder-handle catalogue-drag-handle" data-requirement-catalogue-grip disabled="@(SoulFiltered || DefinitionModalOpen || CatalogueBusy)" title="@(SoulFiltered ? "clear search to reorder" : "drag to reorder")" aria-label="@(SoulFiltered ? "clear search to reorder" : "drag soul")"><i class="fa-solid fa-grip-vertical" aria-hidden="true"></i></button></td>
                             <td><div class="requirement-catalogue-name">@row.Name</div><div class="requirement-catalogue-notes">@row.Notes</div></td><td class="requirement-catalogue-single-line">@row.Category</td><td>@row.Aliases</td><td class="catalogue-monospace requirement-catalogue-single-line">@row.OutputValue</td>
-                            <td class="row-actions catalogue-row-actions"><button type="button" class="icon-button" @onclick="() => EditEnemyType(row)" disabled="@(DefinitionModalOpen || CatalogueBusy)" title="edit enemy type" aria-label="edit enemy type"><i class="fa-solid fa-pen" aria-hidden="true"></i></button><button type="button" class="icon-button" @onclick="() => ConfirmDelete(row.Id, row.Name, CatalogueTab.EnemyTypes)" disabled="@(DefinitionModalOpen || CatalogueBusy)" title="delete enemy type" aria-label="delete enemy type"><i class="fa-solid fa-trash" aria-hidden="true"></i></button></td>
+                            <td class="row-actions catalogue-row-actions"><button type="button" class="icon-button" @onclick="() => EditSoul(row)" disabled="@(DefinitionModalOpen || CatalogueBusy)" title="edit soul" aria-label="edit soul"><i class="fa-solid fa-pen" aria-hidden="true"></i></button><button type="button" class="icon-button" @onclick="() => ConfirmDelete(row.Id, row.Name, CatalogueTab.Souls)" disabled="@(DefinitionModalOpen || CatalogueBusy)" title="delete soul" aria-label="delete soul"><i class="fa-solid fa-trash" aria-hidden="true"></i></button></td>
                         </tr>
                     }
-                    <tr class="catalogue-drop-tail" data-requirement-catalogue-tail="enemy-type"><td colspan="6"></td></tr>
+                    <tr class="catalogue-drop-tail" data-requirement-catalogue-tail="soul"><td colspan="6"></td></tr>
                 </tbody>
             </table>
         </section>
@@ -154,7 +154,16 @@
                 @if (predicateDraft is not null)
                 {
                     <div class="requirement-definition-field requirement-definition-field-full"><label>Input Syntax <select id="@DefinitionFieldId("InputSyntax")" data-requirement-definition-field="InputSyntax">
-                        @foreach (var option in RequirementCatalogueLanguage.InputSyntaxOptions) { <option value="@option.PersistedValue">@option.DisplayLabel  @option.PersistedValue</option> }
+                        @if (!RequirementCatalogueLanguage.TryParsePersistedValue(predicateDraft.InputSyntax, out _))
+                        {
+                            <option value="@predicateDraft.InputSyntax" disabled>Unsupported — @predicateDraft.InputSyntax</option>
+                        }
+                        @foreach (var group in RequirementCatalogueLanguage.InputSyntaxOptions.GroupBy(option => option.Group))
+                        {
+                            <optgroup label="@group.Key">
+                                @foreach (var option in group) { <option value="@option.PersistedValue">@option.DisplayLabel — @option.PersistedValue</option> }
+                            </optgroup>
+                        }
                     </select></label>@FieldMessages("InputSyntax")</div>
                     <div class="requirement-definition-field requirement-definition-field-full"><label>Output Syntax <input id="@DefinitionFieldId("OutputSyntax")" data-requirement-definition-field="OutputSyntax" /></label>@FieldMessages("OutputSyntax")</div>
                 }
@@ -195,7 +204,7 @@
 }
 @if (pendingImport is not null)
 {
-    <div class="confirmation-backdrop requirement-catalogue-backdrop" role="presentation" @onclick="CancelImport"><section class="confirmation-modal" role="dialog" aria-modal="true" aria-labelledby="requirement-catalogue-import-title" tabindex="-1" @onclick:stopPropagation="true" @onkeydown="ImportKeyDown"><h2 id="requirement-catalogue-import-title">replace catalogue?</h2><p>This permanently replaces all local Predicates, Crests, Items, Countables, and Enemy Types, including their stored aliases. Existing authored Requirements text is unchanged but may parse differently.</p>@if (!string.IsNullOrWhiteSpace(message)) { <p class="requirement-catalogue-message" role="status">@message</p> }<div class="requirement-catalogue-modal-footer"><div class="requirement-catalogue-modal-alternatives"></div><div class="requirement-catalogue-modal-commit-group"><button type="button" class="catalogue-modal-action catalogue-modal-cancel" @onclick="CancelImport" disabled="@CatalogueBusy">Cancel</button><button type="button" class="catalogue-modal-action catalogue-modal-destructive" @onclick="ReplaceImportAsync" disabled="@CatalogueBusy">Replace</button></div></div></section></div>
+    <div class="confirmation-backdrop requirement-catalogue-backdrop" role="presentation" @onclick="CancelImport"><section class="confirmation-modal" role="dialog" aria-modal="true" aria-labelledby="requirement-catalogue-import-title" tabindex="-1" @onclick:stopPropagation="true" @onkeydown="ImportKeyDown"><h2 id="requirement-catalogue-import-title">replace catalogue?</h2><p>This permanently replaces all local Predicates, Crests, Items, Countables, and Souls, including their stored aliases. Existing authored Requirements text is unchanged but may parse differently.</p>@if (!string.IsNullOrWhiteSpace(message)) { <p class="requirement-catalogue-message" role="status">@message</p> }<div class="requirement-catalogue-modal-footer"><div class="requirement-catalogue-modal-alternatives"></div><div class="requirement-catalogue-modal-commit-group"><button type="button" class="catalogue-modal-action catalogue-modal-cancel" @onclick="CancelImport" disabled="@CatalogueBusy">Cancel</button><button type="button" class="catalogue-modal-action catalogue-modal-destructive" @onclick="ReplaceImportAsync" disabled="@CatalogueBusy">Replace</button></div></div></section></div>
 }
 @if (syntaxGuide is not null)
 {
@@ -253,7 +262,7 @@
 }
 
 @code {
-    private enum CatalogueTab { Predicates, Crests, Items, Countables, EnemyTypes }
+    private enum CatalogueTab { Predicates, Crests, Items, Countables, Souls }
     private abstract class DefinitionDraft { public Guid? Id; public string Name = ""; public string? Category; public string Aliases = ""; public string Notes = ""; public bool AliasTouched; }
     private sealed class PredicateDraft : DefinitionDraft { public string InputSyntax = RequirementCatalogueLanguage.InputSyntaxOptions[0].PersistedValue; public string OutputSyntax = ""; }
     private sealed class ItemDraft : DefinitionDraft { public string OutputValue = ""; public CatalogueTab Kind = CatalogueTab.Items; }
@@ -261,7 +270,7 @@
     private RequirementCatalogueManagerView view = new([], [], [], [], []);
     private RequirementCategorySuggestionsView categories = new([], [], [], [], []);
     private CatalogueTab tab;
-    private string predicateSearch = "", crestSearch = "", itemSearch = "", countableSearch = "", enemyTypeSearch = "", message = "", definitionMessage = "";
+    private string predicateSearch = "", crestSearch = "", itemSearch = "", countableSearch = "", soulSearch = "", message = "", definitionMessage = "";
     private IReadOnlyList<RequirementCatalogueValidationIssue> definitionIssues = [];
     private string? pendingDefinitionFocusId;
     private bool loading, rechecking, exportingRoomGraph, modalWasOpen, restoreInitiatorFocus;
@@ -284,14 +293,14 @@
     private bool ItemFiltered => !string.IsNullOrWhiteSpace(itemSearch);
     private bool CrestFiltered => !string.IsNullOrWhiteSpace(crestSearch);
     private bool CountableFiltered => !string.IsNullOrWhiteSpace(countableSearch);
-    private bool EnemyTypeFiltered => !string.IsNullOrWhiteSpace(enemyTypeSearch);
-    private string LiteralKind => itemDraft?.Kind switch { CatalogueTab.Crests => "crest", CatalogueTab.Countables => "countable", CatalogueTab.EnemyTypes => "enemy-type", _ => "item" };
-    private string LiteralName => itemDraft?.Kind == CatalogueTab.EnemyTypes ? "enemy type" : LiteralKind;
+    private bool SoulFiltered => !string.IsNullOrWhiteSpace(soulSearch);
+    private string LiteralKind => itemDraft?.Kind switch { CatalogueTab.Crests => "crest", CatalogueTab.Countables => "countable", CatalogueTab.Souls => "soul", _ => "item" };
+    private string LiteralName => LiteralKind;
     private IReadOnlyList<string> DefinitionCategories => predicateDraft is not null ? categories.PredicateCategories : itemDraft?.Kind switch
     {
         CatalogueTab.Crests => categories.CrestCategories,
         CatalogueTab.Countables => categories.CountableCategories,
-        CatalogueTab.EnemyTypes => categories.EnemyTypeCategories,
+        CatalogueTab.Souls => categories.SoulCategories,
         _ => categories.ItemCategories
     };
 
@@ -422,12 +431,12 @@
     private void NewItem() { ClearDefinitionOperationStatus(); itemDraft = new(); definitionDraftSequence++; }
     private void NewCrest() { ClearDefinitionOperationStatus(); itemDraft = new() { Kind = CatalogueTab.Crests }; definitionDraftSequence++; }
     private void NewCountable() { ClearDefinitionOperationStatus(); itemDraft = new() { Kind = CatalogueTab.Countables }; definitionDraftSequence++; }
-    private void NewEnemyType() { ClearDefinitionOperationStatus(); itemDraft = new() { Kind = CatalogueTab.EnemyTypes }; definitionDraftSequence++; }
+    private void NewSoul() { ClearDefinitionOperationStatus(); itemDraft = new() { Kind = CatalogueTab.Souls }; definitionDraftSequence++; }
     private void EditPredicate(RequirementPredicateView value) { ClearDefinitionOperationStatus(); predicateDraft = new() { Id = value.Id, Name = value.Name, Category = value.Category, InputSyntax = value.InputSyntax, Aliases = value.Aliases, OutputSyntax = value.OutputSyntax, Notes = value.Notes, AliasTouched = true }; definitionDraftSequence++; }
     private void EditItem(RequirementItemView value) { ClearDefinitionOperationStatus(); itemDraft = new() { Id = value.Id, Name = value.Name, Category = value.Category, Aliases = value.Aliases, OutputValue = value.OutputValue, Notes = value.Notes, AliasTouched = true }; definitionDraftSequence++; }
     private void EditCountable(RequirementCountableView value) { ClearDefinitionOperationStatus(); itemDraft = new() { Kind = CatalogueTab.Countables, Id = value.Id, Name = value.Name, Category = value.Category, Aliases = value.Aliases, OutputValue = value.OutputValue, Notes = value.Notes, AliasTouched = true }; definitionDraftSequence++; }
     private void EditCrest(RequirementCrestView value) { ClearDefinitionOperationStatus(); itemDraft = new() { Kind = CatalogueTab.Crests, Id = value.Id, Name = value.Name, Category = value.Category, Aliases = value.Aliases, OutputValue = value.OutputValue, Notes = value.Notes, AliasTouched = true }; definitionDraftSequence++; }
-    private void EditEnemyType(RequirementEnemyTypeView value) { ClearDefinitionOperationStatus(); itemDraft = new() { Kind = CatalogueTab.EnemyTypes, Id = value.Id, Name = value.Name, Category = value.Category, Aliases = value.Aliases, OutputValue = value.OutputValue, Notes = value.Notes, AliasTouched = true }; definitionDraftSequence++; }
+    private void EditSoul(RequirementSoulView value) { ClearDefinitionOperationStatus(); itemDraft = new() { Kind = CatalogueTab.Souls, Id = value.Id, Name = value.Name, Category = value.Category, Aliases = value.Aliases, OutputValue = value.OutputValue, Notes = value.Notes, AliasTouched = true }; definitionDraftSequence++; }
     [JSInvokable]
     public async Task ApplyPredicateDraft(int sequence, ApplyRequirementPredicate command)
     {
@@ -457,9 +466,9 @@
         await AppliedAsync(result, () => itemDraft = null, command.Id, command.Name, sequence);
     }
     [JSInvokable]
-    public async Task ApplyEnemyTypeDraft(int sequence, ApplyRequirementEnemyType command)
+    public async Task ApplySoulDraft(int sequence, ApplyRequirementSoul command)
     {
-        if (itemDraft?.Kind != CatalogueTab.EnemyTypes || definitionDraftSequence != sequence) return;
+        if (itemDraft?.Kind != CatalogueTab.Souls || definitionDraftSequence != sequence) return;
         var result = await Catalogue.ApplyAsync(command);
         await AppliedAsync(result, () => itemDraft = null, command.Id, command.Name, sequence);
     }
@@ -523,7 +532,7 @@
                 CatalogueTab.Items => await Catalogue.DeleteAsync(new DeleteRequirementItem(confirmation.Id)),
                 CatalogueTab.Crests => await Catalogue.DeleteAsync(new DeleteRequirementCrest(confirmation.Id)),
                 CatalogueTab.Countables => await Catalogue.DeleteAsync(new DeleteRequirementCountable(confirmation.Id)),
-                CatalogueTab.EnemyTypes => await Catalogue.DeleteAsync(new DeleteRequirementEnemyType(confirmation.Id)),
+                CatalogueTab.Souls => await Catalogue.DeleteAsync(new DeleteRequirementSoul(confirmation.Id)),
                 _ => throw new InvalidOperationException("Unknown catalogue kind.")
             };
             if (result.Status == RequirementCatalogueCommandStatus.Committed) { deleteConfirmation = null; await ReloadAsync(); }
@@ -563,14 +572,14 @@
         if (CatalogueBusy || ModalOpen || !Guid.TryParse(id, out var definitionId)) return;
         if (kind switch { "predicate" => tab != CatalogueTab.Predicates || PredicateFiltered, "item" => tab != CatalogueTab.Items || ItemFiltered,
             "crest" => tab != CatalogueTab.Crests || CrestFiltered,
-            "countable" => tab != CatalogueTab.Countables || CountableFiltered, "enemy-type" => tab != CatalogueTab.EnemyTypes || EnemyTypeFiltered, _ => true }) return;
+            "countable" => tab != CatalogueTab.Countables || CountableFiltered, "soul" => tab != CatalogueTab.Souls || SoulFiltered, _ => true }) return;
         var outcome = kind switch
         {
             "predicate" => await Catalogue.ReorderAsync(new ReorderRequirementPredicate(definitionId, targetIndex)),
             "item" => await Catalogue.ReorderAsync(new ReorderRequirementItem(definitionId, targetIndex)),
             "crest" => await Catalogue.ReorderAsync(new ReorderRequirementCrest(definitionId, targetIndex)),
             "countable" => await Catalogue.ReorderAsync(new ReorderRequirementCountable(definitionId, targetIndex)),
-            "enemy-type" => await Catalogue.ReorderAsync(new ReorderRequirementEnemyType(definitionId, targetIndex)),
+            "soul" => await Catalogue.ReorderAsync(new ReorderRequirementSoul(definitionId, targetIndex)),
             _ => throw new InvalidOperationException("Unknown catalogue kind.")
         };
         if (outcome.Status == RequirementCatalogueCommandStatus.Committed) { await ReloadAsync(); await InvokeAsync(StateHasChanged); }

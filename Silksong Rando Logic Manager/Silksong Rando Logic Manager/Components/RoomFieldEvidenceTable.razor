@@ -1,18 +1,18 @@
 <table class="distributed-import-child-table">
-    <thead><tr>@foreach (var field in Fields) { <th>@field.FieldName</th> }</tr></thead>
+    <thead><tr>@foreach (var name in Columns) { <th title="@DistributedEvidencePresentation.Heading(name)" aria-label="@DistributedEvidencePresentation.Heading(name)">@DistributedEvidencePresentation.Heading(name)</th> }</tr></thead>
     <tbody>
         <tr class="@(HasChanges ? "distributed-import-changed-current" : null)">
-            @foreach (var field in Fields)
+            @foreach (var name in Columns)
             {
-                <td><span class="@(field.Evidence == DistributedComparisonEvidence.Changed || field.Evidence == DistributedComparisonEvidence.Current ? "distributed-import-current" : field.Evidence == DistributedComparisonEvidence.Incoming ? "distributed-import-incoming" : null)">@(field.Evidence == DistributedComparisonEvidence.Incoming ? field.IncomingValue : field.CurrentValue)</span></td>
+                <td><DistributedEvidenceValue Name="@name" Fields="Fields" /></td>
             }
         </tr>
         @if (HasChanges)
         {
             <tr class="distributed-import-changed-incoming">
-                @foreach (var field in Fields)
+                @foreach (var name in Columns)
                 {
-                    <td><span class="@(field.Evidence == DistributedComparisonEvidence.Changed ? "distributed-import-incoming" : null)">@(field.Evidence == DistributedComparisonEvidence.Changed ? field.IncomingValue : null)</span></td>
+                    <td><DistributedEvidenceValue Name="@name" Fields="Fields" Delta="true" /></td>
                 }
             </tr>
         }
@@ -21,5 +21,6 @@
 
 @code {
     [Parameter, EditorRequired] public IReadOnlyList<DistributedComparisonValue> Fields { get; set; } = [];
+    private IEnumerable<string> Columns => DistributedEvidencePresentation.Columns(Fields.Select(x => x.FieldName));
     private bool HasChanges => Fields.Any(x => x.Evidence == DistributedComparisonEvidence.Changed);
 }

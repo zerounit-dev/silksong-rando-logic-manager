@@ -48,7 +48,7 @@ else
                 {
                     var room = ungroupedRooms.Where(x => !x.IsArchived).ElementAt(index);
                     <div class="@DropLineClass(null, index)" aria-hidden="true" @ondragover:preventDefault @ondragover:stopPropagation @ondragover="(() => SetDropTarget(null, index))" @ondrop:stopPropagation @ondrop="(() => DropRoomAsync(null, index))"></div>
-                    <a class="@RoomLinkClass(room)" href="@($"rooms/{room.Id}")" draggable="true" @ondragstart="(() => StartDrag(room.Id))" @ondragend="ClearDropTarget" @ondragover:preventDefault @ondragover="(() => SetDropTarget(null, index))" @ondrop="(() => DropRoomAsync(null, index))">@room.FriendlyName</a>
+                    <a class="@RoomLinkClass(room)" href="@($"rooms/{room.Id}")" title="@RoomLinkLabel(room)" aria-label="@RoomLinkLabel(room)" draggable="true" @ondragstart="(() => StartDrag(room.Id))" @ondragend="ClearDropTarget" @ondragover:preventDefault @ondragover="(() => SetDropTarget(null, index))" @ondrop="(() => DropRoomAsync(null, index))">@RoomImageSlot(room)<span class="room-link-name">@room.FriendlyName</span></a>
                 }
                 <div class="@DropLineClass(null, ungroupedRooms.Count(x => !x.IsArchived))" aria-hidden="true" @ondragover:preventDefault @ondragover:stopPropagation @ondragover="(() => SetDropTarget(null, ungroupedRooms.Count(x => !x.IsArchived)))" @ondrop:stopPropagation @ondrop="(() => DropRoomAsync(null, ungroupedRooms.Count(x => !x.IsArchived)))"></div>
                 @if (showArchivedRooms && ungroupedRooms.Any(x => x.IsArchived))
@@ -56,7 +56,7 @@ else
                     <div class="archived-section-label">[archived]</div>
                     @foreach (var room in ungroupedRooms.Where(x => x.IsArchived))
                     {
-                        <a class="@RoomLinkClass(room)" href="@($"rooms/{room.Id}")">@room.FriendlyName</a>
+                        <a class="@RoomLinkClass(room)" href="@($"rooms/{room.Id}")" title="@RoomLinkLabel(room)" aria-label="@RoomLinkLabel(room)">@RoomImageSlot(room)<span class="room-link-name">@room.FriendlyName</span></a>
                     }
                 }
             </section>
@@ -84,7 +84,7 @@ else
                         var room = groupRooms.Where(x => !x.IsArchived).ElementAt(index);
                         var dropIndex = index;
                         <div class="@DropLineClass(group.Id, dropIndex)" aria-hidden="true" @ondragover:preventDefault @ondragover:stopPropagation @ondragover="(() => SetDropTarget(group.Id, dropIndex))" @ondrop:stopPropagation @ondrop="(() => DropRoomAsync(group.Id, dropIndex))"></div>
-                        <a class="@RoomLinkClass(room)" href="@($"rooms/{room.Id}")" aria-label="@room.FriendlyName" draggable="true" @ondragstart="(() => StartDrag(room.Id))" @ondragend="ClearDropTarget" @ondragover:preventDefault @ondragover="(() => SetDropTarget(group.Id, dropIndex))" @ondrop="(() => DropRoomAsync(group.Id, dropIndex))">@GroupedRoomLinkText(group, room)</a>
+                        <a class="@RoomLinkClass(room)" href="@($"rooms/{room.Id}")" title="@RoomLinkLabel(room)" aria-label="@RoomLinkLabel(room)" draggable="true" @ondragstart="(() => StartDrag(room.Id))" @ondragend="ClearDropTarget" @ondragover:preventDefault @ondragover="(() => SetDropTarget(group.Id, dropIndex))" @ondrop="(() => DropRoomAsync(group.Id, dropIndex))">@RoomImageSlot(room)<span class="room-link-name">@GroupedRoomLinkText(group, room)</span></a>
                     }
                     <div class="@DropLineClass(group.Id, groupRooms.Count(x => !x.IsArchived))" aria-hidden="true" @ondragover:preventDefault @ondragover:stopPropagation @ondragover="(() => SetDropTarget(group.Id, groupRooms.Count(x => !x.IsArchived)))" @ondrop:stopPropagation @ondrop="(() => DropRoomAsync(group.Id, groupRooms.Count(x => !x.IsArchived)))"></div>
                     @if (showArchivedRooms && groupRooms.Any(x => x.IsArchived))
@@ -92,7 +92,7 @@ else
                         <div class="archived-section-label">[archived]</div>
                         @foreach (var room in groupRooms.Where(x => x.IsArchived))
                         {
-                            <a class="@RoomLinkClass(room)" href="@($"rooms/{room.Id}")" aria-label="@room.FriendlyName">@GroupedRoomLinkText(group, room)</a>
+                            <a class="@RoomLinkClass(room)" href="@($"rooms/{room.Id}")" title="@RoomLinkLabel(room)" aria-label="@RoomLinkLabel(room)">@RoomImageSlot(room)<span class="room-link-name">@GroupedRoomLinkText(group, room)</span></a>
                         }
                     }
                 }
@@ -138,7 +138,7 @@ else
     <footer class="sidebar-export-footer">
         <archipelago-launcher><button class="tree-action sidebar-archipelago-control" type="button" data-archipelago-launcher aria-label="Archipelago" aria-controls="archipelago-modal" aria-haspopup="dialog"><i class="fa-solid fa-wifi" aria-hidden="true"></i> archipelago</button></archipelago-launcher>
         <a class="tree-action sidebar-requirements-control" href="/requirements"><i class="fa-solid fa-book" aria-hidden="true"></i> requirements</a>
-        <SceneReviewTrigger />
+        <div class="sidebar-scene-image-row"><SceneReviewTrigger /><RoomImageOperations /></div>
         <div class="sidebar-export-row">
             <button class="tree-action sidebar-export-control" type="button" @onclick="OpenImportPickerAsync">import rooms</button>
             <button class="tree-action sidebar-export-control" type="button" @onclick="OpenExportModal">export rooms</button>
@@ -262,7 +262,8 @@ else
 
     private bool RoomPassesFilters(SidebarRoom room, bool groupMatchesName) =>
         IsVisibleRoom(room)
-        && (!NameSearchIsActive || groupMatchesName || MatchesNameSearch(room.FriendlyName))
+        && (!NameSearchIsActive || groupMatchesName || MatchesNameSearch(room.FriendlyName)
+            || !string.IsNullOrWhiteSpace(room.InGameId) && MatchesNameSearch(room.InGameId))
         && MatchesLocationSearch(room.Id)
         && MatchesRequirementsSearch(room.Id);
 
@@ -279,6 +280,36 @@ else
         var path = Navigation.ToBaseRelativePath(Navigation.Uri).Split('?', '#')[0].TrimEnd('/');
         return string.Equals(path, $"rooms/{roomId}", StringComparison.OrdinalIgnoreCase);
     }
+
+    private static string? RoomImageReason(SidebarRoom room) => room.ImageState switch
+    {
+        SidebarRoomImageState.Disabled => "Scene image intentionally disabled",
+        SidebarRoomImageState.NeedsRecapture => "Needs recapture",
+        SidebarRoomImageState.Missing => "Scene image missing",
+        SidebarRoomImageState.NonstandardScale => "Nonstandard image scale",
+        _ => null
+    };
+
+    private static string RoomLinkLabel(SidebarRoom room) => RoomImageReason(room) is { } reason
+        ? $"{room.FriendlyName}: {reason}"
+        : room.FriendlyName;
+
+    private RenderFragment RoomImageSlot(SidebarRoom room) => @<span class="room-image-slot @(room.ImageState switch
+        {
+            SidebarRoomImageState.Disabled => "room-image-disabled",
+            SidebarRoomImageState.NeedsRecapture or SidebarRoomImageState.Missing => "room-image-danger",
+            SidebarRoomImageState.NonstandardScale => "room-image-warning",
+            _ => string.Empty
+        })" aria-hidden="true">
+        @if (room.ImageState != SidebarRoomImageState.None)
+        {
+            <i class="fa-solid fa-image"></i>
+            @if (room.ImageState != SidebarRoomImageState.Disabled)
+            {
+                <i class="fa-solid fa-triangle-exclamation room-image-warning-mark"></i>
+            }
+        }
+    </span>;
 
     private Task ToggleArchiveModeAsync() => ExecuteAsync(async () =>
     {
@@ -365,7 +396,7 @@ else
         var committedById = committedRooms.ToDictionary(item => item.Id, item =>
         {
             var existing = workspace!.Rooms.Single(room => room.Id == item.Id);
-            return new SidebarRoom(item.Id, item.RoomGroupId, item.FriendlyName, item.SortOrder, item.IsArchived, existing.Status);
+            return new SidebarRoom(item.Id, item.RoomGroupId, item.FriendlyName, item.InGameId, item.SortOrder, item.IsArchived, existing.Status, existing.ImageState);
         });
         workspace = workspace! with
         {

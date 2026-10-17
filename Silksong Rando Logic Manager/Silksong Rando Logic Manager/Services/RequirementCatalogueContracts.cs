@@ -9,17 +9,18 @@ public enum RequirementInputSyntax
     PredicateThenItem,
     PredicateThenCheck,
     PredicateThenQuantity,
-    RequiredDifficultyThenPredicateThenEnemy,
+    RequiredDifficultyThenPredicateThenSoul,
     PredicateThenQuantityThenCountable,
     PredicateThenCountableThenQuantity,
     PredicateThenOptionalDirection,
     CrestThenPredicateThenDirection,
     RequiredDifficultyThenCrestThenPredicate,
     OptionalCrestThenPredicateThenDirection,
-    RequiredDifficultyThenOptionalCrestThenPredicate
+    RequiredDifficultyThenOptionalCrestThenPredicate,
+    PredicateThenSoul
 }
 
-public sealed record RequirementInputSyntaxOption(RequirementInputSyntax Value, string PersistedValue, string DisplayLabel);
+public sealed record RequirementInputSyntaxOption(RequirementInputSyntax Value, string PersistedValue, string DisplayLabel, string Group);
 
 public sealed record RequirementCataloguePredicateValidation(
     Guid Id,
@@ -59,7 +60,7 @@ public sealed record RequirementAtomFormatArguments(
     string? ItemOutputValue = null,
     int? Quantity = null,
     string? CheckGraphId = null,
-    string? EnemyOutputValue = null,
+    string? SoulOutputValue = null,
     string? CountableOutputValue = null,
     string? CrestOutputValue = null);
 
@@ -89,7 +90,7 @@ public sealed record RequirementCatalogueManagerView(
     IReadOnlyList<RequirementCrestView> Crests,
     IReadOnlyList<RequirementItemView> Items,
     IReadOnlyList<RequirementCountableView> Countables,
-    IReadOnlyList<RequirementEnemyTypeView> EnemyTypes);
+    IReadOnlyList<RequirementSoulView> Souls);
 
 public sealed record RequirementCountableView(
     Guid Id, string Name, string? Category, string OutputValue, string Notes,
@@ -99,7 +100,7 @@ public sealed record RequirementCrestView(
     Guid Id, string Name, string? Category, string OutputValue, string Notes,
     int SortOrder, string Aliases, IReadOnlyList<string> ParsedAliases);
 
-public sealed record RequirementEnemyTypeView(
+public sealed record RequirementSoulView(
     Guid Id, string Name, string? Category, string OutputValue, string Notes,
     int SortOrder, string Aliases, IReadOnlyList<string> ParsedAliases);
 
@@ -136,7 +137,7 @@ public sealed record RequirementCountableReferenceView(
     string Aliases,
     IReadOnlyList<string> ParsedAliases);
 
-public sealed record RequirementEnemyTypeReferenceView(
+public sealed record RequirementSoulReferenceView(
     Guid Id,
     string Name,
     string? Category,
@@ -150,14 +151,14 @@ public sealed record RequirementCatalogueReferenceView(
     IReadOnlyList<RequirementItemReferenceView> Items,
     IReadOnlyList<CheckLocationTypeDefinition> LocationTypes,
     IReadOnlyList<RequirementCountableReferenceView> Countables,
-    IReadOnlyList<RequirementEnemyTypeReferenceView> EnemyTypes);
+    IReadOnlyList<RequirementSoulReferenceView> Souls);
 
 public sealed record RequirementCategorySuggestionsView(
     IReadOnlyList<string> PredicateCategories,
     IReadOnlyList<string> CrestCategories,
     IReadOnlyList<string> ItemCategories,
     IReadOnlyList<string> CountableCategories,
-    IReadOnlyList<string> EnemyTypeCategories);
+    IReadOnlyList<string> SoulCategories);
 
 public sealed record ApplyRequirementPredicate(
     Guid? Id,
@@ -190,15 +191,15 @@ public sealed record ApplyRequirementCountable(
 public sealed record ApplyRequirementCrest(
     Guid? Id, string? Name, string? Category, string? AliasDraft, string? OutputValue, string? Notes);
 
-public sealed record ApplyRequirementEnemyType(
+public sealed record ApplyRequirementSoul(
     Guid? Id, string? Name, string? Category, string? AliasDraft, string? OutputValue, string? Notes);
 
 public sealed record DeleteRequirementCountable(Guid Id);
 public sealed record DeleteRequirementCrest(Guid Id);
 public sealed record ReorderRequirementCrest(Guid Id, int TargetIndex);
-public sealed record DeleteRequirementEnemyType(Guid Id);
+public sealed record DeleteRequirementSoul(Guid Id);
 public sealed record ReorderRequirementCountable(Guid Id, int TargetIndex);
-public sealed record ReorderRequirementEnemyType(Guid Id, int TargetIndex);
+public sealed record ReorderRequirementSoul(Guid Id, int TargetIndex);
 
 public enum RequirementCatalogueCommandStatus
 {

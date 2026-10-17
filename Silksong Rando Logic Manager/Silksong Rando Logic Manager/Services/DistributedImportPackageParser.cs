@@ -179,7 +179,10 @@ public sealed class DistributedImportPackageParser
     {
         var r = new ObjectReader(value, path, RequireObject); var id = r.Guid("id"); ids.Add(id, "room", path);
         double minX = 0, minY = 0; double? maxX, maxY, sx, sy, px, py;
-        var stale = r.Bool("isSceneImageStale"); var useSceneImage = true;
+        // Historical versions require Boolean admission, but sender-local image state
+        // is never part of the normalized document. V6 treats it as an unknown member.
+        if (version < 6) _ = r.Bool("isSceneImageStale");
+        var useSceneImage = true;
         if (version == 6)
         {
             minX = r.Number("sceneMinX"); minY = r.Number("sceneMinY");
@@ -190,10 +193,19 @@ public sealed class DistributedImportPackageParser
         else
         {
             maxX = r.NullableNumber("sceneUnitWidth"); maxY = r.NullableNumber("sceneUnitHeight");
-            (sx, sy, px, py, stale) = SceneBounds.ConvertLegacy(maxX, maxY, r.NullableNumber("sceneImageScaleXPercent"),
-                r.NullableNumber("sceneImageScaleYPercent"), r.NullableNumber("sceneImagePanXPercent"), r.NullableNumber("sceneImagePanYPercent"), stale);
+            (sx, sy, px, py) = SceneBounds.ConvertLegacy(maxX, maxY, r.NullableNumber("sceneImageScaleXPercent"),
+                r.NullableNumber("sceneImageScaleYPercent"), r.NullableNumber("sceneImagePanXPercent"), r.NullableNumber("sceneImagePanYPercent"));
         }
-        return new DistributedRoomDocument(id, r.NullableGuid("roomGroupId"), r.String("referenceId"), r.String("friendlyName"), r.NullableString("inGameId"), r.NullableString("contributors"), r.NullableString("comments"), minX, minY, maxX, maxY, sx, sy, px, py, useSceneImage, stale, r.Int("sortOrder"), r.Bool("isArchived"), r.NullableUtc("archivedUtc"), r.Utc("createdUtc"), r.Utc("updatedUtc"), r.Array("subrooms").Select((x,i) => ReadSubroom(x, $"{path}.subrooms[{i}]", ids, id)).ToArray(), r.Array("transitions").Select((x,i) => ReadTransition(x, $"{path}.transitions[{i}]", ids, id, version)).ToArray(), r.Array("connections").Select((x,i) => ReadConnection(x, $"{path}.connections[{i}]", ids, id)).ToArray(), r.Array("checks").Select((x,i) => ReadCheck(x, $"{path}.checks[{i}]", ids, id, version)).ToArray());
+        var uploaded = value.TryGetProperty("useUploadedSceneImage", out _) && r.Bool("useUploadedSceneImage");
+        string? ReadHash(string name)
+        {
+            if (!value.TryGetProperty(name, out _)) return null;
+            var hash = r.NullableString(name);
+            if (hash is not null && (hash.Length != 64 || hash.Any(c => c is not (>= '0' and <= '9') and not (>= 'a' and <= 'f'))))
+                throw new PackageFormatException($"{path}.{name} must be null or lowercase SHA-256 hexadecimal.");
+            return hash;
+        }
+        return new DistributedRoomDocument(id, r.NullableGuid("roomGroupId"), r.String("referenceId"), r.String("friendlyName"), r.NullableString("inGameId"), r.NullableString("contributors"), r.NullableString("comments"), minX, minY, maxX, maxY, sx, sy, px, py, useSceneImage, uploaded, ReadHash("sceneImageOriginalHash"), ReadHash("sceneImageCropHash"), r.Int("sortOrder"), r.Bool("isArchived"), r.NullableUtc("archivedUtc"), r.Utc("createdUtc"), r.Utc("updatedUtc"), r.Array("subrooms").Select((x,i) => ReadSubroom(x, $"{path}.subrooms[{i}]", ids, id)).ToArray(), r.Array("transitions").Select((x,i) => ReadTransition(x, $"{path}.transitions[{i}]", ids, id, version)).ToArray(), r.Array("connections").Select((x,i) => ReadConnection(x, $"{path}.connections[{i}]", ids, id)).ToArray(), r.Array("checks").Select((x,i) => ReadCheck(x, $"{path}.checks[{i}]", ids, id, version)).ToArray());
     }
     private static DistributedSubroom ReadSubroom(JsonElement v, string p, IdentityRegistry ids, Guid owner) { var r=new ObjectReader(v,p,RequireObject); var id=r.Guid("id"); ids.AddChild(id,"subroom",p,owner); return new(id,r.String("referenceId"),r.String("friendlyName"),r.NullableString("notes"),r.NullableNumber("sceneUnitX"),r.NullableNumber("sceneUnitY"),r.NullableNumber("sceneUnitWidth"),r.NullableNumber("sceneUnitHeight"),r.Bool("enableAnnotation"),r.Int("sortOrder"),r.Bool("isArchived"),r.NullableUtc("archivedUtc"),r.Utc("createdUtc"),r.Utc("updatedUtc")); }
     private static DistributedTransition ReadTransition(JsonElement v, string p, IdentityRegistry ids, Guid owner, int version) { var r=new ObjectReader(v,p,RequireObject); var id=r.Guid("id"); ids.AddChild(id,"transition",p,owner); return new(id,r.String("alias"),r.String("friendlyName"),r.NullableString("inGameId"),r.NullableNumber("inGamePositionX"),r.NullableNumber("inGamePositionY"),r.NullableNumber("inGamePositionZ"),r.NullableNumber("localPositionX"),r.NullableNumber("localPositionY"),r.NullableNumber("localPositionZ"),r.NullableNumber("annotationSceneUnitX"),r.NullableNumber("annotationSceneUnitY"),r.Bool("enableAnnotation"),r.NullableString("sourceSubroomReferenceText"),r.NullableString("destinationRoomReferenceText"),r.NullableString("destinationTransitionAliasText"),r.String("requirements"),r.String("notes"),r.Int("sortOrder"),r.Bool("isTodo"),r.NullableBool("isVerified"),r.Bool("isArchived"),r.NullableUtc("archivedUtc"),r.Utc("createdUtc"),r.Utc("updatedUtc"),version >= 5 && r.Bool("isUnsafeArrival")); }

@@ -3,51 +3,80 @@
 @using Microsoft.JSInterop
 @implements IAsyncDisposable
 @inject IJSRuntime JS
+@inject SceneImageFileService ImageFiles
+@inject ILogger<V2SceneImageCaptureDialogContent> Logger
+@inject DiagnosticState Diagnostics
 <h2 id="v2-page-modal-title">scene bounds and image</h2>
+<div class="scene-image-capture-body">
+<div class="scene-image-capture-viewer">
 @if (View.Preview is { } preview)
 {
-    <svg @ref="capturePreview" class="scene-image-capture-preview" data-v2-scene-capture-preview="true" data-base-viewbox="@ViewBox(preview)" viewBox="@ViewBox(preview)" role="img" aria-label="Scene bounds and image preview">
-        @if (View.UseSceneImage) { <image class="scene-image-capture-source" data-v2-scene-capture-source="true" href="/data/scene-source/preview.webp" preserveAspectRatio="none" /> }
-        <rect data-v2-scene-capture-black="true" fill="black" pointer-events="none" />
+    <svg @ref="capturePreview" class="scene-image-capture-preview" data-v2-scene-capture-preview="true" data-pending-upload="@PendingUpload.ToString().ToLowerInvariant()" data-source-width="@N(View.SourcePixelWidth)" data-source-height="@N(View.SourcePixelHeight)" data-base-viewbox="@ViewBox(preview)" viewBox="@ViewBox(preview)" role="img" aria-label="Scene bounds and image preview">
+        @if (View.UseSceneImage && View.PreviewUrl is not null) { <image class="scene-image-capture-source" data-v2-scene-capture-source="true" href="@View.PreviewUrl" preserveAspectRatio="none" /> }
         <rect class="scene-layout-room-bounds" data-v2-scene-capture-reference="true" pointer-events="none" />
-        @foreach (var frame in preview.Frames) { <g class="scene-layout-subroom" data-v2-scene-capture-frame="true"><rect class="scene-layout-subroom-body" x="@N(frame.X)" y="@N(-frame.Y-frame.Height)" width="@N(frame.Width)" height="@N(frame.Height)" /><svg:text x="@N(frame.X+frame.Width/2)" y="@N(-frame.Y-frame.Height/2)" text-anchor="middle" dominant-baseline="central">@frame.Label</svg:text></g> }
-        @foreach (var marker in preview.Markers) { var y = -marker.Y; <g class="@($"scene-layout-marker scene-layout-{marker.Kind}{(marker.IsEnemy ? " scene-layout-enemy" : "")}")" data-v2-scene-capture-marker="@marker.Kind">@if (marker.Kind == "check") { <circle cx="@N(marker.X)" cy="@N(y)" r="1.5" /> } else { <rect x="@N(marker.X-7)" y="@N(y-4)" width="14" height="8" rx=".8" /><svg:text x="@N(marker.X)" y="@N(y)" text-anchor="middle" dominant-baseline="central">@marker.Label</svg:text> }</g> }
+        @foreach (var marker in preview.Markers) { var y = -marker.Y; <g class="@($"scene-layout-marker scene-layout-{marker.Kind}{(marker.IsEnemy ? " scene-layout-enemy" : "")}")" data-v2-scene-capture-marker="@marker.Kind">@if (marker.Kind == "check") { <circle cx="@N(marker.X)" cy="@N(y)" r="1.5" /> } else { <rect x="@N(marker.X-5.25)" y="@N(y-3)" width="10.5" height="6" rx=".6" /><svg:text x="@N(marker.X)" y="@N(y)" text-anchor="middle" dominant-baseline="central">@marker.Label</svg:text> }</g> }
         <line data-v2-scene-minimum="x" stroke="#00ffff" stroke-width="3" vector-effect="non-scaling-stroke" style="cursor:ew-resize" />
         <line data-v2-scene-minimum="y" stroke="#00ffff" stroke-width="3" vector-effect="non-scaling-stroke" style="cursor:ns-resize" />
         <line data-v2-scene-minimum-hit="x" stroke="transparent" stroke-width="16" vector-effect="non-scaling-stroke" pointer-events="stroke" style="cursor:ew-resize" />
         <line data-v2-scene-minimum-hit="y" stroke="transparent" stroke-width="16" vector-effect="non-scaling-stroke" pointer-events="stroke" style="cursor:ns-resize" />
     </svg>
     <div class="scene-image-capture-preview-controls">
-        <p class="scene-image-capture-legend">wheel: zoom | drag: inspect | cyan edges: minima | Ctrl+wheel: scale | Ctrl+drag: position image</p>
-        <button @ref="annotationToggle" type="button" class="icon-button" aria-pressed="true" aria-label="Hide annotations" title="Hide annotations"><i class="fa-solid fa-layer-group" aria-hidden="true"></i></button>
+        <p class="scene-image-capture-legend">wheel: zoom | drag: inspect @if (View.UseSceneImage) { <span>| cyan edges: minima</span> } @if (AlignmentVisible) { <span>| Ctrl+wheel: scale | Ctrl+drag: position image</span> }</p>
+        <button @ref="annotationToggle" type="button" class="icon-button" disabled="@MutationDisabled" aria-pressed="true" aria-label="Hide annotations" title="Hide annotations"><i class="fa-solid fa-layer-group" aria-hidden="true"></i></button>
     </div>
 }
-<div @ref="numericFields" class="scene-image-capture-fields">
-    <div class="scene-image-capture-field-group">
+</div>
+<div @ref="numericFields" class="scene-image-capture-options">
+    <div class="scene-image-source-controls">
+        <label>Source <select value="@(!View.UseSceneImage ? "none" : View.UseUploadedSceneImage ? "upload" : "map")" @onchange="SelectSource" disabled="@MutationDisabled">
+            <option value="upload">Uploaded image</option><option value="map">ScriptersWar crop</option><option value="none">None</option>
+        </select></label>
+        @if (View.UseUploadedSceneImage && View.UseSceneImage)
+        {
+            <label class="scene-image-upload">Choose or drop PNG, JPEG or WebP (up to 256 MiB)
+                <InputFile OnChange="Upload" accept="image/png,image/jpeg,image/webp" aria-label="Choose or drop an uploaded room image" disabled="@MutationDisabled" />
+            </label>
+        }
+        @if (preparing || View.SourcePreparing) { <span role="status">Preparing image source…</span> }
+        @if (uploadError is not null) { <span role="status">@uploadError</span> }
+    </div>
+    <input @ref="useSceneImage" type="checkbox" checked="@View.UseSceneImage" hidden tabindex="-1" aria-hidden="true" />
+    <div class="scene-image-capture-fields">
+    @* Stable numeric elements remain in this dialog-local owner; hidden controls are disabled
+       in both Razor and JS and never become alternate mutation targets. *@
+    <div class="scene-image-capture-field-group" hidden="@(!View.UseSceneImage)">
     <h3>scene bounds</h3>
     <div class="scene-image-capture-field-row">
     <div class="scene-image-capture-axis-pair">
-    <label>min X <input @ref="minX" type="number" step="any" aria-label="Scene minimum X" value="@View.MinX" @oninput="Changed" disabled="@Disabled" /></label>
-    <label>min Y <input @ref="minY" type="number" step="any" aria-label="Scene minimum Y" value="@View.MinY" @oninput="Changed" disabled="@Disabled" /></label>
+      <label>min X <input @ref="minX" type="number" step="any" aria-label="Scene minimum X" value="@View.MinX" @oninput="Changed" disabled="@(MutationDisabled || !View.UseSceneImage)" /></label>
+      <label>min Y <input @ref="minY" type="number" step="any" aria-label="Scene minimum Y" value="@View.MinY" @oninput="Changed" disabled="@(MutationDisabled || !View.UseSceneImage)" /></label>
     </div>
     <div class="scene-image-capture-axis-pair">
-    <label>max X <input @ref="maxX" type="number" step="any" aria-label="Scene maximum X" value="@View.MaxX" @oninput="Changed" disabled="@Disabled" /></label>
-    <label>max Y <input @ref="maxY" type="number" step="any" aria-label="Scene maximum Y" value="@View.MaxY" @oninput="Changed" disabled="@Disabled" /></label>
+      <label>max X <input @ref="maxX" type="number" step="any" aria-label="Scene maximum X" value="@View.MaxX" @oninput="Changed" disabled="@(MutationDisabled || !View.UseSceneImage)" /></label>
+      <label>max Y <input @ref="maxY" type="number" step="any" aria-label="Scene maximum Y" value="@View.MaxY" @oninput="Changed" disabled="@(MutationDisabled || !View.UseSceneImage)" /></label>
     </div>
     </div>
     </div>
-    <div class="scene-image-capture-field-group">
-    <h3>image mapping</h3>
+    <div class="scene-image-capture-field-group" hidden="@(!PendingUpload)">
+        <h3>upload preparation (once)</h3>
+        <label>Interpretation <select @ref="interpretation" value="@(View.UploadPreparation?.Native != false ? "native" : "advanced")" @onchange="Changed" disabled="@(MutationDisabled || !PendingUpload)"><option value="native">Native (64 pixels/unit)</option><option value="advanced">Advanced</option></select></label>
+        <label>Resolution <select @ref="resolution" value="@(View.UploadPreparation?.Resolution ?? "recommended")" @onchange="Changed" disabled="@(MutationDisabled || !PendingUpload)">
+            <option value="recommended">Recommended</option><option value="keep">Keep input resolution</option><option value="32">32 pixels/unit</option><option value="16">16 pixels/unit</option><option value="8">8 pixels/unit</option><option value="custom">Custom target</option>
+        </select></label>
+        <label hidden="@(View.UploadPreparation?.Resolution != "custom")">Target pixels/unit <input @ref="customTarget" type="number" step="any" value="@View.UploadCustomTarget" @oninput="Changed" disabled="@(MutationDisabled || !PendingUpload || View.UploadPreparation?.Resolution != "custom")" /></label>
+        <output @ref="preparationSummary" class="scene-image-preparation-summary" aria-live="polite"></output>
+    </div>
+    <div class="scene-image-capture-field-group" hidden="@(!AlignmentVisible)">
+    <h3>@(PendingUpload ? "input calibration / retained-pixel pan" : "image mapping")</h3>
     <div class="scene-image-capture-field-row">
     <div class="scene-image-capture-axis-pair">
-    <label>pixels/unit X <input @ref="scaleX" type="number" step="0.1" aria-label="Scene image pixels per unit X" value="@View.PixelsPerUnitX" @oninput="Changed" disabled="@Disabled" /></label>
-    <label>pixels/unit Y <input @ref="scaleY" type="number" step="0.1" aria-label="Scene image pixels per unit Y" value="@View.PixelsPerUnitY" @oninput="Changed" disabled="@Disabled" /></label>
+      <label>@(PendingUpload ? "input pixels/unit X" : "pixels/unit X") <input @ref="scaleX" type="number" step="0.1" aria-label="Scene image pixels per unit X" value="@View.PixelsPerUnitX" @oninput="Changed" disabled="@(MutationDisabled || !AlignmentVisible)" /></label>
+      <label>@(PendingUpload ? "input pixels/unit Y" : "pixels/unit Y") <input @ref="scaleY" type="number" step="0.1" aria-label="Scene image pixels per unit Y" value="@View.PixelsPerUnitY" @oninput="Changed" disabled="@(MutationDisabled || !AlignmentVisible)" /></label>
     </div>
     <div class="scene-image-capture-axis-pair">
-    <label>pixel offset X <input @ref="pixelOffsetX" type="number" step="0.1" aria-label="Scene image pixel offset X" value="@View.PixelOffsetX" @oninput="Changed" disabled="@(Disabled || !View.UseSceneImage)" /></label>
-    <label>pixel offset Y <input @ref="pixelOffsetY" type="number" step="0.1" aria-label="Scene image pixel offset Y" value="@View.PixelOffsetY" @oninput="Changed" disabled="@(Disabled || !View.UseSceneImage)" /></label>
+      <label>pixel offset X <input @ref="pixelOffsetX" type="number" step="0.1" aria-label="Scene image pixel offset X in retained pixels" value="@DisplayedOffset(View.PixelOffsetX, true)" @oninput="Changed" disabled="@(MutationDisabled || !AlignmentVisible)" /></label>
+      <label>pixel offset Y <input @ref="pixelOffsetY" type="number" step="0.1" aria-label="Scene image pixel offset Y in retained pixels" value="@DisplayedOffset(View.PixelOffsetY, false)" @oninput="Changed" disabled="@(MutationDisabled || !AlignmentVisible)" /></label>
     </div>
-    <label><input @ref="useSceneImage" type="checkbox" checked="@View.UseSceneImage" @onchange="Changed" disabled="@Disabled" /> Use scene image</label>
     </div>
     </div>
 </div>
@@ -55,9 +84,26 @@
 {
     <p class="text-secondary" role="status">@View.AvailabilitySummary</p>
 }
-<div class="confirmation-actions">
+<div class="v2-modal-footer scene-image-capture-actions">
     @if (Disabled) { <span data-scene-image-generation-progress="true" role="status">applying scene bounds and image...</span> }
-    else { <button type="button" @onclick="ResetDraft">reset recommendation</button><button type="button" @onclick="Clear">clear bounds</button><span></span><button type="button" @onclick="Cancel">cancel</button><button type="button" @onclick="ApplyCapture">apply</button> }
+    else
+    {
+        @if (AlignmentVisible)
+        {
+            <div class="scene-image-capture-alternatives">
+                <button type="button" class="compact-control" disabled="@MutationDisabled" @onclick="ResetDraft">@(View.UseUploadedSceneImage ? "reset pan" : "reset recommendation")</button>
+            </div>
+        }
+        <div class="scene-image-capture-action-row">
+            <button type="button" class="compact-control" disabled="@MutationDisabled" @onclick="ClearDraft">clear bounds</button>
+            <div class="scene-image-capture-commit">
+                <button type="button" class="compact-control" @onclick="Cancel">cancel</button>
+                <button type="button" class="compact-control" disabled="@MutationDisabled" @onclick="ApplyCapture">apply</button>
+            </div>
+        </div>
+    }
+</div>
+</div>
 </div>
 @code {
     [Parameter, EditorRequired] public V2SceneImageCaptureDialogView View { get; set; } = null!;
@@ -68,21 +114,83 @@
     [Parameter] public EventCallback Clear { get; set; }
     [Parameter] public EventCallback Cancel { get; set; }
     [Parameter] public EventCallback Apply { get; set; }
-    private ElementReference capturePreview, annotationToggle, numericFields, minX, minY, maxX, maxY, scaleX, scaleY, pixelOffsetX, pixelOffsetY, useSceneImage;
+    [Parameter] public EventCallback<V2SceneImageSourceIntent> SourceChanged { get; set; }
+    [Parameter] public EventCallback<V2SceneImagePreparationIntent> PreparationChanged { get; set; }
+    private readonly CancellationTokenSource uploadLifetime = new();
+    private readonly HashSet<Guid> ownedUploads = [];
+    private bool preparing;
+    private long preparationRevision;
+    private bool MutationDisabled => Disabled || preparing || View.SourcePreparing;
+    private string? uploadError;
+    private bool PendingUpload => View.UseSceneImage && View.UseUploadedSceneImage && View.UploadHandle is not null && View.UploadPreparation is not null;
+    private bool AlignmentVisible => View.UseSceneImage && (!PendingUpload || View.UploadPreparation?.Native == false);
+    private async Task SelectSource(ChangeEventArgs args)
+    {
+        if (MutationDisabled || disposed) return;
+        var owner = View.DialogOwner; var revision = ++preparationRevision;
+        preparing = true; uploadError = null;
+        try
+        {
+            await ReconcileDraft();
+            if (disposed) return;
+            await PreparationChanged.InvokeAsync(new(owner, revision, true));
+            await SourceChanged.InvokeAsync(new(owner, revision, args.Value?.ToString() switch { "upload" => true, "map" => false, _ => null }));
+        }
+        finally { preparing = false; if (!disposed) await PreparationChanged.InvokeAsync(new(owner, revision, false)); }
+    }
+    private async Task Upload(InputFileChangeEventArgs args)
+    {
+        if (MutationDisabled || disposed) return;
+        var owner = View.DialogOwner; var revision = ++preparationRevision;
+        preparing = true; uploadError = null;
+        try
+        {
+            if (args.File.Size > SceneImageFileService.UploadLimit) throw new InvalidOperationException("Choose an image no larger than 256 MiB.");
+            await ReconcileDraft();
+            if (disposed) return;
+            await PreparationChanged.InvokeAsync(new(owner, revision, true));
+            await using var stream = args.File.OpenReadStream(SceneImageFileService.UploadLimit, uploadLifetime.Token);
+            var upload = await ImageFiles.StageAsync(stream, uploadLifetime.Token);
+            if (disposed) { await DiscardUpload(upload.Handle); return; }
+            ownedUploads.Add(upload.Handle);
+            await SourceChanged.InvokeAsync(new(owner, revision, true, upload));
+            foreach (var old in ownedUploads.Where(x => x != View.UploadHandle && x != upload.Handle).ToArray())
+            { await DiscardUpload(old); ownedUploads.Remove(old); }
+        }
+        catch (OperationCanceledException) when (disposed) { }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Room image draft upload failed");
+            uploadError = ex is InvalidOperationException ? ex.Message : ex is ImageMagick.MagickException ? "Choose a valid PNG, JPEG or WebP image." : ex is OutOfMemoryException ? "Image processing failed. Reduce the input size and select it again." : ex is IOException ? "Image file access failed. Check file access and retry." : "Image upload failed unexpectedly. Technical details were logged.";
+            if (ex is not (InvalidOperationException or ImageMagick.MagickException or IOException or OutOfMemoryException)) Diagnostics.Show(ex.ToString());
+        }
+        finally { preparing = false; if (!disposed) await PreparationChanged.InvokeAsync(new(owner, revision, false)); }
+    }
+    private async Task DiscardUpload(Guid handle)
+    {
+        try { await ImageFiles.DiscardUploadAsync(handle); }
+        catch (Exception ex) { Logger.LogError(ex, "Room image draft disposal failed; saved room state is unchanged by disposal"); Diagnostics.Show(ex.ToString()); }
+    }
+    private ElementReference capturePreview, annotationToggle, numericFields, minX, minY, maxX, maxY, scaleX, scaleY, pixelOffsetX, pixelOffsetY, useSceneImage, interpretation, resolution, customTarget, preparationSummary;
     private bool previewInitialized, disposed;
     private bool correctionFocusInitializing;
     private IJSObjectReference? correctionFocusOwner;
     private long restoredCorrectionFocusVersion;
     private long appliedBrowserResetVersion;
-    private async Task Changed(ChangeEventArgs _) => await ReconcileDraft();
+    private async Task Changed(ChangeEventArgs _) { if (!MutationDisabled && !disposed) await ReconcileDraft(); }
     private async Task ReconcileDraft()
     {
+        var snapshot = View;
+        if (preparing && previewInitialized) await JS.InvokeVoidAsync("reconcileV2SceneImageCapturePreview", capturePreview, true, annotationToggle, true);
         var local = await JS.InvokeAsync<V2SceneImageCapturePreviewValues?>("readV2SceneImageCapturePreview", capturePreview);
-        if (local is not null) await DraftChanged.InvokeAsync(View with { MinX = local.MinX, MinY = local.MinY, MaxX = local.MaxX, MaxY = local.MaxY,
-            PixelsPerUnitX = local.PixelsPerUnitX, PixelsPerUnitY = local.PixelsPerUnitY, PixelOffsetX = local.PixelOffsetX, PixelOffsetY = local.PixelOffsetY, UseSceneImage = local.UseSceneImage });
+        if (!disposed && local is not null) await DraftChanged.InvokeAsync(snapshot with { MinX = local.MinX, MinY = local.MinY, MaxX = local.MaxX, MaxY = local.MaxY,
+            PixelsPerUnitX = local.PixelsPerUnitX, PixelsPerUnitY = local.PixelsPerUnitY, PixelOffsetX = local.PixelOffsetX, PixelOffsetY = local.PixelOffsetY, UseSceneImage = local.UseSceneImage,
+            UploadCustomTarget = local.UploadCustomTarget,
+            UploadPreparation = PendingUpload ? snapshot.UploadPreparation! with { Native = local.NativeUpload, Resolution = local.UploadResolution } : snapshot.UploadPreparation });
     }
-    private async Task ApplyCapture() { await ReconcileDraft(); await Apply.InvokeAsync(); }
-    private async Task ResetDraft() { await ReconcileDraft(); await Reset.InvokeAsync(); }
+    private async Task ApplyCapture() { if (MutationDisabled || disposed) return; await ReconcileDraft(); if (!MutationDisabled && !disposed) await Apply.InvokeAsync(); }
+    private async Task ResetDraft() { if (MutationDisabled || disposed) return; await ReconcileDraft(); if (!MutationDisabled && !disposed) await Reset.InvokeAsync(); }
+    private async Task ClearDraft() { if (!MutationDisabled && !disposed) await Clear.InvokeAsync(); }
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (disposed) return;
@@ -91,7 +199,7 @@
             correctionFocusInitializing = true;
             try
             {
-                var candidate = await JS.InvokeAsync<IJSObjectReference?>("createV2SceneCaptureFocusOwner", numericFields, minX, minY, maxX, maxY, scaleX, scaleY, pixelOffsetX, pixelOffsetY);
+                var candidate = await JS.InvokeAsync<IJSObjectReference?>("createV2SceneCaptureFocusOwner", numericFields, minX, minY, maxX, maxY, scaleX, scaleY, pixelOffsetX, pixelOffsetY, customTarget);
                 if (disposed) { if (candidate is not null) { await candidate.InvokeVoidAsync("dispose"); await candidate.DisposeAsync(); } return; }
                 correctionFocusOwner = candidate;
             }
@@ -107,20 +215,25 @@
         if (disposed || View.Preview is null) return;
         if (!previewInitialized)
         {
-            await JS.InvokeVoidAsync("initializeV2SceneImageCapturePreview", capturePreview, minX, minY, maxX, maxY, scaleX, scaleY, pixelOffsetX, pixelOffsetY, useSceneImage, annotationToggle);
+            await JS.InvokeVoidAsync("initializeV2SceneImageCapturePreview", capturePreview, minX, minY, maxX, maxY, scaleX, scaleY, pixelOffsetX, pixelOffsetY, useSceneImage, annotationToggle,
+                interpretation, resolution, customTarget, preparationSummary, BrowserValues());
             if (disposed) { await JS.InvokeVoidAsync("disposeV2SceneImageCapturePreview", capturePreview); return; }
             previewInitialized = true; appliedBrowserResetVersion = View.BrowserResetVersion;
         }
         if (appliedBrowserResetVersion != View.BrowserResetVersion)
         {
-            await JS.InvokeVoidAsync("resetV2SceneImageCapturePreview", capturePreview, new V2SceneImageCapturePreviewValues(View.MinX, View.MinY, View.MaxX, View.MaxY, View.PixelsPerUnitX, View.PixelsPerUnitY, View.PixelOffsetX, View.PixelOffsetY, View.UseSceneImage));
+            await JS.InvokeVoidAsync("resetV2SceneImageCapturePreview", capturePreview, BrowserValues());
             appliedBrowserResetVersion = View.BrowserResetVersion;
         }
-        await JS.InvokeVoidAsync("reconcileV2SceneImageCapturePreview", capturePreview, Disabled, annotationToggle);
+        await JS.InvokeVoidAsync("reconcileV2SceneImageCapturePreview", capturePreview, MutationDisabled, annotationToggle, preparing || View.SourcePreparing);
     }
     public async ValueTask DisposeAsync()
     {
         disposed = true;
+        uploadLifetime.Cancel();
+        var handles = ownedUploads.ToArray();
+        ownedUploads.Clear();
+        foreach (var handle in handles) await DiscardUpload(handle);
         try
         {
             if (correctionFocusOwner is not null) { await correctionFocusOwner.InvokeVoidAsync("dispose"); await correctionFocusOwner.DisposeAsync(); correctionFocusOwner = null; }
@@ -129,5 +242,20 @@
         catch (JSDisconnectedException) { }
     }
     private static string N(double value) => value.ToString("R", CultureInfo.InvariantCulture);
+    private V2SceneImageCapturePreviewValues BrowserValues() => new(View.MinX, View.MinY, View.MaxX, View.MaxY, View.PixelsPerUnitX, View.PixelsPerUnitY, View.PixelOffsetX, View.PixelOffsetY, View.UseSceneImage)
+        { NativeUpload = View.UploadPreparation?.Native != false, UploadResolution = View.UploadPreparation?.Resolution ?? "recommended", UploadCustomTarget = View.UploadCustomTarget };
+    private string DisplayedOffset(string input, bool x)
+    {
+        if (!PendingUpload) return input;
+        double? Number(string text) => double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var n) && double.IsFinite(n) ? n : null;
+        try
+        {
+            var size = SceneImageUploadMath.Calculate((uint)View.SourcePixelWidth, (uint)View.SourcePixelHeight,
+                Number(View.PixelsPerUnitX), Number(View.PixelsPerUnitY), View.UploadPreparation! with { CustomTarget = Number(View.UploadCustomTarget) },
+                Number(View.MinX) ?? double.NaN, Number(View.MinY) ?? double.NaN, Number(View.MaxX), Number(View.MaxY), false);
+            return Number(input) is { } n ? N(n * (x ? size.RatioX : size.RatioY)) : input;
+        }
+        catch (InvalidOperationException) { return ""; }
+    }
     private static string ViewBox(V2SceneImageCapturePreviewView preview) => $"{N(preview.InitialViewport.X)} {N(preview.InitialViewport.Y)} {N(preview.InitialViewport.Width)} {N(preview.InitialViewport.Height)}";
 }

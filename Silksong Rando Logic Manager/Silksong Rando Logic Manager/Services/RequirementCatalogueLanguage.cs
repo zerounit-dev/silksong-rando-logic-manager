@@ -7,21 +7,22 @@ public static class RequirementCatalogueLanguage
 {
     private static readonly IReadOnlyList<RequirementInputSyntaxOption> inputSyntaxOptions = new[]
     {
-        new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateOnly, "{predicate}", "Predicate only"),
-        new RequirementInputSyntaxOption(RequirementInputSyntax.OptionalDifficultyThenPredicate, "{difficulty?} {predicate}", "Optional difficulty + predicate"),
-        new RequirementInputSyntaxOption(RequirementInputSyntax.RequiredDifficultyThenPredicate, "{difficulty} {predicate}", "Required difficulty + predicate"),
-        new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenDirection, "{predicate} [{direction}]", "Predicate + direction"),
-        new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenOptionalDirection, "{predicate} [{direction?}]", "Predicate + optional direction"),
-        new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenItem, "{predicate} {item}", "Predicate + item"),
-        new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenCheck, "{predicate} {check}", "Predicate + check"),
-        new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenQuantity, "{predicate} {quantity}", "Predicate + quantity"),
-        new RequirementInputSyntaxOption(RequirementInputSyntax.RequiredDifficultyThenPredicateThenEnemy, "{difficulty} {predicate} [{enemy}]", "Required difficulty + predicate + enemy"),
-        new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenQuantityThenCountable, "{predicate} {quantity} {countable}", "Predicate + quantity + countable"),
-        new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenCountableThenQuantity, "{predicate} {countable} {quantity}", "Predicate + countable + quantity"),
-        new RequirementInputSyntaxOption(RequirementInputSyntax.CrestThenPredicateThenDirection, "[{crest}] {predicate} {direction}", "Crest + predicate + direction"),
-        new RequirementInputSyntaxOption(RequirementInputSyntax.RequiredDifficultyThenCrestThenPredicate, "{difficulty} [{crest}] {predicate}", "Required difficulty + crest + predicate"),
-        new RequirementInputSyntaxOption(RequirementInputSyntax.OptionalCrestThenPredicateThenDirection, "[{crest?}] {predicate} {direction}", "Optional crest + predicate + direction"),
-        new RequirementInputSyntaxOption(RequirementInputSyntax.RequiredDifficultyThenOptionalCrestThenPredicate, "{difficulty} [{crest?}] {predicate}", "Required difficulty + optional crest + predicate")
+        new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateOnly, "{predicate}", "Predicate only", "Basic"),
+        new RequirementInputSyntaxOption(RequirementInputSyntax.OptionalDifficultyThenPredicate, "{difficulty?} {predicate}", "Optional difficulty", "Basic"),
+        new RequirementInputSyntaxOption(RequirementInputSyntax.RequiredDifficultyThenPredicate, "{difficulty} {predicate}", "Required difficulty", "Basic"),
+        new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenDirection, "{predicate} [{direction}]", "Required direction", "Direction"),
+        new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenOptionalDirection, "{predicate} [{direction?}]", "Optional direction", "Direction"),
+        new RequirementInputSyntaxOption(RequirementInputSyntax.CrestThenPredicateThenDirection, "[{crest}] {predicate} {direction}", "Crest + direction", "Crest"),
+        new RequirementInputSyntaxOption(RequirementInputSyntax.OptionalCrestThenPredicateThenDirection, "[{crest?}] {predicate} {direction}", "Optional crest + direction", "Crest"),
+        new RequirementInputSyntaxOption(RequirementInputSyntax.RequiredDifficultyThenCrestThenPredicate, "{difficulty} [{crest}] {predicate}", "Difficulty + crest", "Crest"),
+        new RequirementInputSyntaxOption(RequirementInputSyntax.RequiredDifficultyThenOptionalCrestThenPredicate, "{difficulty} [{crest?}] {predicate}", "Difficulty + optional crest", "Crest"),
+        new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenItem, "{predicate} {item}", "Item", "Item / Location"),
+        new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenCheck, "{predicate} {check}", "Check dependency", "Item / Location"),
+        new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenQuantity, "{predicate} {quantity}", "Quantity only", "Quantity"),
+        new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenQuantityThenCountable, "{predicate} {quantity} {countable}", "Quantity then countable", "Quantity"),
+        new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenCountableThenQuantity, "{predicate} {countable} {quantity}", "Countable then quantity", "Quantity"),
+        new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenSoul, "{predicate} [{soul}]", "Soul", "Soul"),
+        new RequirementInputSyntaxOption(RequirementInputSyntax.RequiredDifficultyThenPredicateThenSoul, "{difficulty} {predicate} [{soul}]", "Difficulty + soul", "Soul")
     };
 
     public static IReadOnlyList<RequirementInputSyntaxOption> InputSyntaxOptions => inputSyntaxOptions;
@@ -144,7 +145,8 @@ public static class RequirementCatalogueLanguage
         RequirementInputSyntax.PredicateThenItem => new HashSet<RequirementOutputPlaceholder> { RequirementOutputPlaceholder.Item },
         RequirementInputSyntax.PredicateThenCheck => new HashSet<RequirementOutputPlaceholder> { RequirementOutputPlaceholder.Check },
         RequirementInputSyntax.PredicateThenQuantity => new HashSet<RequirementOutputPlaceholder> { RequirementOutputPlaceholder.Quantity },
-        RequirementInputSyntax.RequiredDifficultyThenPredicateThenEnemy => new HashSet<RequirementOutputPlaceholder> { RequirementOutputPlaceholder.Difficulty, RequirementOutputPlaceholder.Enemy },
+        RequirementInputSyntax.RequiredDifficultyThenPredicateThenSoul => new HashSet<RequirementOutputPlaceholder> { RequirementOutputPlaceholder.Difficulty, RequirementOutputPlaceholder.Soul },
+        RequirementInputSyntax.PredicateThenSoul => new HashSet<RequirementOutputPlaceholder> { RequirementOutputPlaceholder.Soul },
         RequirementInputSyntax.PredicateThenQuantityThenCountable => new HashSet<RequirementOutputPlaceholder> { RequirementOutputPlaceholder.Quantity, RequirementOutputPlaceholder.Countable },
         RequirementInputSyntax.PredicateThenCountableThenQuantity => new HashSet<RequirementOutputPlaceholder> { RequirementOutputPlaceholder.Countable, RequirementOutputPlaceholder.Quantity },
         RequirementInputSyntax.CrestThenPredicateThenDirection or RequirementInputSyntax.OptionalCrestThenPredicateThenDirection => new HashSet<RequirementOutputPlaceholder> { RequirementOutputPlaceholder.Crest, RequirementOutputPlaceholder.Direction },
@@ -164,7 +166,7 @@ public enum RequirementOutputPlaceholder
     Item,
     Quantity,
     Check,
-    Enemy,
+    Soul,
     Countable,
     Crest
 }
@@ -256,11 +258,11 @@ public static class RequirementOutputTemplate
             "item" => RequirementOutputPlaceholder.Item,
             "quantity" => RequirementOutputPlaceholder.Quantity,
             "check" => RequirementOutputPlaceholder.Check,
-            "enemy" => RequirementOutputPlaceholder.Enemy,
+            "soul" => RequirementOutputPlaceholder.Soul,
             "countable" => RequirementOutputPlaceholder.Countable,
             "crest" => RequirementOutputPlaceholder.Crest,
             _ => default
         };
-        return value is "difficulty" or "direction" or "item" or "quantity" or "check" or "enemy" or "countable" or "crest";
+        return value is "difficulty" or "direction" or "item" or "quantity" or "check" or "soul" or "countable" or "crest";
     }
 }

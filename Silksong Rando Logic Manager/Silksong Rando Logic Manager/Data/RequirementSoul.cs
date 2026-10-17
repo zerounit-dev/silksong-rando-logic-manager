@@ -1,6 +1,6 @@
 namespace Silksong_Rando_Logic_Manager.Data;
 
-public sealed class RequirementEnemyType
+public sealed class RequirementSoul
 {
     public Guid Id { get; set; }
     public string Name { get; set; } = string.Empty;

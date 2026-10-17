@@ -90,7 +90,7 @@ public sealed class DistributedImportApplicationService(IDbContextFactory<LogicD
 
         try
         {
-            var outcome = await ApplyReviewedRoomAsync(incoming, reviewed, (intent as ImportChangedRoom)?.ChildPlan, ct);
+            var outcome = await ApplyReviewedRoomAsync(incoming, reviewed, (intent as ImportChangedRoom)?.ChildPlan, (intent as ImportChangedRoom)?.OriginalChoice, ct);
             return outcome switch
             {
                 DistributedImportRoomApplied applied => applied with { State = Decide(state, applied.RoomId) },
@@ -134,8 +134,9 @@ public sealed class DistributedImportApplicationService(IDbContextFactory<LogicD
     }
 
     // Fresh comparison and mutation intentionally share this one SQLite transaction.
-    private async Task<DistributedImportOutcome> ApplyReviewedRoomAsync(DistributedRoomDocument incoming, DistributedRoomComparison reviewed, DistributedRoomChildPlan? childPlan, CancellationToken ct)
+    private async Task<DistributedImportOutcome> ApplyReviewedRoomAsync(DistributedRoomDocument incoming, DistributedRoomComparison reviewed, DistributedRoomChildPlan? childPlan, DistributedOriginalChoice? originalChoice, CancellationToken ct)
     {
+        using var imageAdmission = await sceneImages.AcquireLifecycleAsync(ct);
         await using var db = await contexts.CreateDbContextAsync(ct);
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         var fresh = await CompareAsync(db, incoming, ct);
@@ -150,10 +151,22 @@ public sealed class DistributedImportApplicationService(IDbContextFactory<LogicD
         }
 
         var room = await db.Rooms.SingleOrDefaultAsync(x => x.Id == incoming.Id, ct);
-        var invalidateSceneImage = room is null || CaptureStateDiffers(room, incoming);
+        var originalDiffers = room is not null && room.SceneImageOriginalHash != incoming.SceneImageOriginalHash;
+        if (originalDiffers && (originalChoice is null || !Enum.IsDefined(originalChoice.Value)))
+            return new DistributedImportRejected(["Choose Keep or Remove for the uploaded original before accepting this room."]);
+        var removeOriginal = originalDiffers && originalChoice == DistributedOriginalChoice.Remove;
+        if (originalDiffers && originalChoice == DistributedOriginalChoice.Keep)
+            incoming = incoming with { SceneImageOriginalHash = room!.SceneImageOriginalHash, UseUploadedSceneImage = room.UseUploadedSceneImage };
+        var invalidateSceneImage = room is null || CaptureStateDiffers(room, incoming) || incoming.UseSceneImage && !sceneImages.Exists(incoming.Id);
         if (room is null) { room = new Room { Id = incoming.Id }; db.Rooms.Add(room); }
         var groupExists = incoming.RoomGroupId is { } group && await db.RoomGroups.AnyAsync(x => x.Id == group, ct);
         CopyRoom(room, incoming, groupExists ? incoming.RoomGroupId : null);
+        room.UseUploadedSceneImage = incoming.UseUploadedSceneImage;
+        room.SceneImageOriginalHash = incoming.SceneImageOriginalHash;
+        room.SceneImageCropHash = incoming.SceneImageCropHash;
+        // Mark locally before commit: deletion failure must never reveal the old
+        // artifact as fresh. Equivalent settings retain receiver-local state.
+        if (invalidateSceneImage) room.IsSceneImageStale = true;
         var operationUtc = timeProvider.GetUtcNow().UtcDateTime;
         if (reviewed.Kind == DistributedRoomComparisonKind.New)
             await ReplaceChildrenAsync(db, room.Id, incoming, operationUtc, ct);
@@ -161,14 +174,22 @@ public sealed class DistributedImportApplicationService(IDbContextFactory<LogicD
             await ReconcileSelectedChildrenAsync(db, room.Id, incoming, childPlan!, operationUtc, ct);
         using (db.SuppressAuditMetadata()) { await db.SaveChangesAsync(ct); await new LogicReferenceResolver(db).ResolveAsync(ct); }
         await tx.CommitAsync(ct);
+        List<Exception> cleanupFailures = [];
+        if (removeOriginal)
+        {
+            try { await sceneImages.DeleteOriginalAsync(incoming.Id, ct); }
+            catch (Exception exception) { cleanupFailures.Add(exception); }
+        }
         if (invalidateSceneImage)
         {
             try { await sceneImages.DeleteAsync(incoming.Id, ct); }
-            catch (Exception exception)
-            {
-                logger.LogError(exception, "Postcommit scene image cleanup failed for committed imported room {RoomId}.", incoming.Id);
-                return new DistributedImportRoomApplied(incoming.Id, null!) { CleanupException = exception };
-            }
+            catch (Exception exception) { cleanupFailures.Add(exception); }
+        }
+        if (cleanupFailures.Count != 0)
+        {
+            var exception = new AggregateException("Imported room committed; image cleanup failed.", cleanupFailures);
+            logger.LogError(exception, "Postcommit image cleanup failed for committed imported room {RoomId}.", incoming.Id);
+            return new DistributedImportRoomApplied(incoming.Id, null!) { CleanupException = exception };
         }
         return new DistributedImportRoomApplied(incoming.Id, null!);
     }
@@ -247,15 +268,15 @@ public sealed class DistributedImportApplicationService(IDbContextFactory<LogicD
         catch (DbUpdateException ex) { return new("area-map", false, false, "failed:" + ex.Message); }
     }
 
-    private static void CopyRoom(Room r, DistributedRoomDocument x, Guid? group) { r.RoomGroupId=group; r.ReferenceId=x.ReferenceId; r.FriendlyName=x.FriendlyName; r.InGameId=x.InGameId; r.Contributors=x.Contributors; r.Comments=x.Comments; r.SceneMinX=x.SceneMinX; r.SceneMinY=x.SceneMinY; r.SceneMaxX=x.SceneMaxX; r.SceneMaxY=x.SceneMaxY; r.SceneImagePixelsPerUnitX=x.SceneImagePixelsPerUnitX; r.SceneImagePixelsPerUnitY=x.SceneImagePixelsPerUnitY; r.SceneImagePixelOffsetX=x.SceneImagePixelOffsetX; r.SceneImagePixelOffsetY=x.SceneImagePixelOffsetY; r.UseSceneImage=x.UseSceneImage; r.IsSceneImageStale=x.IsSceneImageStale; r.SortOrder=x.SortOrder; r.IsArchived=x.IsArchived; r.ArchivedUtc=x.ArchivedUtc; r.CreatedUtc=x.CreatedUtc; r.UpdatedUtc=x.UpdatedUtc; }
+    private static void CopyRoom(Room r, DistributedRoomDocument x, Guid? group) { r.RoomGroupId=group; r.ReferenceId=x.ReferenceId; r.FriendlyName=x.FriendlyName; r.InGameId=x.InGameId; r.Contributors=x.Contributors; r.Comments=x.Comments; r.SceneMinX=x.SceneMinX; r.SceneMinY=x.SceneMinY; r.SceneMaxX=x.SceneMaxX; r.SceneMaxY=x.SceneMaxY; r.SceneImagePixelsPerUnitX=x.SceneImagePixelsPerUnitX; r.SceneImagePixelsPerUnitY=x.SceneImagePixelsPerUnitY; r.SceneImagePixelOffsetX=x.SceneImagePixelOffsetX; r.SceneImagePixelOffsetY=x.SceneImagePixelOffsetY; r.UseSceneImage=x.UseSceneImage; r.SortOrder=x.SortOrder; r.IsArchived=x.IsArchived; r.ArchivedUtc=x.ArchivedUtc; r.CreatedUtc=x.CreatedUtc; r.UpdatedUtc=x.UpdatedUtc; }
     private static bool CaptureStateDiffers(Room current, DistributedRoomDocument incoming) =>
         current.SceneMinX != incoming.SceneMinX || current.SceneMinY != incoming.SceneMinY ||
         current.SceneMaxX != incoming.SceneMaxX || current.SceneMaxY != incoming.SceneMaxY ||
         current.SceneImagePixelsPerUnitX != incoming.SceneImagePixelsPerUnitX ||
         current.SceneImagePixelsPerUnitY != incoming.SceneImagePixelsPerUnitY ||
         current.SceneImagePixelOffsetX != incoming.SceneImagePixelOffsetX || current.SceneImagePixelOffsetY != incoming.SceneImagePixelOffsetY ||
-        current.UseSceneImage != incoming.UseSceneImage ||
-        current.IsSceneImageStale != incoming.IsSceneImageStale;
+        incoming.UseSceneImage && current.UseSceneImage != incoming.UseSceneImage || current.UseUploadedSceneImage != incoming.UseUploadedSceneImage ||
+        current.SceneImageOriginalHash != incoming.SceneImageOriginalHash || current.SceneImageCropHash != incoming.SceneImageCropHash;
     private static void CopyMap(Map r, DistributedMap x) { r.InGameId=x.InGameId; r.FriendlyName=x.FriendlyName; r.SortOrder=x.SortOrder; r.MapUnitMinX=x.MapUnitMinX; r.MapUnitMinY=x.MapUnitMinY; r.MapUnitMaxX=x.MapUnitMaxX; r.MapUnitMaxY=x.MapUnitMaxY; }
     private static void CopyOverlay(MapOverlay r, DistributedMapOverlay x, Guid parent) { r.MapId=parent; r.FriendlyName=x.FriendlyName; r.ImageAssetKey=x.ImageAssetKey; r.ScaleXPercent=x.ScaleXPercent; r.ScaleYPercent=x.ScaleYPercent; r.LeftOffsetPercent=x.LeftOffsetPercent; r.BottomOffsetPercent=x.BottomOffsetPercent; r.SortOrder=x.SortOrder; }
     private static void CopyZone(MapZone r, DistributedMapZone x, Guid parent) { r.MapId=parent; r.InGameId=x.InGameId; r.FriendlyName=x.FriendlyName; r.MapUnitMinX=x.MapUnitMinX; r.MapUnitMinY=x.MapUnitMinY; r.MapUnitMaxX=x.MapUnitMaxX; r.MapUnitMaxY=x.MapUnitMaxY; }

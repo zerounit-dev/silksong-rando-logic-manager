@@ -18,7 +18,7 @@ public sealed record RequirementCatalogueSnapshot(
     IReadOnlyList<RequirementCatalogueExchangeItem> Crests,
     IReadOnlyList<RequirementCatalogueExchangeItem> Items,
     IReadOnlyList<RequirementCatalogueExchangeItem> Countables,
-    IReadOnlyList<RequirementCatalogueExchangeItem> EnemyTypes);
+    IReadOnlyList<RequirementCatalogueExchangeItem> Souls);
 
 public sealed record RequirementCatalogueExchangeDocument(
     [property: JsonPropertyName("requirementCatalogueVersion")] int RequirementCatalogueVersion,
@@ -26,7 +26,7 @@ public sealed record RequirementCatalogueExchangeDocument(
     [property: JsonPropertyName("crests")] IReadOnlyList<RequirementCatalogueExchangeItem> Crests,
     [property: JsonPropertyName("items")] IReadOnlyList<RequirementCatalogueExchangeItem> Items,
     [property: JsonPropertyName("countables")] IReadOnlyList<RequirementCatalogueExchangeItem> Countables,
-    [property: JsonPropertyName("enemyTypes")] IReadOnlyList<RequirementCatalogueExchangeItem> EnemyTypes);
+    [property: JsonPropertyName("souls")] IReadOnlyList<RequirementCatalogueExchangeItem> Souls);
 
 public sealed record RequirementCatalogueExchangePredicate(
     [property: JsonPropertyName("id")] Guid Id,

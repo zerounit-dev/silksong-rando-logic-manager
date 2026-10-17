@@ -14,7 +14,7 @@ internal sealed record RoomGraphTranslationContext(
     IReadOnlyList<RoomGraphRequirementRoom> Rooms,
     IReadOnlyList<RoomGraphRequirementCheck> Checks,
     IReadOnlyList<RoomGraphItemDefinition> Countables,
-    IReadOnlyList<RoomGraphItemDefinition> Enemies,
+    IReadOnlyList<RoomGraphItemDefinition> Souls,
     IReadOnlyList<RoomGraphItemDefinition> Crests);
 
 internal static class RoomGraphRequirementTranslator
@@ -354,7 +354,7 @@ internal static class RoomGraphRequirementTranslator
                         }
                         else
                         {
-                            var catalogue = slot.Role == "crest" ? context.Crests : context.Enemies;
+                            var catalogue = slot.Role == "crest" ? context.Crests : context.Souls;
                             var matches = catalogue.Where(row => row.Aliases.Any(candidate => RequirementCatalogueLanguage.NormalizeIdentification(candidate) == identity)).ToArray();
                             if (matches.Length != 1) { failure = $"{(matches.Length == 0 ? "unrecognized" : "ambiguous")} {slot.Role}: {value}"; break; }
                             alternatives.Add(matches[0].OutputValue);
@@ -368,7 +368,7 @@ internal static class RoomGraphRequirementTranslator
                         "difficulty" => arguments with { Difficulty = value },
                         "direction" => arguments with { Direction = value },
                         "crest" => arguments with { CrestOutputValue = value },
-                        "enemy" => arguments with { EnemyOutputValue = value },
+                        "soul" => arguments with { SoulOutputValue = value },
                         _ => throw new InvalidOperationException("Unexpected approved operand role.")
                     })).ToArray();
                 }

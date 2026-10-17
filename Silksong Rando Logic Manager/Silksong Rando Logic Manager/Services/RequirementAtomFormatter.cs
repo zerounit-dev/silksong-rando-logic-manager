@@ -48,7 +48,7 @@ public static class RequirementAtomFormatter
         RequirementOutputPlaceholder.Item => Required(arguments.ItemOutputValue, "item output value"),
         RequirementOutputPlaceholder.Quantity => PositiveQuantity(arguments.Quantity),
         RequirementOutputPlaceholder.Check => Required(arguments.CheckGraphId, "check graph ID"),
-        RequirementOutputPlaceholder.Enemy => Required(arguments.EnemyOutputValue, "enemy output value"),
+        RequirementOutputPlaceholder.Soul => Required(arguments.SoulOutputValue, "soul output value"),
         RequirementOutputPlaceholder.Countable => Required(arguments.CountableOutputValue, "countable output value"),
         RequirementOutputPlaceholder.Crest => inputSyntax is RequirementInputSyntax.OptionalCrestThenPredicateThenDirection or RequirementInputSyntax.RequiredDifficultyThenOptionalCrestThenPredicate
             ? string.IsNullOrWhiteSpace(arguments.CrestOutputValue) ? "none" : arguments.CrestOutputValue

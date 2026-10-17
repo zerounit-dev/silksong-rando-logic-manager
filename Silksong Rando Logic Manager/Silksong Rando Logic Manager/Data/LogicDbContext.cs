@@ -21,7 +21,7 @@ public sealed class LogicDbContext(DbContextOptions<LogicDbContext> options) : D
     public DbSet<RequirementItem> RequirementItems => Set<RequirementItem>();
     public DbSet<RequirementCrest> RequirementCrests => Set<RequirementCrest>();
     public DbSet<RequirementCountable> RequirementCountables => Set<RequirementCountable>();
-    public DbSet<RequirementEnemyType> RequirementEnemyTypes => Set<RequirementEnemyType>();
+    public DbSet<RequirementSoul> RequirementSouls => Set<RequirementSoul>();
 
 #if DEBUG
     public override void Dispose()
@@ -66,7 +66,7 @@ public sealed class LogicDbContext(DbContextOptions<LogicDbContext> options) : D
         ConfigureRequirementItem(modelBuilder.Entity<RequirementItem>());
         ConfigureRequirementCrest(modelBuilder.Entity<RequirementCrest>());
         ConfigureRequirementCountable(modelBuilder.Entity<RequirementCountable>());
-        ConfigureRequirementEnemyType(modelBuilder.Entity<RequirementEnemyType>());
+        ConfigureRequirementSoul(modelBuilder.Entity<RequirementSoul>());
     }
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
@@ -109,6 +109,7 @@ public sealed class LogicDbContext(DbContextOptions<LogicDbContext> options) : D
         entity.Property(x => x.SceneMinX).HasDefaultValue(0d);
         entity.Property(x => x.SceneMinY).HasDefaultValue(0d);
         entity.Property(x => x.UseSceneImage).HasDefaultValue(true);
+        entity.Property(x => x.UseUploadedSceneImage).HasDefaultValue(false);
         entity.Property(x => x.IsSceneImageStale).HasDefaultValue(false);
         entity.HasMany(x => x.Subrooms).WithOne(x => x.Room).HasForeignKey(x => x.RoomId).OnDelete(DeleteBehavior.Restrict);
         entity.HasMany(x => x.Transitions).WithOne(x => x.Room).HasForeignKey(x => x.RoomId).OnDelete(DeleteBehavior.Restrict);
@@ -251,7 +252,7 @@ public sealed class LogicDbContext(DbContextOptions<LogicDbContext> options) : D
         entity.Property(x => x.Notes).IsRequired();
     }
 
-    private static void ConfigureRequirementEnemyType(EntityTypeBuilder<RequirementEnemyType> entity)
+    private static void ConfigureRequirementSoul(EntityTypeBuilder<RequirementSoul> entity)
     {
         entity.HasKey(x => x.Id);
         entity.Property(x => x.Name).IsRequired();
