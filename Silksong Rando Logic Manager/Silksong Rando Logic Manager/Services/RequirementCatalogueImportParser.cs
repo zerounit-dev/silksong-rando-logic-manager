@@ -2,7 +2,7 @@ using System.Text.Json;
 
 namespace Silksong_Rando_Logic_Manager.Services;
 
-/// <summary>Pure strict reader for the standalone requirement-catalogue V4 document.</summary>
+/// <summary>Pure strict reader for the standalone requirement-catalogue V5 document.</summary>
 public sealed class RequirementCatalogueImportParser
 {
     public const int MaximumImportBytes = 4 * 1024 * 1024;
@@ -17,20 +17,21 @@ public sealed class RequirementCatalogueImportParser
             using var document = JsonDocument.Parse(jsonUtf8);
             var root = document.RootElement;
             // Reject old snapshots before checking the new mandatory array so
-            // they receive export guidance rather than a missing-Souls error.
+            // they receive export guidance rather than a missing-Methods error.
             if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("requirementCatalogueVersion", out var oldVersion) &&
-                oldVersion.ValueKind == JsonValueKind.Number && oldVersion.TryGetInt32(out var oldNumber) && oldNumber is 1 or 2 or 3)
-                throw Invalid($"Catalogue version {oldNumber} is no longer supported. Export a new version-4 catalogue from the updated application, including crests, countables and souls.");
-            RequireObject(root, "$", ["requirementCatalogueVersion", "predicates", "crests", "items", "countables", "souls"]);
+                oldVersion.ValueKind == JsonValueKind.Number && oldVersion.TryGetInt32(out var oldNumber) && oldNumber is 1 or 2 or 3 or 4)
+                throw Invalid($"Catalogue version {oldNumber} is no longer supported. Export a new version-5 catalogue from the updated application, including crests, methods, countables and souls.");
+            RequireObject(root, "$", ["requirementCatalogueVersion", "predicates", "crests", "methods", "items", "countables", "souls"]);
             var version = RequiredInt(root, "requirementCatalogueVersion", "$");
-            if (version != 4) throw Invalid("$.requirementCatalogueVersion must equal 4. Export a version-4 catalogue from the updated application.");
+            if (version != 5) throw Invalid("$.requirementCatalogueVersion must equal 5. Export a version-5 catalogue from the updated application.");
             var predicates = ParsePredicates(RequiredArray(root, "predicates", "$"));
             var crests = ParseItems(RequiredArray(root, "crests", "$"), "$.crests");
+            var methods = ParseItems(RequiredArray(root, "methods", "$"), "$.methods");
             var items = ParseItems(RequiredArray(root, "items", "$"), "$.items");
             var countables = ParseItems(RequiredArray(root, "countables", "$"), "$.countables");
             var souls = ParseItems(RequiredArray(root, "souls", "$"), "$.souls");
-            ValidateSnapshot(predicates, crests, items, countables, souls);
-            return RequirementCatalogueImportParseResult.Accepted(new(predicates, crests, items, countables, souls));
+            ValidateSnapshot(predicates, crests, methods, items, countables, souls);
+            return RequirementCatalogueImportParseResult.Accepted(new(predicates, crests, methods, items, countables, souls));
         }
         catch (JsonException exception)
         {
@@ -73,16 +74,18 @@ public sealed class RequirementCatalogueImportParser
     }
 
     private static void ValidateSnapshot(IReadOnlyList<RequirementCatalogueExchangePredicate> predicates, IReadOnlyList<RequirementCatalogueExchangeItem> crests,
+        IReadOnlyList<RequirementCatalogueExchangeItem> methods,
         IReadOnlyList<RequirementCatalogueExchangeItem> items,
         IReadOnlyList<RequirementCatalogueExchangeItem> countables, IReadOnlyList<RequirementCatalogueExchangeItem> souls)
     {
         ValidateOrder(predicates.Select(x => x.SortOrder), "$.predicates");
         ValidateOrder(crests.Select(x => x.SortOrder), "$.crests");
+        ValidateOrder(methods.Select(x => x.SortOrder), "$.methods");
         ValidateOrder(items.Select(x => x.SortOrder), "$.items");
         ValidateOrder(countables.Select(x => x.SortOrder), "$.countables");
         ValidateOrder(souls.Select(x => x.SortOrder), "$.souls");
         var identities = new HashSet<Guid>();
-        foreach (var id in predicates.Select(x => x.Id).Concat(crests.Concat(items).Concat(countables).Concat(souls).Select(x => x.Id)))
+        foreach (var id in predicates.Select(x => x.Id).Concat(crests.Concat(methods).Concat(items).Concat(countables).Concat(souls).Select(x => x.Id)))
             if (id == Guid.Empty || !identities.Add(id)) throw Invalid("Every catalogue GUID must be nonempty and unique across the document.");
 
         var issues = RequirementCatalogueValidator.Validate(
@@ -92,7 +95,7 @@ public sealed class RequirementCatalogueImportParser
             items.Select(x => new RequirementCatalogueItemValidation(x.Id, x.Name, x.Category, x.OutputValue, x.Notes,
                  x.Aliases)));
         if (issues.Count != 0) throw Invalid($"Catalogue validation failed: {issues[0].Message}");
-        foreach (var (values, path) in new[] { (crests, "$.crests"), (countables, "$.countables"), (souls, "$.souls") })
+        foreach (var (values, path) in new[] { (crests, "$.crests"), (methods, "$.methods"), (countables, "$.countables"), (souls, "$.souls") })
         {
             var referenceIssues = RequirementCatalogueValidator.ValidateReferenceValues(values.Select(x =>
                 new RequirementCatalogueItemValidation(x.Id, x.Name, x.Category, x.OutputValue, x.Notes, x.Aliases)));
@@ -106,7 +109,7 @@ public sealed class RequirementCatalogueImportParser
 
         // Exchange is a strict snapshot contract, unlike an Apply draft.  A
         // replacement must never quietly rewrite a sender's flat alias value.
-        foreach (var aliases in predicates.Select(x => x.Aliases).Concat(crests.Concat(items).Concat(countables).Concat(souls).Select(x => x.Aliases)))
+        foreach (var aliases in predicates.Select(x => x.Aliases).Concat(crests.Concat(methods).Concat(items).Concat(countables).Concat(souls).Select(x => x.Aliases)))
         {
             if (!RequirementCatalogueLanguage.TryCanonicalizeAliases(aliases, out var canonical, out _, out _) ||
                 !string.Equals(aliases, canonical, StringComparison.Ordinal))

@@ -404,7 +404,7 @@ public sealed record RoomEditorV2View(RoomHeaderView Header, SubroomTableView Su
     /// <summary>Loaded independently by the Phase-4 scene loader; never contains persistence entities.</summary>
     public SceneLayoutView? Scene { get; init; }
     /// <summary>Read-only browser parser context; multiplicity is intentionally retained.</summary>
-    public RequirementsParserContextView RequirementsParserContext { get; init; } = new([], [], [], [], [], [], []);
+    public RequirementsParserContextView RequirementsParserContext { get; init; } = new([], [], [], [], [], [], [], []);
 }
 public sealed record RequirementsParserRoomView(Guid RoomId, string ReferenceId);
 public sealed record RequirementsParserCheckView(Guid RoomId, string FriendlyName);
@@ -418,8 +418,10 @@ public sealed record RequirementsParserContextView(IReadOnlyList<RequirementsPar
     IReadOnlyList<RequirementsParserItemView> Items,
     IReadOnlyList<RequirementsParserCountableView> Countables,
     IReadOnlyList<RequirementsParserSoulView> Souls,
-    IReadOnlyList<RequirementsParserCrestView> Crests);
+    IReadOnlyList<RequirementsParserCrestView> Crests,
+    IReadOnlyList<RequirementsParserMethodView> Methods);
 
 public sealed record RequirementsParserCountableView(IReadOnlyList<string> Aliases);
 public sealed record RequirementsParserSoulView(IReadOnlyList<string> Aliases);
 public sealed record RequirementsParserCrestView(IReadOnlyList<string> Aliases);
+public sealed record RequirementsParserMethodView(IReadOnlyList<string> Aliases);

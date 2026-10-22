@@ -50,6 +50,7 @@ public static class RequirementAtomFormatter
         RequirementOutputPlaceholder.Check => Required(arguments.CheckGraphId, "check graph ID"),
         RequirementOutputPlaceholder.Soul => Required(arguments.SoulOutputValue, "soul output value"),
         RequirementOutputPlaceholder.Countable => Required(arguments.CountableOutputValue, "countable output value"),
+        RequirementOutputPlaceholder.Method => Required(arguments.MethodOutputValue, "method output value"),
         RequirementOutputPlaceholder.Crest => inputSyntax is RequirementInputSyntax.OptionalCrestThenPredicateThenDirection or RequirementInputSyntax.RequiredDifficultyThenOptionalCrestThenPredicate
             ? string.IsNullOrWhiteSpace(arguments.CrestOutputValue) ? "none" : arguments.CrestOutputValue
             : Required(arguments.CrestOutputValue, "crest output value"),

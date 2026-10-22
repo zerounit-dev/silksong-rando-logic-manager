@@ -20,6 +20,7 @@ public sealed class LogicDbContext(DbContextOptions<LogicDbContext> options) : D
     public DbSet<RequirementPredicate> RequirementPredicates => Set<RequirementPredicate>();
     public DbSet<RequirementItem> RequirementItems => Set<RequirementItem>();
     public DbSet<RequirementCrest> RequirementCrests => Set<RequirementCrest>();
+    public DbSet<RequirementMethod> RequirementMethods => Set<RequirementMethod>();
     public DbSet<RequirementCountable> RequirementCountables => Set<RequirementCountable>();
     public DbSet<RequirementSoul> RequirementSouls => Set<RequirementSoul>();
 
@@ -65,6 +66,7 @@ public sealed class LogicDbContext(DbContextOptions<LogicDbContext> options) : D
         ConfigureRequirementPredicate(modelBuilder.Entity<RequirementPredicate>());
         ConfigureRequirementItem(modelBuilder.Entity<RequirementItem>());
         ConfigureRequirementCrest(modelBuilder.Entity<RequirementCrest>());
+        ConfigureRequirementMethod(modelBuilder.Entity<RequirementMethod>());
         ConfigureRequirementCountable(modelBuilder.Entity<RequirementCountable>());
         ConfigureRequirementSoul(modelBuilder.Entity<RequirementSoul>());
     }
@@ -244,6 +246,15 @@ public sealed class LogicDbContext(DbContextOptions<LogicDbContext> options) : D
     }
 
     private static void ConfigureRequirementCrest(EntityTypeBuilder<RequirementCrest> entity)
+    {
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Name).IsRequired();
+        entity.Property(x => x.OutputValue).IsRequired();
+        entity.Property(x => x.Aliases).IsRequired();
+        entity.Property(x => x.Notes).IsRequired();
+    }
+
+    private static void ConfigureRequirementMethod(EntityTypeBuilder<RequirementMethod> entity)
     {
         entity.HasKey(x => x.Id);
         entity.Property(x => x.Name).IsRequired();

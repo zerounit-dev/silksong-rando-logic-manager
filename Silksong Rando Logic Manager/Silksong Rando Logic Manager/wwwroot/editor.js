@@ -1044,7 +1044,7 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
       const existing = root[v2ChildInteractionOwnerKey];
       if(existing?.isLive?.())throw new Error("A V2 child interaction owner is already installed for this page root.");
       existing?.dispose?.();
-       const owners = {}, configs = {}, tabSources = new WeakSet(), feedback = new Map(); let drag = null, disposed = false, requirementsContext = initialRequirementsContext ?? { rooms: [], checks: [], predicates: [], items: [], countables: [], souls: [], crests: [] }, activeRequirement = null, suppressedRequirementBlur = null, closingRequirement = false, pointerRequirementCaret = null;
+        const owners = {}, configs = {}, tabSources = new WeakSet(), feedback = new Map(); let drag = null, disposed = false, requirementsContext = initialRequirementsContext ?? { rooms: [], checks: [], predicates: [], items: [], countables: [], souls: [], crests: [], methods: [] }, activeRequirement = null, suppressedRequirementBlur = null, closingRequirement = false, pointerRequirementCaret = null;
      const config = kind => configs[kind];
      const control = x => x instanceof HTMLInputElement || x instanceof HTMLTextAreaElement || x instanceof HTMLSelectElement;
       const requirementEditor = x => x instanceof HTMLTextAreaElement && x.matches("[data-v2-requirements-editor]");
@@ -1059,13 +1059,13 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
             matches.uniqueDefinition=matches.length===1?definition:matches.uniqueDefinition===definition?definition:null;
         };
          const compileRequirementsLookups = context => {
-              const roomsByReference=new Map(),checksByName=new Map(),checksByRoom=new Map(),itemAliases=new Map(),countableAliases=new Map(),soulAliases=new Map(),crestAliases=new Map(),predicateAliasesByFirstToken=new Map(),predicateAliases=[];
+               const roomsByReference=new Map(),checksByName=new Map(),checksByRoom=new Map(),itemAliases=new Map(),countableAliases=new Map(),soulAliases=new Map(),crestAliases=new Map(),methodAliases=new Map(),predicateAliasesByFirstToken=new Map(),predicateAliases=[];
              for(const room of context.rooms||[])addRequirementLookup(roomsByReference,identify(room.referenceId),room);
              for(const check of context.checks||[]){const name=identify(check.friendlyName);addRequirementLookup(checksByName,name,check);let roomChecks=checksByRoom.get(check.roomId);if(!roomChecks){roomChecks=new Map();checksByRoom.set(check.roomId,roomChecks);}addRequirementLookup(roomChecks,name,check);}
-              for(const [rows,map] of [[context.items,itemAliases],[context.countables,countableAliases],[context.souls,soulAliases],[context.crests,crestAliases]])
+               for(const [rows,map] of [[context.items,itemAliases],[context.countables,countableAliases],[context.souls,soulAliases],[context.crests,crestAliases],[context.methods,methodAliases]])
                  for(const row of rows||[])for(const alias of row.aliases||[])addFriendlyNameAliasLookup(map,identify(alias),row);
              for(const predicate of context.predicates||[])for(const alias of predicate.aliases||[]){const normalized=identify(alias),tokens=normalized?normalized.split(" "):[];if(tokens.length){const candidate={predicate,tokens,normalizedAlias:normalized};addRequirementLookup(predicateAliasesByFirstToken,tokens[0],candidate);predicateAliases.push(candidate);}}
-              return {roomsByReference,checksByName,checksByRoom,itemAliases,countableAliases,soulAliases,crestAliases,predicateAliasesByFirstToken,predicateAliases};
+               return {roomsByReference,checksByName,checksByRoom,itemAliases,countableAliases,soulAliases,crestAliases,methodAliases,predicateAliasesByFirstToken,predicateAliases};
          };
        let requirementsLookups=compileRequirementsLookups(requirementsContext);
         const friendlyNameEditor = field => field instanceof HTMLTextAreaElement && field.matches("[data-v2-friendly-name-space]");
@@ -1115,7 +1115,7 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
           const codePointAt=(text,index)=>index>=text.length?"":String.fromCodePoint(text.codePointAt(index));
           const identifierCodePoint=value=>/[\p{L}\p{Nd}]/u.test(value);
           const wordAt=(word,index)=>source.slice(index,index+word.length)===word&&!identifierCodePoint(codePointBefore(source,index))&&!identifierCodePoint(codePointAt(source,index+word.length));
-               const syntax = { only:"{predicate}", optional:"{difficulty?} {predicate}", required:"{difficulty} {predicate}", direction:"{predicate} [{direction}]", optionalDirection:"{predicate} [{direction?}]", item:"{predicate} {item}", check:"{predicate} {check}", quantity:"{predicate} {quantity}", difficultySoul:"{difficulty} {predicate} [{soul}]", soul:"{predicate} [{soul}]", countable:"{predicate} {quantity} {countable}", countableFirst:"{predicate} {countable} {quantity}", crestDirection:"[{crest}] {predicate} {direction}", difficultyCrest:"{difficulty} [{crest}] {predicate}", optionalCrestDirection:"[{crest?}] {predicate} {direction}", difficultyOptionalCrest:"{difficulty} [{crest?}] {predicate}" };
+                const syntax = { only:"{predicate}", optional:"{difficulty?} {predicate}", required:"{difficulty} {predicate}", direction:"{predicate} [{direction}]", optionalDirection:"{predicate} [{direction?}]", item:"{predicate} {item}", check:"{predicate} {check}", quantity:"{predicate} {quantity}", difficultySoul:"{difficulty} {predicate} [{soul}]", soul:"{predicate} [{soul}]", countable:"{predicate} {quantity} {countable}", countableFirst:"{predicate} {countable} {quantity}", crestDirection:"[{crest}] {predicate} {direction}", difficultyCrest:"{difficulty} [{crest}] {predicate}", optionalCrestDirection:"[{crest?}] {predicate} {direction}", difficultyOptionalCrest:"{difficulty} [{crest?}] {predicate}", difficultyMethod:"{difficulty} [{method}] {predicate}" };
           const operandShapes=new Map(Object.values(syntax).filter(pattern=>pattern.includes("[")).map(pattern=>[pattern,pattern.split(" ").map(marker=>({role:marker.replace(/[\[\]{}?]/gu,""),optional:marker.includes("?"),list:marker.startsWith("[")}))]));
           const difficulty = new Set(["easy","medium","hard","cbt"]), direction = new Set(["left","right","up","down","both","either","any","all"]);
            const tokenizeAtom = text => { const chunks=[...text.matchAll(/\S+/gu)].map(match=>({start:match.index,end:match.index+match[0].length,identity:identify(match[0])})),meaningful=chunks.filter(chunk=>chunk.identity);return {text,chunks,meaningful}; };
@@ -1200,7 +1200,7 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
                               const identity=identify(text.slice(value.start,value.end));
                               if(slot.role==="difficulty")valid=difficulty.has(identity);
                               else if(slot.role==="direction")valid=direction.has(identity);
-                               else {const map=slot.role==="crest"?requirementsLookups.crestAliases:requirementsLookups.soulAliases;valid=(map.get(identity)?.length??0)===1;}
+                                else {const map={crest:requirementsLookups.crestAliases,method:requirementsLookups.methodAliases,soul:requirementsLookups.soulAliases}[slot.role];if(!map)throw new Error("Unexpected approved typed operand role.");valid=(map.get(identity)?.length??0)===1;}
                               if(!valid)break;
                               roles.push({...value,className:`requirements-${slot.role}`});
                           }
@@ -1533,7 +1533,7 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
             beforeFocus:()=>{if(!disposed)reconcileBoundaryFacts();},
             register:(reference,kind,descriptor)=>{if(!disposed&&typeof kind==="string"&&descriptor&&["method","blur","drop","row","table","grip","field","client","directionPrefix","before","tail","tailRow"].every(key=>typeof descriptor[key]==="string"&&descriptor[key])){pointerRequirementCaret=null;if(activeRequirement&&kindOf(activeRequirement.inline)===kind)closeRequirements(false);clear(kind);if(drag?.kind===kind)drag=null;configs[kind]=Object.freeze({...descriptor});owners[kind]=reference;reconcileAttention();}},
             unregister:kind=>{pointerRequirementCaret=null;if(activeRequirement&&kindOf(activeRequirement.inline)===kind)closeRequirements(false);clear(kind);if(drag?.kind===kind)drag=null;delete owners[kind];delete configs[kind];reconcileAttention();},
-               setRequirementsContext:context=>{requirementsContext=context??{rooms:[],checks:[],predicates:[],items:[],countables:[],souls:[],crests:[]};requirementsLookups=compileRequirementsLookups(requirementsContext);reconcileBoundaryFacts();reconcileRequirement();root.querySelectorAll("textarea[data-v2-requirements-editor]").forEach(renderInlineRequirement);root.querySelectorAll(".requirements-preview").forEach(renderArchivedRequirements);reconcileFriendlyNames();reconcileAttention();},
+                setRequirementsContext:context=>{requirementsContext=context??{rooms:[],checks:[],predicates:[],items:[],countables:[],souls:[],crests:[],methods:[]};requirementsLookups=compileRequirementsLookups(requirementsContext);reconcileBoundaryFacts();reconcileRequirement();root.querySelectorAll("textarea[data-v2-requirements-editor]").forEach(renderInlineRequirement);root.querySelectorAll(".requirements-preview").forEach(renderArchivedRequirements);reconcileFriendlyNames();reconcileAttention();},
             commitActiveRequirement:async()=>{let field;if(activeRequirement){const state=activeRequirement;closeRequirements(true);field=root.querySelector(`#${CSS.escape(state.id)}`);}else{const focused=document.activeElement;if(!requirementEditor(focused)||!root.contains(focused))return true;field=focused;}const kind=kindOf(field),c=kind&&config(kind),owner=kind&&owners[kind];if(!requirementEditor(field)||!c||!owner?.invokeMethodAsync||!field.dataset[c.client])return false;suppressedRequirementBlur=field;field.blur();if(suppressedRequirementBlur===field)suppressedRequirementBlur=null;try{return await owner.invokeMethodAsync(c.blur,field.dataset[c.client],field.dataset[c.field],null,field.value)!==false;}catch{return false;}},
             focus:id=>{if(!disposed)window.focusEditorField(id);},
             clear,

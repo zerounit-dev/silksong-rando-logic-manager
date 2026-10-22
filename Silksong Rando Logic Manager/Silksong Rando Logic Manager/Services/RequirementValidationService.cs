@@ -53,6 +53,7 @@ public sealed class RequirementValidationService(
             var countables = await LoadCountablesAsync(db, cancellationToken);
             var souls = await LoadSoulsAsync(db, cancellationToken);
             var crests = await LoadCrestsAsync(db, cancellationToken);
+            var methods = await LoadMethodsAsync(db, cancellationToken);
             var rooms = await db.Rooms.AsNoTracking().Where(row => !row.IsArchived)
                 .Select(row => new RequirementValidationRoom(row.Id, row.ReferenceId)).ToListAsync(cancellationToken);
             var activeRoomIds = rooms.Select(row => row.Id).ToArray();
@@ -60,7 +61,7 @@ public sealed class RequirementValidationService(
             var transitions = await db.RoomTransitions.Where(row => !row.IsArchived && activeRoomIds.Contains(row.RoomId)).ToListAsync(cancellationToken);
             var connections = await db.SubroomConnections.Where(row => !row.IsArchived && activeRoomIds.Contains(row.RoomId)).ToListAsync(cancellationToken);
             var context = new RequirementValidationContext(predicates, items, rooms,
-                checks.Select(row => new RequirementValidationCheck(row.Id, row.RoomId, row.FriendlyName)).ToArray(), countables, souls, crests);
+                checks.Select(row => new RequirementValidationCheck(row.Id, row.RoomId, row.FriendlyName)).ToArray(), countables, souls, crests, methods);
 
             var results = new List<RequirementValidationRowResult>(transitions.Count + connections.Count + checks.Count);
             foreach (var row in transitions)
@@ -162,11 +163,12 @@ public sealed class RequirementValidationService(
         var countables = await LoadCountablesAsync(db, cancellationToken);
         var souls = await LoadSoulsAsync(db, cancellationToken);
         var crests = await LoadCrestsAsync(db, cancellationToken);
+        var methods = await LoadMethodsAsync(db, cancellationToken);
         var rooms = await db.Rooms.AsNoTracking().Where(row => !row.IsArchived)
             .Select(row => new RequirementValidationRoom(row.Id, row.ReferenceId)).ToListAsync(cancellationToken);
         var checks = await db.CheckLocations.AsNoTracking().Where(row => !row.IsArchived && !row.Room.IsArchived)
             .Select(row => new RequirementValidationCheck(row.Id, row.RoomId, row.FriendlyName)).ToListAsync(cancellationToken);
-        return new(predicates, items, rooms, checks, countables, souls, crests);
+        return new(predicates, items, rooms, checks, countables, souls, crests, methods);
     }
 
     internal bool? ValidateSafely(RequirementValidationContext context, Guid roomId, Guid rowId,
@@ -209,6 +211,10 @@ public sealed class RequirementValidationService(
         db.RequirementCrests.AsNoTracking().OrderBy(row => row.SortOrder).ThenBy(row => row.Id)
             .Select(row => new RequirementValidationItem(row.Id, row.Aliases)).ToListAsync(token);
 
+    private static Task<List<RequirementValidationItem>> LoadMethodsAsync(LogicDbContext db, CancellationToken token) =>
+        db.RequirementMethods.AsNoTracking().OrderBy(row => row.SortOrder).ThenBy(row => row.Id)
+            .Select(row => new RequirementValidationItem(row.Id, row.Aliases)).ToListAsync(token);
+
     private static string? ClassifySqlite(Exception exception)
     {
         var sqlite = exception as SqliteException ?? exception.InnerException as SqliteException;
@@ -236,7 +242,8 @@ internal sealed class RequirementValidationContext
         IEnumerable<RequirementValidationCheck> checks,
         IEnumerable<RequirementValidationItem> countables,
         IEnumerable<RequirementValidationItem> souls,
-        IEnumerable<RequirementValidationItem> crests)
+        IEnumerable<RequirementValidationItem> crests,
+        IEnumerable<RequirementValidationItem> methods)
     {
         Predicates = predicates.ToImmutableArray();
         Items = items.ToImmutableArray();
@@ -245,9 +252,10 @@ internal sealed class RequirementValidationContext
         Countables = countables.ToImmutableArray();
         Souls = souls.ToImmutableArray();
         Crests = crests.ToImmutableArray();
+        Methods = methods.ToImmutableArray();
         try
         {
-            Prepared = ManagedRequirementValidator.Prepare(Predicates, Items, Rooms, Checks, Countables, Souls, Crests);
+            Prepared = ManagedRequirementValidator.Prepare(Predicates, Items, Rooms, Checks, Countables, Souls, Crests, Methods);
         }
         catch (Exception exception)
         {
@@ -262,6 +270,7 @@ internal sealed class RequirementValidationContext
     internal ImmutableArray<RequirementValidationItem> Countables { get; }
     internal ImmutableArray<RequirementValidationItem> Souls { get; }
     internal ImmutableArray<RequirementValidationItem> Crests { get; }
+    internal ImmutableArray<RequirementValidationItem> Methods { get; }
     private ManagedRequirementValidator.PreparedContext? Prepared { get; }
     private ExceptionDispatchInfo? PreparationFailure { get; }
 
@@ -287,7 +296,8 @@ internal static class ManagedRequirementValidator
         ImmutableArray<RequirementValidationCheck> checks,
         ImmutableArray<RequirementValidationItem> countableRows,
         ImmutableArray<RequirementValidationItem> soulRows,
-        ImmutableArray<RequirementValidationItem> crestRows)
+        ImmutableArray<RequirementValidationItem> crestRows,
+        ImmutableArray<RequirementValidationItem> methodRows)
     {
         var predicates = predicateRows.SelectMany(predicate =>
         {
@@ -310,7 +320,8 @@ internal static class ManagedRequirementValidator
         var countables = PrepareTypedAliases(countableRows, "countable");
         var souls = PrepareTypedAliases(soulRows, "soul");
         var crests = PrepareTypedAliases(crestRows, "crest");
-        return new(predicates, items, rooms, checks, countables, souls, crests);
+        var methods = PrepareTypedAliases(methodRows, "method");
+        return new(predicates, items, rooms, checks, countables, souls, crests, methods);
     }
 
     private static ImmutableArray<string> PrepareTypedAliases(ImmutableArray<RequirementValidationItem> rows, string kind)
@@ -340,7 +351,8 @@ internal static class ManagedRequirementValidator
         ImmutableArray<RequirementValidationCheck> Checks,
         ImmutableArray<string> Countables,
         ImmutableArray<string> Souls,
-        ImmutableArray<string> Crests);
+        ImmutableArray<string> Crests,
+        ImmutableArray<string> Methods);
 
     private sealed class Parser(string source, Guid owningRoomId, PreparedContext context)
     {
@@ -495,6 +507,7 @@ internal static class ManagedRequirementValidator
                             "difficulty" => Difficulties.Contains(identity),
                             "direction" => parts[index].Length == 0 && slot.Optional || Directions.Contains(identity),
                             "soul" => context.Souls.Count(alias => alias == identity) == 1,
+                            "method" => context.Methods.Count(alias => alias == identity) == 1,
                             "crest" => parts[index].Length == 0 && slot.Optional || context.Crests.Count(alias => alias == identity) == 1,
                             _ => throw new InvalidOperationException("Unexpected operand in an approved list-bearing shape.")
                         };

@@ -17,7 +17,8 @@ public enum RequirementInputSyntax
     RequiredDifficultyThenCrestThenPredicate,
     OptionalCrestThenPredicateThenDirection,
     RequiredDifficultyThenOptionalCrestThenPredicate,
-    PredicateThenSoul
+    PredicateThenSoul,
+    RequiredDifficultyThenMethodThenPredicate = 16
 }
 
 public sealed record RequirementInputSyntaxOption(RequirementInputSyntax Value, string PersistedValue, string DisplayLabel, string Group);
@@ -62,7 +63,8 @@ public sealed record RequirementAtomFormatArguments(
     string? CheckGraphId = null,
     string? SoulOutputValue = null,
     string? CountableOutputValue = null,
-    string? CrestOutputValue = null);
+    string? CrestOutputValue = null,
+    string? MethodOutputValue = null);
 
 public sealed record RequirementPredicateView(
     Guid Id,
@@ -88,6 +90,7 @@ public sealed record RequirementItemView(
 public sealed record RequirementCatalogueManagerView(
     IReadOnlyList<RequirementPredicateView> Predicates,
     IReadOnlyList<RequirementCrestView> Crests,
+    IReadOnlyList<RequirementMethodView> Methods,
     IReadOnlyList<RequirementItemView> Items,
     IReadOnlyList<RequirementCountableView> Countables,
     IReadOnlyList<RequirementSoulView> Souls);
@@ -101,6 +104,10 @@ public sealed record RequirementCrestView(
     int SortOrder, string Aliases, IReadOnlyList<string> ParsedAliases);
 
 public sealed record RequirementSoulView(
+    Guid Id, string Name, string? Category, string OutputValue, string Notes,
+    int SortOrder, string Aliases, IReadOnlyList<string> ParsedAliases);
+
+public sealed record RequirementMethodView(
     Guid Id, string Name, string? Category, string OutputValue, string Notes,
     int SortOrder, string Aliases, IReadOnlyList<string> ParsedAliases);
 
@@ -148,14 +155,20 @@ public sealed record RequirementSoulReferenceView(
 public sealed record RequirementCatalogueReferenceView(
     IReadOnlyList<RequirementPredicateReferenceView> Predicates,
     IReadOnlyList<RequirementCrestReferenceView> Crests,
+    IReadOnlyList<RequirementMethodReferenceView> Methods,
     IReadOnlyList<RequirementItemReferenceView> Items,
     IReadOnlyList<CheckLocationTypeDefinition> LocationTypes,
     IReadOnlyList<RequirementCountableReferenceView> Countables,
     IReadOnlyList<RequirementSoulReferenceView> Souls);
 
+public sealed record RequirementMethodReferenceView(
+    Guid Id, string Name, string? Category, string Notes, string Aliases,
+    IReadOnlyList<string> ParsedAliases);
+
 public sealed record RequirementCategorySuggestionsView(
     IReadOnlyList<string> PredicateCategories,
     IReadOnlyList<string> CrestCategories,
+    IReadOnlyList<string> MethodCategories,
     IReadOnlyList<string> ItemCategories,
     IReadOnlyList<string> CountableCategories,
     IReadOnlyList<string> SoulCategories);
@@ -190,6 +203,12 @@ public sealed record ApplyRequirementCountable(
 
 public sealed record ApplyRequirementCrest(
     Guid? Id, string? Name, string? Category, string? AliasDraft, string? OutputValue, string? Notes);
+
+public sealed record ApplyRequirementMethod(
+    Guid? Id, string? Name, string? Category, string? AliasDraft, string? OutputValue, string? Notes);
+
+public sealed record DeleteRequirementMethod(Guid Id);
+public sealed record ReorderRequirementMethod(Guid Id, int TargetIndex);
 
 public sealed record ApplyRequirementSoul(
     Guid? Id, string? Name, string? Category, string? AliasDraft, string? OutputValue, string? Notes);

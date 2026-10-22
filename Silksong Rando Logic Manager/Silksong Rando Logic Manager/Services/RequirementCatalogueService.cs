@@ -20,7 +20,9 @@ public sealed partial class RequirementCatalogueService(IDbContextFactory<LogicD
             .Select(x => new RequirementCountableView(x.Id, x.Name, x.Category, x.OutputValue, x.Notes, x.SortOrder, x.Aliases, RequirementCatalogueLanguage.ParseAliases(x.Aliases))).ToArray();
         var souls = (await db.RequirementSouls.AsNoTracking().OrderBy(x => x.SortOrder).ThenBy(x => x.Id).Select(x => new { x.Id, x.Name, x.Category, x.OutputValue, x.Notes, x.SortOrder, x.Aliases }).ToArrayAsync(cancellationToken))
             .Select(x => new RequirementSoulView(x.Id, x.Name, x.Category, x.OutputValue, x.Notes, x.SortOrder, x.Aliases, RequirementCatalogueLanguage.ParseAliases(x.Aliases))).ToArray();
-        return new(predicates, crests, items, countables, souls);
+        var methods = (await db.RequirementMethods.AsNoTracking().OrderBy(x => x.SortOrder).ThenBy(x => x.Id).Select(x => new { x.Id, x.Name, x.Category, x.OutputValue, x.Notes, x.SortOrder, x.Aliases }).ToArrayAsync(cancellationToken))
+            .Select(x => new RequirementMethodView(x.Id, x.Name, x.Category, x.OutputValue, x.Notes, x.SortOrder, x.Aliases, RequirementCatalogueLanguage.ParseAliases(x.Aliases))).ToArray();
+        return new(predicates, crests, methods, items, countables, souls);
     }
 
     public async Task<RequirementCatalogueReferenceView> LoadReferenceAsync(CancellationToken cancellationToken = default)
@@ -36,7 +38,9 @@ public sealed partial class RequirementCatalogueService(IDbContextFactory<LogicD
             .Select(x => new RequirementCountableReferenceView(x.Id, x.Name, x.Category, x.Notes, x.Aliases, RequirementCatalogueLanguage.ParseAliases(x.Aliases))).ToArray();
         var souls = (await db.RequirementSouls.AsNoTracking().OrderBy(x => x.SortOrder).ThenBy(x => x.Id).Select(x => new { x.Id, x.Name, x.Category, x.Notes, x.Aliases }).ToArrayAsync(cancellationToken))
             .Select(x => new RequirementSoulReferenceView(x.Id, x.Name, x.Category, x.Notes, x.Aliases, RequirementCatalogueLanguage.ParseAliases(x.Aliases))).ToArray();
-        return new(predicates, crests, items, CheckLocationTypeCatalogue.Definitions, countables, souls);
+        var methods = (await db.RequirementMethods.AsNoTracking().OrderBy(x => x.SortOrder).ThenBy(x => x.Id).Select(x => new { x.Id, x.Name, x.Category, x.Notes, x.Aliases }).ToArrayAsync(cancellationToken))
+            .Select(x => new RequirementMethodReferenceView(x.Id, x.Name, x.Category, x.Notes, x.Aliases, RequirementCatalogueLanguage.ParseAliases(x.Aliases))).ToArray();
+        return new(predicates, crests, methods, items, CheckLocationTypeCatalogue.Definitions, countables, souls);
     }
 
     public async Task<RequirementCategorySuggestionsView> LoadCategorySuggestionsAsync(CancellationToken cancellationToken = default)
@@ -44,6 +48,7 @@ public sealed partial class RequirementCatalogueService(IDbContextFactory<LogicD
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         return new(await db.RequirementPredicates.AsNoTracking().Where(x => x.Category != null && x.Category != "").Select(x => x.Category!).Distinct().OrderBy(x => x).ToArrayAsync(cancellationToken),
             await db.RequirementCrests.AsNoTracking().Where(x => x.Category != null && x.Category != "").Select(x => x.Category!).Distinct().OrderBy(x => x).ToArrayAsync(cancellationToken),
+            await db.RequirementMethods.AsNoTracking().Where(x => x.Category != null && x.Category != "").Select(x => x.Category!).Distinct().OrderBy(x => x).ToArrayAsync(cancellationToken),
             await db.RequirementItems.AsNoTracking().Where(x => x.Category != null && x.Category != "").Select(x => x.Category!).Distinct().OrderBy(x => x).ToArrayAsync(cancellationToken),
             await db.RequirementCountables.AsNoTracking().Where(x => x.Category != null && x.Category != "").Select(x => x.Category!).Distinct().OrderBy(x => x).ToArrayAsync(cancellationToken),
             await db.RequirementSouls.AsNoTracking().Where(x => x.Category != null && x.Category != "").Select(x => x.Category!).Distinct().OrderBy(x => x).ToArrayAsync(cancellationToken));

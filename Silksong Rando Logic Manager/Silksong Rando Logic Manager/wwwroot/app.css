@@ -10,6 +10,7 @@
     --requirement-color-countable: #238344;
     --requirement-color-soul: #7A4B32;
     --requirement-color-crest: #6D5A8D;
+    --requirement-color-method: #51445F;
     --requirement-color-quantity: #806000;
     --requirement-color-scope-local: #4338CA;
     --requirement-color-scope-in: #0369A1;
@@ -93,6 +94,7 @@ button, input, textarea { font: inherit; }
 .requirement-syntax-guide .guide-token-countable { color: var(--requirement-color-countable); }
 .requirement-syntax-guide .guide-token-soul { color: var(--requirement-color-soul); }
 .requirement-syntax-guide .guide-token-crest { color: var(--requirement-color-crest); }
+.requirement-syntax-guide .guide-token-method { color: var(--requirement-color-method); }
 .requirement-syntax-guide-backdrop { z-index: 2000; }
 .requirement-catalogue-table .reorder-handle { width: 100%; min-height: 1.35rem; padding: .1rem; border: 0; background: transparent; color: #67655e; cursor: grab; font-size: .7rem; line-height: normal; }
 .requirement-catalogue-table .reorder-handle:active { cursor: grabbing; }
@@ -803,3 +805,4 @@ button, input, textarea { font: inherit; }
     color: #61151d;
 }
 .requirements-crest { color: var(--requirement-color-crest); }
+.requirements-method { color: var(--requirement-color-method); }

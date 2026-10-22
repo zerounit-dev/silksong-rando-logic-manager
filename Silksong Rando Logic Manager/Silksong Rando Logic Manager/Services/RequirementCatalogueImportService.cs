@@ -18,6 +18,7 @@ public sealed class RequirementCatalogueImportService(RequirementCatalogueWriteC
 
                 await db.RequirementPredicates.ExecuteDeleteAsync(ct);
                 await db.RequirementCrests.ExecuteDeleteAsync(ct);
+                await db.RequirementMethods.ExecuteDeleteAsync(ct);
                 await db.RequirementItems.ExecuteDeleteAsync(ct);
                 await db.RequirementCountables.ExecuteDeleteAsync(ct);
                 await db.RequirementSouls.ExecuteDeleteAsync(ct);
@@ -42,6 +43,11 @@ public sealed class RequirementCatalogueImportService(RequirementCatalogueWriteC
                 db.RequirementPredicates.AddRange(predicates);
                 db.RequirementItems.AddRange(items);
                 db.RequirementCrests.AddRange(snapshot.Crests.Select(x => new RequirementCrest
+                {
+                    Id = x.Id, Name = x.Name, Category = x.Category, OutputValue = x.OutputValue,
+                    Notes = x.Notes, SortOrder = x.SortOrder, Aliases = x.Aliases
+                }));
+                db.RequirementMethods.AddRange(snapshot.Methods.Select(x => new RequirementMethod
                 {
                     Id = x.Id, Name = x.Name, Category = x.Category, OutputValue = x.OutputValue,
                     Notes = x.Notes, SortOrder = x.SortOrder, Aliases = x.Aliases
@@ -82,6 +88,8 @@ public sealed class RequirementCatalogueImportService(RequirementCatalogueWriteC
                 x.Aliases)))
         .Concat(RequirementCatalogueValidator.ValidateReferenceValues(snapshot.Crests.Select(x =>
             new RequirementCatalogueItemValidation(x.Id, x.Name, x.Category, x.OutputValue, x.Notes, x.Aliases))))
+        .Concat(RequirementCatalogueValidator.ValidateReferenceValues(snapshot.Methods.Select(x =>
+            new RequirementCatalogueItemValidation(x.Id, x.Name, x.Category, x.OutputValue, x.Notes, x.Aliases))))
         .Concat(RequirementCatalogueValidator.ValidateReferenceValues(snapshot.Countables.Select(x =>
             new RequirementCatalogueItemValidation(x.Id, x.Name, x.Category, x.OutputValue, x.Notes, x.Aliases))))
         .Concat(RequirementCatalogueValidator.ValidateReferenceValues(snapshot.Souls.Select(x =>
@@ -92,12 +100,13 @@ public sealed class RequirementCatalogueImportService(RequirementCatalogueWriteC
     {
         if (!HasContiguousOrder(snapshot.Predicates.Select(x => x.SortOrder)) || !HasContiguousOrder(snapshot.Items.Select(x => x.SortOrder)) ||
             !HasContiguousOrder(snapshot.Crests.Select(x => x.SortOrder)) ||
+            !HasContiguousOrder(snapshot.Methods.Select(x => x.SortOrder)) ||
             !HasContiguousOrder(snapshot.Countables.Select(x => x.SortOrder)) || !HasContiguousOrder(snapshot.Souls.Select(x => x.SortOrder))) return false;
-        if (!snapshot.Predicates.Select(x => x.Aliases).Concat(snapshot.Crests.Concat(snapshot.Items).Concat(snapshot.Countables).Concat(snapshot.Souls).Select(x => x.Aliases))
+        if (!snapshot.Predicates.Select(x => x.Aliases).Concat(snapshot.Crests.Concat(snapshot.Methods).Concat(snapshot.Items).Concat(snapshot.Countables).Concat(snapshot.Souls).Select(x => x.Aliases))
             .All(aliases => RequirementCatalogueLanguage.TryCanonicalizeAliases(aliases, out var canonical, out _, out _) &&
                 string.Equals(aliases, canonical, StringComparison.Ordinal))) return false;
         var identities = new HashSet<Guid>();
-        return snapshot.Predicates.Select(x => x.Id).Concat(snapshot.Crests.Concat(snapshot.Items).Concat(snapshot.Countables).Concat(snapshot.Souls).Select(x => x.Id))
+        return snapshot.Predicates.Select(x => x.Id).Concat(snapshot.Crests.Concat(snapshot.Methods).Concat(snapshot.Items).Concat(snapshot.Countables).Concat(snapshot.Souls).Select(x => x.Id))
             .All(id => id != Guid.Empty && identities.Add(id));
     }
 

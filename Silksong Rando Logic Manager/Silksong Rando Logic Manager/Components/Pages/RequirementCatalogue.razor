@@ -32,6 +32,7 @@
     <div class="requirement-catalogue-tabs" role="tablist" aria-label="Requirement catalogue type">
         <button id="requirement-catalogue-tab-predicates" type="button" role="tab" aria-selected="@(tab == CatalogueTab.Predicates)" aria-controls="requirement-catalogue-panel-predicates" class="@(tab == CatalogueTab.Predicates ? "selected" : null)" @onclick="() => SelectTabAsync(CatalogueTab.Predicates)" disabled="@(DefinitionModalOpen || CatalogueBusy)">Predicates</button>
         <button id="requirement-catalogue-tab-crests" type="button" role="tab" aria-selected="@(tab == CatalogueTab.Crests)" aria-controls="requirement-catalogue-panel-crests" class="@(tab == CatalogueTab.Crests ? "selected" : null)" @onclick="() => SelectTabAsync(CatalogueTab.Crests)" disabled="@(DefinitionModalOpen || CatalogueBusy)">Crests</button>
+        <button id="requirement-catalogue-tab-methods" type="button" role="tab" aria-selected="@(tab == CatalogueTab.Methods)" aria-controls="requirement-catalogue-panel-methods" class="@(tab == CatalogueTab.Methods ? "selected" : null)" @onclick="() => SelectTabAsync(CatalogueTab.Methods)" disabled="@(DefinitionModalOpen || CatalogueBusy)">Methods</button>
         <button id="requirement-catalogue-tab-items" type="button" role="tab" aria-selected="@(tab == CatalogueTab.Items)" aria-controls="requirement-catalogue-panel-items" class="@(tab == CatalogueTab.Items ? "selected" : null)" @onclick="() => SelectTabAsync(CatalogueTab.Items)" disabled="@(DefinitionModalOpen || CatalogueBusy)">Items</button>
         <button id="requirement-catalogue-tab-countables" type="button" role="tab" aria-selected="@(tab == CatalogueTab.Countables)" aria-controls="requirement-catalogue-panel-countables" class="@(tab == CatalogueTab.Countables ? "selected" : null)" @onclick="() => SelectTabAsync(CatalogueTab.Countables)" disabled="@(DefinitionModalOpen || CatalogueBusy)">Countables</button>
         <button id="requirement-catalogue-tab-souls" type="button" role="tab" aria-selected="@(tab == CatalogueTab.Souls)" aria-controls="requirement-catalogue-panel-souls" class="@(tab == CatalogueTab.Souls ? "selected" : null)" @onclick="() => SelectTabAsync(CatalogueTab.Souls)" disabled="@(DefinitionModalOpen || CatalogueBusy)">Souls</button>
@@ -92,6 +93,26 @@
                 </tr>
             }
             <tr class="catalogue-drop-tail" data-requirement-catalogue-tail="crest"><td colspan="6"></td></tr>
+            </tbody>
+        </table>
+        </section>
+    }
+    @if (tab == CatalogueTab.Methods)
+    {
+        <section id="requirement-catalogue-panel-methods" role="tabpanel" aria-labelledby="requirement-catalogue-tab-methods">
+        <div class="requirement-catalogue-toolbar"><label>search <input @bind="methodSearch" @bind:event="oninput" disabled="@(DefinitionModalOpen || CatalogueBusy)" /></label><div class="requirement-catalogue-content-actions"><button type="button" class="requirement-catalogue-action" @onclick="NewMethod" disabled="@(DefinitionModalOpen || CatalogueBusy)"><i class="fa-solid fa-plus" aria-hidden="true"></i>add method</button></div></div>
+        <table class="requirement-catalogue-table" data-requirement-catalogue-table="method">
+            <thead><tr><th>drag</th><th>Name</th><th>Category</th><th>Aliases</th><th>Output Value</th><th>actions</th></tr></thead>
+            <tbody>
+            @foreach (var row in view.Methods.Where(x => Matches(methodSearch, x.Name, x.Category, x.Aliases)))
+            {
+                <tr @key="row.Id" data-requirement-catalogue-row data-catalogue-kind="method" data-catalogue-id="@row.Id">
+                    <td class="reorder-cell"><button type="button" draggable="true" class="reorder-handle catalogue-drag-handle" data-requirement-catalogue-grip disabled="@(MethodFiltered || DefinitionModalOpen || CatalogueBusy)" title="@(MethodFiltered ? "clear search to reorder" : "drag to reorder")" aria-label="@(MethodFiltered ? "clear search to reorder" : "drag method")"><i class="fa-solid fa-grip-vertical" aria-hidden="true"></i></button></td>
+                    <td><div class="requirement-catalogue-name">@row.Name</div><div class="requirement-catalogue-notes">@row.Notes</div></td><td class="requirement-catalogue-single-line">@row.Category</td><td>@row.Aliases</td><td class="catalogue-monospace requirement-catalogue-single-line">@row.OutputValue</td>
+                    <td class="row-actions catalogue-row-actions"><button type="button" class="icon-button" @onclick="() => EditMethod(row)" disabled="@(DefinitionModalOpen || CatalogueBusy)" title="edit method" aria-label="edit method"><i class="fa-solid fa-pen" aria-hidden="true"></i></button><button type="button" class="icon-button" @onclick="() => ConfirmDelete(row.Id, row.Name, CatalogueTab.Methods)" disabled="@(DefinitionModalOpen || CatalogueBusy)" title="delete method" aria-label="delete method"><i class="fa-solid fa-trash" aria-hidden="true"></i></button></td>
+                </tr>
+            }
+            <tr class="catalogue-drop-tail" data-requirement-catalogue-tail="method"><td colspan="6"></td></tr>
             </tbody>
         </table>
         </section>
@@ -204,7 +225,7 @@
 }
 @if (pendingImport is not null)
 {
-    <div class="confirmation-backdrop requirement-catalogue-backdrop" role="presentation" @onclick="CancelImport"><section class="confirmation-modal" role="dialog" aria-modal="true" aria-labelledby="requirement-catalogue-import-title" tabindex="-1" @onclick:stopPropagation="true" @onkeydown="ImportKeyDown"><h2 id="requirement-catalogue-import-title">replace catalogue?</h2><p>This permanently replaces all local Predicates, Crests, Items, Countables, and Souls, including their stored aliases. Existing authored Requirements text is unchanged but may parse differently.</p>@if (!string.IsNullOrWhiteSpace(message)) { <p class="requirement-catalogue-message" role="status">@message</p> }<div class="requirement-catalogue-modal-footer"><div class="requirement-catalogue-modal-alternatives"></div><div class="requirement-catalogue-modal-commit-group"><button type="button" class="catalogue-modal-action catalogue-modal-cancel" @onclick="CancelImport" disabled="@CatalogueBusy">Cancel</button><button type="button" class="catalogue-modal-action catalogue-modal-destructive" @onclick="ReplaceImportAsync" disabled="@CatalogueBusy">Replace</button></div></div></section></div>
+    <div class="confirmation-backdrop requirement-catalogue-backdrop" role="presentation" @onclick="CancelImport"><section class="confirmation-modal" role="dialog" aria-modal="true" aria-labelledby="requirement-catalogue-import-title" tabindex="-1" @onclick:stopPropagation="true" @onkeydown="ImportKeyDown"><h2 id="requirement-catalogue-import-title">replace catalogue?</h2><p>This permanently replaces all local Predicates, Crests, Methods, Items, Countables, and Souls, including their stored aliases. Existing authored Requirements text is unchanged but may parse differently.</p>@if (!string.IsNullOrWhiteSpace(message)) { <p class="requirement-catalogue-message" role="status">@message</p> }<div class="requirement-catalogue-modal-footer"><div class="requirement-catalogue-modal-alternatives"></div><div class="requirement-catalogue-modal-commit-group"><button type="button" class="catalogue-modal-action catalogue-modal-cancel" @onclick="CancelImport" disabled="@CatalogueBusy">Cancel</button><button type="button" class="catalogue-modal-action catalogue-modal-destructive" @onclick="ReplaceImportAsync" disabled="@CatalogueBusy">Replace</button></div></div></section></div>
 }
 @if (syntaxGuide is not null)
 {
@@ -262,15 +283,15 @@
 }
 
 @code {
-    private enum CatalogueTab { Predicates, Crests, Items, Countables, Souls }
+    private enum CatalogueTab { Predicates, Crests, Methods, Items, Countables, Souls }
     private abstract class DefinitionDraft { public Guid? Id; public string Name = ""; public string? Category; public string Aliases = ""; public string Notes = ""; public bool AliasTouched; }
     private sealed class PredicateDraft : DefinitionDraft { public string InputSyntax = RequirementCatalogueLanguage.InputSyntaxOptions[0].PersistedValue; public string OutputSyntax = ""; }
     private sealed class ItemDraft : DefinitionDraft { public string OutputValue = ""; public CatalogueTab Kind = CatalogueTab.Items; }
     private sealed record DeleteConfirmation(Guid Id, string Name, CatalogueTab Kind);
-    private RequirementCatalogueManagerView view = new([], [], [], [], []);
-    private RequirementCategorySuggestionsView categories = new([], [], [], [], []);
+    private RequirementCatalogueManagerView view = new([], [], [], [], [], []);
+    private RequirementCategorySuggestionsView categories = new([], [], [], [], [], []);
     private CatalogueTab tab;
-    private string predicateSearch = "", crestSearch = "", itemSearch = "", countableSearch = "", soulSearch = "", message = "", definitionMessage = "";
+    private string predicateSearch = "", crestSearch = "", methodSearch = "", itemSearch = "", countableSearch = "", soulSearch = "", message = "", definitionMessage = "";
     private IReadOnlyList<RequirementCatalogueValidationIssue> definitionIssues = [];
     private string? pendingDefinitionFocusId;
     private bool loading, rechecking, exportingRoomGraph, modalWasOpen, restoreInitiatorFocus;
@@ -292,13 +313,15 @@
     private bool PredicateFiltered => !string.IsNullOrWhiteSpace(predicateSearch);
     private bool ItemFiltered => !string.IsNullOrWhiteSpace(itemSearch);
     private bool CrestFiltered => !string.IsNullOrWhiteSpace(crestSearch);
+    private bool MethodFiltered => !string.IsNullOrWhiteSpace(methodSearch);
     private bool CountableFiltered => !string.IsNullOrWhiteSpace(countableSearch);
     private bool SoulFiltered => !string.IsNullOrWhiteSpace(soulSearch);
-    private string LiteralKind => itemDraft?.Kind switch { CatalogueTab.Crests => "crest", CatalogueTab.Countables => "countable", CatalogueTab.Souls => "soul", _ => "item" };
+    private string LiteralKind => itemDraft?.Kind switch { CatalogueTab.Crests => "crest", CatalogueTab.Methods => "method", CatalogueTab.Countables => "countable", CatalogueTab.Souls => "soul", _ => "item" };
     private string LiteralName => LiteralKind;
     private IReadOnlyList<string> DefinitionCategories => predicateDraft is not null ? categories.PredicateCategories : itemDraft?.Kind switch
     {
         CatalogueTab.Crests => categories.CrestCategories,
+        CatalogueTab.Methods => categories.MethodCategories,
         CatalogueTab.Countables => categories.CountableCategories,
         CatalogueTab.Souls => categories.SoulCategories,
         _ => categories.ItemCategories
@@ -430,12 +453,14 @@
     private void NewPredicate() { ClearDefinitionOperationStatus(); predicateDraft = new(); definitionDraftSequence++; }
     private void NewItem() { ClearDefinitionOperationStatus(); itemDraft = new(); definitionDraftSequence++; }
     private void NewCrest() { ClearDefinitionOperationStatus(); itemDraft = new() { Kind = CatalogueTab.Crests }; definitionDraftSequence++; }
+    private void NewMethod() { ClearDefinitionOperationStatus(); itemDraft = new() { Kind = CatalogueTab.Methods }; definitionDraftSequence++; }
     private void NewCountable() { ClearDefinitionOperationStatus(); itemDraft = new() { Kind = CatalogueTab.Countables }; definitionDraftSequence++; }
     private void NewSoul() { ClearDefinitionOperationStatus(); itemDraft = new() { Kind = CatalogueTab.Souls }; definitionDraftSequence++; }
     private void EditPredicate(RequirementPredicateView value) { ClearDefinitionOperationStatus(); predicateDraft = new() { Id = value.Id, Name = value.Name, Category = value.Category, InputSyntax = value.InputSyntax, Aliases = value.Aliases, OutputSyntax = value.OutputSyntax, Notes = value.Notes, AliasTouched = true }; definitionDraftSequence++; }
     private void EditItem(RequirementItemView value) { ClearDefinitionOperationStatus(); itemDraft = new() { Id = value.Id, Name = value.Name, Category = value.Category, Aliases = value.Aliases, OutputValue = value.OutputValue, Notes = value.Notes, AliasTouched = true }; definitionDraftSequence++; }
     private void EditCountable(RequirementCountableView value) { ClearDefinitionOperationStatus(); itemDraft = new() { Kind = CatalogueTab.Countables, Id = value.Id, Name = value.Name, Category = value.Category, Aliases = value.Aliases, OutputValue = value.OutputValue, Notes = value.Notes, AliasTouched = true }; definitionDraftSequence++; }
     private void EditCrest(RequirementCrestView value) { ClearDefinitionOperationStatus(); itemDraft = new() { Kind = CatalogueTab.Crests, Id = value.Id, Name = value.Name, Category = value.Category, Aliases = value.Aliases, OutputValue = value.OutputValue, Notes = value.Notes, AliasTouched = true }; definitionDraftSequence++; }
+    private void EditMethod(RequirementMethodView value) { ClearDefinitionOperationStatus(); itemDraft = new() { Kind = CatalogueTab.Methods, Id = value.Id, Name = value.Name, Category = value.Category, Aliases = value.Aliases, OutputValue = value.OutputValue, Notes = value.Notes, AliasTouched = true }; definitionDraftSequence++; }
     private void EditSoul(RequirementSoulView value) { ClearDefinitionOperationStatus(); itemDraft = new() { Kind = CatalogueTab.Souls, Id = value.Id, Name = value.Name, Category = value.Category, Aliases = value.Aliases, OutputValue = value.OutputValue, Notes = value.Notes, AliasTouched = true }; definitionDraftSequence++; }
     [JSInvokable]
     public async Task ApplyPredicateDraft(int sequence, ApplyRequirementPredicate command)
@@ -469,6 +494,13 @@
     public async Task ApplySoulDraft(int sequence, ApplyRequirementSoul command)
     {
         if (itemDraft?.Kind != CatalogueTab.Souls || definitionDraftSequence != sequence) return;
+        var result = await Catalogue.ApplyAsync(command);
+        await AppliedAsync(result, () => itemDraft = null, command.Id, command.Name, sequence);
+    }
+    [JSInvokable]
+    public async Task ApplyMethodDraft(int sequence, ApplyRequirementMethod command)
+    {
+        if (itemDraft?.Kind != CatalogueTab.Methods || definitionDraftSequence != sequence) return;
         var result = await Catalogue.ApplyAsync(command);
         await AppliedAsync(result, () => itemDraft = null, command.Id, command.Name, sequence);
     }
@@ -531,6 +563,7 @@
                 CatalogueTab.Predicates => await Catalogue.DeleteAsync(new DeleteRequirementPredicate(confirmation.Id)),
                 CatalogueTab.Items => await Catalogue.DeleteAsync(new DeleteRequirementItem(confirmation.Id)),
                 CatalogueTab.Crests => await Catalogue.DeleteAsync(new DeleteRequirementCrest(confirmation.Id)),
+                CatalogueTab.Methods => await Catalogue.DeleteAsync(new DeleteRequirementMethod(confirmation.Id)),
                 CatalogueTab.Countables => await Catalogue.DeleteAsync(new DeleteRequirementCountable(confirmation.Id)),
                 CatalogueTab.Souls => await Catalogue.DeleteAsync(new DeleteRequirementSoul(confirmation.Id)),
                 _ => throw new InvalidOperationException("Unknown catalogue kind.")
@@ -572,12 +605,14 @@
         if (CatalogueBusy || ModalOpen || !Guid.TryParse(id, out var definitionId)) return;
         if (kind switch { "predicate" => tab != CatalogueTab.Predicates || PredicateFiltered, "item" => tab != CatalogueTab.Items || ItemFiltered,
             "crest" => tab != CatalogueTab.Crests || CrestFiltered,
+            "method" => tab != CatalogueTab.Methods || MethodFiltered,
             "countable" => tab != CatalogueTab.Countables || CountableFiltered, "soul" => tab != CatalogueTab.Souls || SoulFiltered, _ => true }) return;
         var outcome = kind switch
         {
             "predicate" => await Catalogue.ReorderAsync(new ReorderRequirementPredicate(definitionId, targetIndex)),
             "item" => await Catalogue.ReorderAsync(new ReorderRequirementItem(definitionId, targetIndex)),
             "crest" => await Catalogue.ReorderAsync(new ReorderRequirementCrest(definitionId, targetIndex)),
+            "method" => await Catalogue.ReorderAsync(new ReorderRequirementMethod(definitionId, targetIndex)),
             "countable" => await Catalogue.ReorderAsync(new ReorderRequirementCountable(definitionId, targetIndex)),
             "soul" => await Catalogue.ReorderAsync(new ReorderRequirementSoul(definitionId, targetIndex)),
             _ => throw new InvalidOperationException("Unknown catalogue kind.")

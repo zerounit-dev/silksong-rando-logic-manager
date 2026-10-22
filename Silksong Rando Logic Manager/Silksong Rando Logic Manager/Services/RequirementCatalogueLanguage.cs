@@ -16,6 +16,7 @@ public static class RequirementCatalogueLanguage
         new RequirementInputSyntaxOption(RequirementInputSyntax.OptionalCrestThenPredicateThenDirection, "[{crest?}] {predicate} {direction}", "Optional crest + direction", "Crest"),
         new RequirementInputSyntaxOption(RequirementInputSyntax.RequiredDifficultyThenCrestThenPredicate, "{difficulty} [{crest}] {predicate}", "Difficulty + crest", "Crest"),
         new RequirementInputSyntaxOption(RequirementInputSyntax.RequiredDifficultyThenOptionalCrestThenPredicate, "{difficulty} [{crest?}] {predicate}", "Difficulty + optional crest", "Crest"),
+        new RequirementInputSyntaxOption(RequirementInputSyntax.RequiredDifficultyThenMethodThenPredicate, "{difficulty} [{method}] {predicate}", "Difficulty + method", "Method"),
         new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenItem, "{predicate} {item}", "Item", "Item / Location"),
         new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenCheck, "{predicate} {check}", "Check dependency", "Item / Location"),
         new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenQuantity, "{predicate} {quantity}", "Quantity only", "Quantity"),
@@ -151,6 +152,7 @@ public static class RequirementCatalogueLanguage
         RequirementInputSyntax.PredicateThenCountableThenQuantity => new HashSet<RequirementOutputPlaceholder> { RequirementOutputPlaceholder.Countable, RequirementOutputPlaceholder.Quantity },
         RequirementInputSyntax.CrestThenPredicateThenDirection or RequirementInputSyntax.OptionalCrestThenPredicateThenDirection => new HashSet<RequirementOutputPlaceholder> { RequirementOutputPlaceholder.Crest, RequirementOutputPlaceholder.Direction },
         RequirementInputSyntax.RequiredDifficultyThenCrestThenPredicate or RequirementInputSyntax.RequiredDifficultyThenOptionalCrestThenPredicate => new HashSet<RequirementOutputPlaceholder> { RequirementOutputPlaceholder.Difficulty, RequirementOutputPlaceholder.Crest },
+        RequirementInputSyntax.RequiredDifficultyThenMethodThenPredicate => new HashSet<RequirementOutputPlaceholder> { RequirementOutputPlaceholder.Difficulty, RequirementOutputPlaceholder.Method },
         _ => throw new ArgumentOutOfRangeException(nameof(inputSyntax), inputSyntax, "Unsupported requirement input syntax.")
     };
 
@@ -168,7 +170,8 @@ public enum RequirementOutputPlaceholder
     Check,
     Soul,
     Countable,
-    Crest
+    Crest,
+    Method
 }
 
 public abstract record RequirementOutputToken;
@@ -177,11 +180,13 @@ public sealed record RequirementOutputPlaceholderToken(RequirementOutputPlacehol
 
 public static class RequirementOutputTemplate
 {
-    // ONS1's input list marker never becomes an output placeholder marker.
-    // Keep literal-output handling of the fourteen prior choices unchanged.
+    // ONS1 and RM1 input list markers never become output placeholder markers.
+    // Keep literal-output handling of the other choices unchanged.
     internal static bool HasBracketedOns1Placeholder(RequirementInputSyntax syntax, string template) =>
         syntax == RequirementInputSyntax.RequiredDifficultyThenOptionalCrestThenPredicate &&
-        (template.Contains("[{difficulty}]", StringComparison.Ordinal) || template.Contains("[{crest}]", StringComparison.Ordinal));
+        (template.Contains("[{difficulty}]", StringComparison.Ordinal) || template.Contains("[{crest}]", StringComparison.Ordinal)) ||
+        syntax == RequirementInputSyntax.RequiredDifficultyThenMethodThenPredicate &&
+        (template.Contains("[{difficulty}]", StringComparison.Ordinal) || template.Contains("[{method}]", StringComparison.Ordinal));
 
     public static bool TryTokenize(string? template, out IReadOnlyList<RequirementOutputToken> tokens, out string? error)
     {
@@ -261,8 +266,9 @@ public static class RequirementOutputTemplate
             "soul" => RequirementOutputPlaceholder.Soul,
             "countable" => RequirementOutputPlaceholder.Countable,
             "crest" => RequirementOutputPlaceholder.Crest,
+            "method" => RequirementOutputPlaceholder.Method,
             _ => default
         };
-        return value is "difficulty" or "direction" or "item" or "quantity" or "check" or "soul" or "countable" or "crest";
+        return value is "difficulty" or "direction" or "item" or "quantity" or "check" or "soul" or "countable" or "crest" or "method";
     }
 }

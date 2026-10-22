@@ -16,6 +16,7 @@ public sealed record RequirementCatalogueImportParseResult(
 public sealed record RequirementCatalogueSnapshot(
     IReadOnlyList<RequirementCatalogueExchangePredicate> Predicates,
     IReadOnlyList<RequirementCatalogueExchangeItem> Crests,
+    IReadOnlyList<RequirementCatalogueExchangeItem> Methods,
     IReadOnlyList<RequirementCatalogueExchangeItem> Items,
     IReadOnlyList<RequirementCatalogueExchangeItem> Countables,
     IReadOnlyList<RequirementCatalogueExchangeItem> Souls);
@@ -24,6 +25,7 @@ public sealed record RequirementCatalogueExchangeDocument(
     [property: JsonPropertyName("requirementCatalogueVersion")] int RequirementCatalogueVersion,
     [property: JsonPropertyName("predicates")] IReadOnlyList<RequirementCatalogueExchangePredicate> Predicates,
     [property: JsonPropertyName("crests")] IReadOnlyList<RequirementCatalogueExchangeItem> Crests,
+    [property: JsonPropertyName("methods")] IReadOnlyList<RequirementCatalogueExchangeItem> Methods,
     [property: JsonPropertyName("items")] IReadOnlyList<RequirementCatalogueExchangeItem> Items,
     [property: JsonPropertyName("countables")] IReadOnlyList<RequirementCatalogueExchangeItem> Countables,
     [property: JsonPropertyName("souls")] IReadOnlyList<RequirementCatalogueExchangeItem> Souls);
