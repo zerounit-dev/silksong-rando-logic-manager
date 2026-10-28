@@ -7,8 +7,7 @@ namespace Silksong_Rando_Logic_Manager.Components;
 // Display only. Never replace the raw comparison sides used for freshness/copying.
 internal static class DistributedEvidencePresentation
 {
-    public static readonly IReadOnlyList<string> RoomProse = ["id", "friendlyName", "referenceId", "inGameId", "contributors", "comments", "roomGroupId"];
-    public static readonly IReadOnlyList<string> RoomScalars = ["useSceneImage", "useUploadedSceneImage", "sceneMinX", "sceneMinY", "sceneMaxX", "sceneMaxY", "sceneImagePixelsPerUnitX", "sceneImagePixelsPerUnitY", "sceneImagePixelOffsetX", "sceneImagePixelOffsetY", "sceneImageOriginalHash", "sceneImageCropHash", "sortOrder", "isArchived", "archivedUtc", "createdUtc", "updatedUtc"];
+    public static readonly IReadOnlyList<string> RoomProse = ["id", "friendlyName", "referenceId", "inGameId", "contributors", "comments", "roomGroupId", "sortOrder", "isArchived", "archivedUtc", "createdUtc", "updatedUtc"];
 
     // Display keys only. The underlying comparison inventory remains complete and
     // field-shaped; these groups never participate in choices/counts/freshness.

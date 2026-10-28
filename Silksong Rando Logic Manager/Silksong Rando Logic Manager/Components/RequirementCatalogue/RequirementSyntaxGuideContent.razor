@@ -45,6 +45,7 @@
                 <section>
                     <h3>Require an amount</h3>
                     <p>Some requirements take a number directly, such as <code><span class="guide-token-requirement">clawline x</span> <span class="guide-token-amount">2</span></code>, <code><span class="guide-token-requirement">sharpdart x</span> <span class="guide-token-amount">3</span></code>, or <code><span class="guide-token-requirement">silkhearts x</span> <span class="guide-token-amount">2</span></code>.</p>
+                    <p>With <code class="guide-token-amount">{quantity?}</code>, the amount is optional and defaults to <span class="guide-token-amount">1</span>. Write a number on its own or with a separate <code>x</code>: <code><span class="guide-token-requirement">sharpdart</span> <span class="guide-token-amount">3</span></code> or <code><span class="guide-token-requirement">sharpdart</span> x <span class="guide-token-amount">3</span></code>. The new difficulty + required quantity pattern accepts both spellings too, but requires an amount. Direction and amount can both be optional: <code class="guide-token-requirement">clawline</code>, <code><span class="guide-token-requirement">clawline</span> <span class="guide-token-direction">left</span></code>, <code><span class="guide-token-requirement">clawline</span> <span class="guide-token-amount">3</span></code>, or <code><span class="guide-token-requirement">clawline</span> <span class="guide-token-direction">left</span> x <span class="guide-token-amount">3</span></code>.</p>
                 </section>
                 <section>
                     <h3>Use a crest</h3>
@@ -360,7 +361,7 @@
                 "{item}" => "guide-token-item",
                 "{countable}" => "guide-token-countable",
                 "{soul}" => "guide-token-soul",
-                "{quantity}" => "guide-token-amount",
+                "{quantity}" or "{quantity?}" => "guide-token-amount",
                 "{check}" => "guide-token-check-local",
                 _ => "guide-token-requirement"
             });

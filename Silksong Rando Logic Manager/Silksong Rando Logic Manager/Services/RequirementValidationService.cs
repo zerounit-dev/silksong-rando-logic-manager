@@ -437,7 +437,7 @@ internal static class ManagedRequirementValidator
             var candidates = new List<bool>();
             foreach (var predicate in context.Predicates)
             {
-                if (RequirementOperandSyntax.HasAlternatives(predicate.Syntax))
+                if (RequirementOperandSyntax.UsesOperands(predicate.Syntax))
                 {
                     AddOperandCandidates(text, predicate, candidates);
                     continue;
@@ -496,6 +496,14 @@ internal static class ManagedRequirementValidator
                 for (var index = 0; index < slots.Count && complete; index++)
                 {
                     var slot = slots[index];
+                    if (slot.Role == "quantity")
+                    {
+                        complete = RequirementOperandSyntax.TryQuantity(parts[index], slot.Optional, out _);
+                        // Omitted and explicit quantities are distinct interpretations even when
+                        // they format alike; only ignored identity punctuation allocations collapse.
+                        identities.Add(parts[index].Trim());
+                        continue;
+                    }
                     if (!RequirementOperandSyntax.TryValues(parts[index], slot, out var values)) { complete = false; break; }
                     identities.Add(string.Join('\u001f', values.Select(RequirementCatalogueLanguage.NormalizeIdentification)));
                     foreach (var value in values)

@@ -1,7 +1,11 @@
 <table class="distributed-import-child-table">
-    <thead><tr>@foreach (var name in Columns) { <th title="@DistributedEvidencePresentation.Heading(name)" aria-label="@DistributedEvidencePresentation.Heading(name)">@DistributedEvidencePresentation.Heading(name)</th> }</tr></thead>
+    <thead><tr>@if (RequiresChoice) { <th class="distributed-import-choice-column"><span class="visually-hidden">choice</span></th> }@foreach (var name in Columns) { <th title="@DistributedEvidencePresentation.Heading(name)" aria-label="@DistributedEvidencePresentation.Heading(name)">@DistributedEvidencePresentation.Heading(name)</th> }</tr></thead>
     <tbody>
         <tr class="@(HasChanges ? "distributed-import-changed-current" : null)">
+            @if (RequiresChoice)
+            {
+                <td class="distributed-import-choice-cell"><input type="radio" class="distributed-import-choice-current" name="@ChoiceGroup" checked="@(Choice == DistributedImageChoice.Current)" disabled="@ChoicesDisabled" aria-label="Keep current image settings" title="Keep current image settings" @onchange="(() => ChoiceChanged.InvokeAsync(DistributedImageChoice.Current))" /></td>
+            }
             @foreach (var name in Columns)
             {
                 <td><DistributedEvidenceValue Name="@name" Fields="Fields" /></td>
@@ -10,6 +14,10 @@
         @if (HasChanges)
         {
             <tr class="distributed-import-changed-incoming">
+                @if (RequiresChoice)
+                {
+                    <td class="distributed-import-choice-cell"><input type="radio" class="distributed-import-choice-incoming" name="@ChoiceGroup" checked="@(Choice == DistributedImageChoice.Incoming)" disabled="@ChoicesDisabled" aria-label="Use incoming image settings" title="Use incoming image settings" @onchange="(() => ChoiceChanged.InvokeAsync(DistributedImageChoice.Incoming))" /></td>
+                }
                 @foreach (var name in Columns)
                 {
                     <td><DistributedEvidenceValue Name="@name" Fields="Fields" Delta="true" /></td>
@@ -20,7 +28,13 @@
 </table>
 
 @code {
-    [Parameter, EditorRequired] public IReadOnlyList<DistributedComparisonValue> Fields { get; set; } = [];
+    [Parameter, EditorRequired] public DistributedRoomComparison Comparison { get; set; } = null!;
+    [Parameter] public DistributedImageChoice? Choice { get; set; }
+    [Parameter] public bool ChoicesDisabled { get; set; }
+    [Parameter] public EventCallback<DistributedImageChoice> ChoiceChanged { get; set; }
+    private IReadOnlyList<DistributedComparisonValue> Fields => DistributedRoomImageComparison.Fields.Select(name => Comparison.TopLevelFields.Single(x => x.FieldName == name)).ToArray();
+    private bool RequiresChoice => DistributedRoomImageComparison.RequiresChoice(Comparison);
+    private string ChoiceGroup => $"distributed-image-{Comparison.RoomId:N}";
     private IEnumerable<string> Columns => DistributedEvidencePresentation.Columns(Fields.Select(x => x.FieldName));
     private bool HasChanges => Fields.Any(x => x.Evidence == DistributedComparisonEvidence.Changed);
 }

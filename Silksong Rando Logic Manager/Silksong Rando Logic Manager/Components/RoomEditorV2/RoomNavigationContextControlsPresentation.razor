@@ -12,5 +12,6 @@
 @code {
     [Parameter, EditorRequired] public RoomNavigationContextControlsView View { get; set; } = null!;
     [Parameter] public EventCallback BackToMap { get; set; }
+    [Parameter] public EventCallback AuditRoom { get; set; }
     [Parameter] public EventCallback ToggleMapContext { get; set; }
 }

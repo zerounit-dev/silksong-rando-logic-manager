@@ -4,7 +4,7 @@ using System.Text;
 
 namespace Silksong_Rando_Logic_Manager.Services;
 
-/// <summary>Bounded lexical descriptors, derived only from the seventeen approved choices.
+/// <summary>Bounded lexical descriptors, derived only from the twenty-three approved choices.
 /// No identity resolution or parser-result sharing between the independent parsers.</summary>
 internal static class RequirementOperandSyntax
 {
@@ -20,6 +20,30 @@ internal static class RequirementOperandSyntax
         }).ToArray();
 
     internal static bool HasAlternatives(RequirementInputSyntax syntax) => Describe(syntax).Any(slot => slot.ListCapable);
+
+    internal static bool HasComposedQuantity(RequirementInputSyntax syntax) => syntax is
+        RequirementInputSyntax.PredicateThenOptionalQuantity or
+        RequirementInputSyntax.PredicateThenDirectionThenOptionalQuantity or
+        RequirementInputSyntax.PredicateThenOptionalDirectionThenOptionalQuantity or
+        RequirementInputSyntax.RequiredDifficultyThenPredicateThenOptionalQuantity or
+        RequirementInputSyntax.RequiredDifficultyThenPredicateThenQuantity or
+        RequirementInputSyntax.RequiredDifficultyThenMethodThenPredicateThenOptionalQuantity;
+
+    internal static bool UsesOperands(RequirementInputSyntax syntax) => HasComposedQuantity(syntax) || HasAlternatives(syntax);
+
+    // Composed quantities only. Read the complete raw final slot, never identification-normalized digits
+    // or punctuation-normalized markers. The parsers retain independent identity resolution.
+    internal static bool TryQuantity(string raw, bool optional, out int quantity)
+    {
+        quantity = 1;
+        var tokens = raw.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        if (tokens.Length == 0) return optional;
+        var token = tokens[^1];
+        return (tokens.Length == 1 || tokens.Length == 2 && tokens[0] is "x" or "X") &&
+            token.Length > 0 && token[0] is >= '1' and <= '9' &&
+            token.All(character => character is >= '0' and <= '9') &&
+            int.TryParse(token, NumberStyles.None, CultureInfo.InvariantCulture, out quantity);
+    }
 
     // Brackets and commas are structural before identification, even on unmarked slots.
     internal static bool TryValues(string raw, Slot slot, out IReadOnlyList<string> values)
@@ -82,6 +106,22 @@ internal static class RequirementOperandSyntax
                 if (start < text.Length) yield return [text[..end], "", text[start..]];
             }
 
+        // QTY2 alone permits both absent supporting slots, or an empty middle Direction
+        // followed by a complete raw Quantity. Present Direction partitions above still compete.
+        if (slots.Count == 3 && slots[0] == new Slot("predicate", false, false) &&
+            slots[1] == new Slot("direction", true, true) && slots[2] == new Slot("quantity", true, false))
+        {
+            if (text.Length > 0 && RequirementCatalogueLanguage.NormalizeIdentification(
+                text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)[^1]).Length != 0)
+                yield return [text, "", ""];
+            foreach (var end in cuts)
+            {
+                var start = end;
+                while (start < text.Length && char.IsWhiteSpace(text[start])) start++;
+                if (start < text.Length) yield return [text[..end], "", text[start..]];
+            }
+        }
+
         IEnumerable<IReadOnlyList<string>> Split(int start, int slot, IReadOnlyList<string> prefix)
         {
             while (start < text.Length && char.IsWhiteSpace(text[start])) start++;
@@ -92,7 +132,7 @@ internal static class RequirementOperandSyntax
             }
             foreach (var end in cuts.Where(end => end > start))
                 foreach (var result in Split(end, slot + 1, [.. prefix, text[start..end]])) yield return result;
-            // Only the approved optional final direction may be omitted.
+            // Approved optional final Direction or QTY1 Quantity may be omitted.
             if (slot == slots.Count - 2 && slots[^1].Optional && start < text.Length &&
                 RequirementCatalogueLanguage.NormalizeIdentification(text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)[^1]).Length != 0)
                 yield return [.. prefix, text[start..], ""];

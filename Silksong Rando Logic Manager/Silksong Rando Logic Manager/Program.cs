@@ -81,6 +81,7 @@ builder.Services.AddScoped<RoomEditorV2LogicLoader>();
 builder.Services.AddScoped<ArchipelagoRoomLookup>();
 builder.Services.AddScoped<IRoomEditorV2LogicLoader>(provider => provider.GetRequiredService<RoomEditorV2LogicLoader>());
 builder.Services.AddScoped<ISceneLayoutLoader, SceneLayoutLoader>();
+builder.Services.AddScoped<RoomAuditSnapshotService>();
 builder.Services.AddScoped<IRoomEditorV2CommandService, RoomEditorV2CommandService>();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddScoped<DistributedExportService>();

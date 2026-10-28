@@ -1,0 +1,38 @@
+<p class="audit-help">One route, not the only or shortest route. Local checks are gate prerequisites; inspect them separately.</p>
+<ol class="audit-route">
+    @foreach (var step in Sequence())
+    {
+        <li @key="(step.Order, Evaluation)">
+            @if (step.Via is not { } row)
+            { <span>Chosen origin: @OriginLabel — arrival at @Evaluator.NodeName(step.NodeId)</span> }
+            else
+            {
+                <span>Traverse: @Evaluator.RowName(row)</span>
+                @if (row.Requirement.Expression is { } expression)
+                {
+                    <details><summary>Gate details</summary>
+                        <AuditExpressionView Expression="expression" Requirement="row.Requirement" Results="step.Leaves" Evaluator="Evaluator" Evaluation="Evaluation" InspectCheck="InspectCheck" />
+                    </details>
+                }
+            }
+        </li>
+    }
+</ol>
+@code {
+    [Parameter, EditorRequired] public AuditProof Proof { get; set; } = null!;
+    [Parameter, EditorRequired] public RoomAuditEvaluator Evaluator { get; set; } = null!;
+    [Parameter, EditorRequired] public AuditEvaluation Evaluation { get; set; } = null!;
+    [Parameter] public string OriginLabel { get; set; } = "Origin";
+    [Parameter] public EventCallback<Guid> InspectCheck { get; set; }
+    // Presentation only: reverse the retained source chain, never dependency branches or final closure.
+    private IEnumerable<AuditProof> Sequence()
+    {
+        var seen = new HashSet<int>();
+        var steps = new Stack<AuditProof>();
+        for (AuditProof? item = Proof; item is not null && seen.Add(item.Order); item = item.Source)
+        {
+            steps.Push(item);
+        }
+        return steps;
+    }
+}

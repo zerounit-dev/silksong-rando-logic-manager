@@ -20,6 +20,20 @@ internal sealed record RoomGraphTranslationContext(
 
 internal static class RoomGraphRequirementTranslator
 {
+    internal static AuditRequirement RecognizeForAudit(string source, Guid roomId, RoomGraphTranslationContext context)
+    {
+        if (string.IsNullOrWhiteSpace(source)) return new(source, null, ["requirement is blank"]);
+        var parsed = new Parser(source, roomId, context).Parse();
+        return new(source, parsed.Node is null ? null : Project(parsed.Node), parsed.Reasons);
+    }
+
+    private static AuditExpression Project(Node node) => node switch
+    {
+        AtomNode { Evidence: { } evidence } => evidence,
+        AndNode and => new AuditBoolean(true, Project(and.Left), Project(and.Right)),
+        OrNode or => new AuditBoolean(false, Project(or.Left), Project(or.Right)),
+        _ => throw new InvalidOperationException("Successful recognition has no audit evidence.")
+    };
     internal static RoomGraphRequirement Translate(string source, Guid owningRoomId, RoomGraphTranslationContext context)
     {
         if (string.IsNullOrWhiteSpace(source)) return Unresolved(source, "requirement is blank");
@@ -44,7 +58,7 @@ internal static class RoomGraphRequirementTranslator
     };
 
     private abstract record Node;
-    private sealed record AtomNode(string Value) : Node;
+    private sealed record AtomNode(string Value, AuditAtom? Evidence = null) : Node;
     private sealed record AndNode(Node Left, Node Right) : Node;
     private sealed record OrNode(Node Left, Node Right) : Node;
     private sealed record ParseResult(Node? Node, IReadOnlyList<string> Reasons);
@@ -55,6 +69,8 @@ internal static class RoomGraphRequirementTranslator
         private static readonly HashSet<string> Difficulties = new(StringComparer.Ordinal) { "easy", "medium", "hard", "cbt", "intended" };
         private static readonly HashSet<string> Directions = new(StringComparer.Ordinal) { "left", "right", "up", "down", "both", "either", "any", "all" };
         private int position;
+        private int atomStart;
+        private int atomLength;
         private readonly List<string> reasons = [];
 
         internal ParseResult Parse()
@@ -147,6 +163,8 @@ internal static class RoomGraphRequirementTranslator
             }
             if (bracketDepth != 0) { reasons.Add("unmatched list delimiter"); return null; }
             var raw = source[start..position].Trim();
+            atomStart = start;
+            atomLength = raw.Length;
             var atom = TranslateAtom(raw);
             if (atom is null) return null;
 
@@ -216,7 +234,7 @@ internal static class RoomGraphRequirementTranslator
 
         private void AddCandidate(RoomGraphPredicateDefinition predicate, string alias, string raw, string normalized, List<AtomCandidate> candidates)
         {
-            if (RequirementOperandSyntax.HasAlternatives(predicate.Syntax))
+            if (RequirementOperandSyntax.UsesOperands(predicate.Syntax))
             {
                 AddOperandCandidates(predicate, alias, raw, candidates);
                 return;
@@ -224,6 +242,8 @@ internal static class RoomGraphRequirementTranslator
             if (raw.IndexOfAny(['[', ']', ',']) >= 0) return;
             var normalizedAlias = RequirementCatalogueLanguage.NormalizeIdentification(alias);
             RequirementAtomFormatArguments arguments = new();
+            var operands = new List<AuditOperand>();
+            Guid? dependencyId = null;
             string? failure = null;
             var matched = false;
             switch (predicate.Syntax)
@@ -255,7 +275,7 @@ internal static class RoomGraphRequirementTranslator
                     {
                         matched = true;
                         var items = context.Items.Where(item => item.Aliases.Any(value => RequirementCatalogueLanguage.NormalizeIdentification(value) == itemText)).ToArray();
-                        if (items.Length == 1) arguments = arguments with { ItemOutputValue = items[0].OutputValue };
+                        if (items.Length == 1) { arguments = arguments with { ItemOutputValue = items[0].OutputValue }; operands.Add(new("item", items[0].Id, items[0].OutputValue, raw)); }
                         else failure = items.Length == 0 ? $"unrecognized item: {itemText}" : $"ambiguous item: {itemText}";
                     }
                     break;
@@ -277,6 +297,7 @@ internal static class RoomGraphRequirementTranslator
                         matched = true;
                         var dependency = ResolveDependency(raw[prefix..]);
                         arguments = arguments with { CheckGraphId = dependency.LocationId };
+                        dependencyId = dependency.CheckId;
                         failure = dependency.Failure;
                     }
                     break;
@@ -291,7 +312,7 @@ internal static class RoomGraphRequirementTranslator
                         {
                             var identity = RequirementCatalogueLanguage.NormalizeIdentification(countableText);
                             var countables = context.Countables.Where(countable => countable.Aliases.Any(value => RequirementCatalogueLanguage.NormalizeIdentification(value) == identity)).ToArray();
-                            if (countables.Length == 1) arguments = arguments with { Quantity = count, CountableOutputValue = countables[0].OutputValue };
+                            if (countables.Length == 1) { arguments = arguments with { Quantity = count, CountableOutputValue = countables[0].OutputValue }; operands.Add(new("countable", countables[0].Id, countables[0].OutputValue, countableText)); }
                             else failure = countables.Length == 0 ? $"unrecognized countable: {countableText}" : $"ambiguous countable: {countableText}";
                         }
                     }
@@ -307,7 +328,7 @@ internal static class RoomGraphRequirementTranslator
                         {
                             var countableFirstIdentity = RequirementCatalogueLanguage.NormalizeIdentification(countableFirstText);
                             var countableFirstMatches = context.Countables.Where(countable => countable.Aliases.Any(value => RequirementCatalogueLanguage.NormalizeIdentification(value) == countableFirstIdentity)).ToArray();
-                            if (countableFirstMatches.Length == 1) arguments = arguments with { Quantity = finalCount, CountableOutputValue = countableFirstMatches[0].OutputValue };
+                            if (countableFirstMatches.Length == 1) { arguments = arguments with { Quantity = finalCount, CountableOutputValue = countableFirstMatches[0].OutputValue }; operands.Add(new("countable", countableFirstMatches[0].Id, countableFirstMatches[0].OutputValue, countableFirstText)); }
                             else failure = countableFirstMatches.Length == 0 ? $"unrecognized countable: {countableFirstText}" : $"ambiguous countable: {countableFirstText}";
                         }
                     }
@@ -317,7 +338,7 @@ internal static class RoomGraphRequirementTranslator
             }
             if (!matched) return;
             if (failure is not null) { candidates.Add(new(null, failure)); return; }
-            try { candidates.Add(new(new AtomNode(RequirementAtomFormatter.Format(predicate.Syntax, predicate.OutputSyntax, arguments)), null)); }
+            try { candidates.Add(new(MakeAtom(predicate, arguments, operands, dependencyId), null)); }
             catch (Exception exception) { candidates.Add(new(null, $"predicate '{predicate.Name}' could not format its output: {exception.Message}")); }
         }
 
@@ -331,26 +352,34 @@ internal static class RoomGraphRequirementTranslator
                 var predicateIndex = slots.ToList().FindIndex(slot => slot.Role == "predicate");
                 if (parts[predicateIndex].IndexOfAny(['[', ']', ',']) >= 0 ||
                     RequirementCatalogueLanguage.NormalizeIdentification(parts[predicateIndex]) != RequirementCatalogueLanguage.NormalizeIdentification(alias)) continue;
-                IReadOnlyList<RequirementAtomFormatArguments> combinations = [new()];
+                IReadOnlyList<(RequirementAtomFormatArguments Arguments, IReadOnlyList<AuditOperand> Operands)> combinations = [(new(), [])];
                 var identities = new List<string>();
                 string? failure = null;
                 for (var index = 0; index < slots.Count; index++)
                 {
                     var slot = slots[index];
                     if (slot.Role == "predicate") continue;
+                    if (slot.Role == "quantity")
+                    {
+                        if (!RequirementOperandSyntax.TryQuantity(parts[index], slot.Optional, out var quantity))
+                        { failure = $"invalid or missing canonical positive Int32 quantity: {parts[index]}"; break; }
+                        identities.Add(parts[index].Trim());
+                        combinations = combinations.Select(combination => (combination.Arguments with { Quantity = quantity }, combination.Operands)).ToArray();
+                        continue;
+                    }
                     if (!RequirementOperandSyntax.TryValues(parts[index], slot, out var values))
                     { failure = $"invalid or missing {slot.Role} operand/list: {parts[index]}"; break; }
                     identities.Add(string.Join('\u001f', values.Select(RequirementCatalogueLanguage.NormalizeIdentification)));
-                    var alternatives = new List<string>();
+                    var alternatives = new List<AuditOperand>();
                     foreach (var value in values)
                     {
                         var identity = RequirementCatalogueLanguage.NormalizeIdentification(value);
                         if (slot.Role == "crest" && slot.Optional && parts[index].Length == 0)
-                            alternatives.Add("none");
+                            alternatives.Add(new(slot.Role, null, "none", ""));
                         else if (slot.Role == "difficulty" || slot.Role == "direction")
                         {
-                            if (slot.Role == "direction" && slot.Optional && parts[index].Length == 0) alternatives.Add("none");
-                            else if ((slot.Role == "difficulty" ? Difficulties : Directions).Contains(identity)) alternatives.Add(identity);
+                            if (slot.Role == "direction" && slot.Optional && parts[index].Length == 0) alternatives.Add(new(slot.Role, null, "none", ""));
+                            else if ((slot.Role == "difficulty" ? Difficulties : Directions).Contains(identity)) alternatives.Add(new(slot.Role, null, identity, value));
                             else { failure = $"invalid {slot.Role}: {value}"; break; }
                         }
                         else
@@ -364,21 +393,21 @@ internal static class RoomGraphRequirementTranslator
                             };
                             var matches = catalogue.Where(row => row.Aliases.Any(candidate => RequirementCatalogueLanguage.NormalizeIdentification(candidate) == identity)).ToArray();
                             if (matches.Length != 1) { failure = $"{(matches.Length == 0 ? "unrecognized" : "ambiguous")} {slot.Role}: {value}"; break; }
-                            alternatives.Add(matches[0].OutputValue);
+                            alternatives.Add(new(slot.Role, matches[0].Id, matches[0].OutputValue, value));
                         }
                     }
                     if (failure is not null) break;
                     // Ordered product: each existing prefix combines with every next alternative.
                     // Validate the whole application before formatting any resulting atom.
-                    combinations = combinations.SelectMany(arguments => alternatives.Select(value => slot.Role switch
+                    combinations = combinations.SelectMany(combination => alternatives.Select(operand => (slot.Role switch
                     {
-                        "difficulty" => arguments with { Difficulty = value },
-                        "direction" => arguments with { Direction = value },
-                        "crest" => arguments with { CrestOutputValue = value },
-                        "method" => arguments with { MethodOutputValue = value },
-                        "soul" => arguments with { SoulOutputValue = value },
+                        "difficulty" => combination.Arguments with { Difficulty = operand.Value },
+                        "direction" => combination.Arguments with { Direction = operand.Value },
+                        "crest" => combination.Arguments with { CrestOutputValue = operand.Value },
+                        "method" => combination.Arguments with { MethodOutputValue = operand.Value },
+                        "soul" => combination.Arguments with { SoulOutputValue = operand.Value },
                         _ => throw new InvalidOperationException("Unexpected approved operand role.")
-                    })).ToArray();
+                    }, (IReadOnlyList<AuditOperand>)[.. combination.Operands, operand]))).ToArray();
                 }
                 if (failure is not null) { candidates.Add(new(null, failure)); continue; }
                 // Only equivalent complete raw allocations collapse. Entry order/multiplicity remain in the key
@@ -386,7 +415,7 @@ internal static class RoomGraphRequirementTranslator
                 if (!interpretations.Add(string.Join('\u001e', identities))) continue;
                 try
                 {
-                    var atoms = combinations.Select(arguments => (Node)new AtomNode(RequirementAtomFormatter.Format(predicate.Syntax, predicate.OutputSyntax, arguments))).ToArray();
+                    var atoms = combinations.Select(combination => MakeAtom(predicate, combination.Arguments, combination.Operands, null)).ToArray();
                     var grouped = atoms.Aggregate((left, right) => new OrNode(left, right));
                     candidates.Add(new(grouped, null));
                 }
@@ -394,12 +423,16 @@ internal static class RoomGraphRequirementTranslator
             }
         }
 
-        private (string? LocationId, string? Failure) ResolveDependency(string value)
+        private Node MakeAtom(RoomGraphPredicateDefinition predicate, RequirementAtomFormatArguments arguments, IReadOnlyList<AuditOperand> operands, Guid? dependencyId) =>
+            new AtomNode(RequirementAtomFormatter.Format(predicate.Syntax, predicate.OutputSyntax, arguments),
+                new(predicate.Id, predicate.OutputSyntax, arguments, operands, dependencyId, atomStart, atomLength));
+
+        private (string? LocationId, string? Failure, Guid? CheckId) ResolveDependency(string value)
         {
             var operand = value.TrimStart();
-            if (operand.Length == 0) return (null, "required check name is missing");
+            if (operand.Length == 0) return (null, "required check name is missing", null);
             var qualifiers = FindQualifiers(operand);
-            if (qualifiers.Any(value => value.Word == "GLOBAL")) return (null, "GLOBAL is not supported; use THE for full-catalogue scope");
+            if (qualifiers.Any(value => value.Word == "GLOBAL")) return (null, "GLOBAL is not supported; use THE for full-catalogue scope", null);
             Guid? targetRoom = owningRoomId;
             string checkName;
             if (qualifiers.Count == 0) checkName = operand;
@@ -412,20 +445,20 @@ internal static class RoomGraphRequirementTranslator
             {
                 checkName = operand[..qualifiers[0].Index].TrimEnd();
                 var roomText = operand[(qualifiers[0].Index + 2)..].TrimStart();
-                if (checkName.Length == 0 || roomText.Length == 0) return (null, "check dependency has an incomplete IN scope");
+                if (checkName.Length == 0 || roomText.Length == 0) return (null, "check dependency has an incomplete IN scope", null);
                 var roomIdentity = RequirementCatalogueLanguage.NormalizeIdentification(roomText);
                 var rooms = context.Rooms.Where(room => RequirementCatalogueLanguage.NormalizeIdentification(room.ReferenceId) == roomIdentity).ToArray();
-                if (rooms.Length != 1) return (null, rooms.Length == 0 ? $"dependency room was not found: {roomText}" : $"dependency room is ambiguous: {roomText}");
+                if (rooms.Length != 1) return (null, rooms.Length == 0 ? $"dependency room was not found: {roomText}" : $"dependency room is ambiguous: {roomText}", null);
                 targetRoom = rooms[0].Id;
             }
-            else return (null, "check dependency has invalid or conflicting scope syntax");
+            else return (null, "check dependency has invalid or conflicting scope syntax", null);
 
-            if (string.IsNullOrWhiteSpace(checkName)) return (null, "required check name is missing");
+            if (string.IsNullOrWhiteSpace(checkName)) return (null, "required check name is missing", null);
             var identity = RequirementCatalogueLanguage.NormalizeIdentification(checkName);
             var checks = context.Checks.Where(check => (targetRoom is null || check.RoomId == targetRoom) &&
                 RequirementCatalogueLanguage.NormalizeIdentification(check.FriendlyName) == identity).ToArray();
-            if (checks.Length != 1) return (null, checks.Length == 0 ? $"dependency check was not found: {checkName}" : $"dependency check is ambiguous: {checkName}");
-            return checks[0].LocationId is { } id ? (id, null) : (null, $"dependency check has no valid export location identity: {checkName}");
+            if (checks.Length != 1) return (null, checks.Length == 0 ? $"dependency check was not found: {checkName}" : $"dependency check is ambiguous: {checkName}", null);
+            return checks[0].LocationId is { } id ? (id, null, checks[0].Id) : (null, $"dependency check has no valid export location identity: {checkName}", null);
         }
 
         private static List<(string Word, int Index)> FindQualifiers(string text)

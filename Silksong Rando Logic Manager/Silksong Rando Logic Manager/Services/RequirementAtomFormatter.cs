@@ -42,11 +42,12 @@ public static class RequirementAtomFormatter
         RequirementOutputPlaceholder.Difficulty => inputSyntax == RequirementInputSyntax.OptionalDifficultyThenPredicate
             ? string.IsNullOrWhiteSpace(arguments.Difficulty) ? "none" : arguments.Difficulty
             : Required(arguments.Difficulty, "difficulty"),
-        RequirementOutputPlaceholder.Direction => inputSyntax == RequirementInputSyntax.PredicateThenOptionalDirection
+        RequirementOutputPlaceholder.Direction => inputSyntax is RequirementInputSyntax.PredicateThenOptionalDirection or RequirementInputSyntax.PredicateThenOptionalDirectionThenOptionalQuantity
             ? string.IsNullOrWhiteSpace(arguments.Direction) ? "none" : arguments.Direction
             : Required(arguments.Direction, "direction"),
         RequirementOutputPlaceholder.Item => Required(arguments.ItemOutputValue, "item output value"),
-        RequirementOutputPlaceholder.Quantity => PositiveQuantity(arguments.Quantity),
+        RequirementOutputPlaceholder.Quantity => PositiveQuantity(arguments.Quantity ??
+            (RequirementOperandSyntax.HasComposedQuantity(inputSyntax) && inputSyntax != RequirementInputSyntax.RequiredDifficultyThenPredicateThenQuantity ? 1 : null)),
         RequirementOutputPlaceholder.Check => Required(arguments.CheckGraphId, "check graph ID"),
         RequirementOutputPlaceholder.Soul => Required(arguments.SoulOutputValue, "soul output value"),
         RequirementOutputPlaceholder.Countable => Required(arguments.CountableOutputValue, "countable output value"),

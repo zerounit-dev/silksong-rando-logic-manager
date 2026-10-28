@@ -18,7 +18,13 @@ public enum RequirementInputSyntax
     OptionalCrestThenPredicateThenDirection,
     RequiredDifficultyThenOptionalCrestThenPredicate,
     PredicateThenSoul,
-    RequiredDifficultyThenMethodThenPredicate = 16
+    RequiredDifficultyThenMethodThenPredicate = 16,
+    PredicateThenOptionalQuantity = 17,
+    PredicateThenDirectionThenOptionalQuantity = 18,
+    RequiredDifficultyThenPredicateThenOptionalQuantity = 19,
+    RequiredDifficultyThenPredicateThenQuantity = 20,
+    RequiredDifficultyThenMethodThenPredicateThenOptionalQuantity = 21,
+    PredicateThenOptionalDirectionThenOptionalQuantity = 22
 }
 
 public sealed record RequirementInputSyntaxOption(RequirementInputSyntax Value, string PersistedValue, string DisplayLabel, string Group);

@@ -1,0 +1,39 @@
+@if (Expression is AuditBoolean boolean)
+{
+    <div class="audit-boolean" role="group" aria-label="@(boolean.IsAnd ? "AND group" : "OR group")">
+        <span class="audit-operator">(</span>
+        <AuditExpressionView Expression="boolean.Left" Requirement="Requirement" Results="Results" Evaluator="Evaluator" Evaluation="Evaluation" InspectCheck="InspectCheck" />
+        <strong class="audit-operator">@(boolean.IsAnd ? "AND" : "OR")</strong>
+        <AuditExpressionView Expression="boolean.Right" Requirement="Requirement" Results="Results" Evaluator="Evaluator" Evaluation="Evaluation" InspectCheck="InspectCheck" />
+        <span class="audit-operator">)</span>
+    </div>
+}
+else if (Expression is AuditAtom atom && Results.TryGetValue(atom, out var result))
+{
+    <div class="audit-leaf @(result.Unresolved ? "audit-unresolved" : result.Passed ? "audit-passed" : "audit-unmet")">
+        <span class="audit-leaf-source">@Requirement.Source.Substring(atom.Start, atom.Length)</span>
+        <strong> — @(result.Unresolved ? "unresolved" : result.Passed ? "passed" : "unmet")</strong>
+        @if (result.Manual)
+        { <p>Manual · @(result.Passed ? "checked" : "unchecked")</p> }
+        @if (result.WitnessUsed) { <small> · used by this approach</small> }
+        @if (!result.Manual && result.Evidence is { } evidence)
+        { <ul class="audit-prerequisites"><AuditPrerequisiteView Evidence="evidence" /></ul> }
+        else if (!result.Manual) { <p>@result.Explanation</p> }
+        @if (result.LocalCheckId is { } checkId)
+        {
+            <button type="button" class="audit-action" @onclick="@(() => InspectCheck.InvokeAsync(checkId))">Inspect check</button>
+        }
+        else if (result.ControlKey is { } key)
+        { <a class="audit-control-link" href="@($"#{ControlId(key)}")">Scenario control</a> }
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public AuditExpression Expression { get; set; } = null!;
+    [Parameter, EditorRequired] public AuditRequirement Requirement { get; set; } = null!;
+    [Parameter, EditorRequired] public IReadOnlyDictionary<AuditAtom, AuditLeafResult> Results { get; set; } = null!;
+    [Parameter, EditorRequired] public RoomAuditEvaluator Evaluator { get; set; } = null!;
+    [Parameter, EditorRequired] public AuditEvaluation Evaluation { get; set; } = null!;
+    [Parameter] public EventCallback<Guid> InspectCheck { get; set; }
+    public static string ControlId(string key) => "audit-control-" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(key)));
+}

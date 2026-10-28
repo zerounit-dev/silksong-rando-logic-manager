@@ -1116,7 +1116,19 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
           const identifierCodePoint=value=>/[\p{L}\p{Nd}]/u.test(value);
           const wordAt=(word,index)=>source.slice(index,index+word.length)===word&&!identifierCodePoint(codePointBefore(source,index))&&!identifierCodePoint(codePointAt(source,index+word.length));
                 const syntax = { only:"{predicate}", optional:"{difficulty?} {predicate}", required:"{difficulty} {predicate}", direction:"{predicate} [{direction}]", optionalDirection:"{predicate} [{direction?}]", item:"{predicate} {item}", check:"{predicate} {check}", quantity:"{predicate} {quantity}", difficultySoul:"{difficulty} {predicate} [{soul}]", soul:"{predicate} [{soul}]", countable:"{predicate} {quantity} {countable}", countableFirst:"{predicate} {countable} {quantity}", crestDirection:"[{crest}] {predicate} {direction}", difficultyCrest:"{difficulty} [{crest}] {predicate}", optionalCrestDirection:"[{crest?}] {predicate} {direction}", difficultyOptionalCrest:"{difficulty} [{crest?}] {predicate}", difficultyMethod:"{difficulty} [{method}] {predicate}" };
-          const operandShapes=new Map(Object.values(syntax).filter(pattern=>pattern.includes("[")).map(pattern=>[pattern,pattern.split(" ").map(marker=>({role:marker.replace(/[\[\]{}?]/gu,""),optional:marker.includes("?"),list:marker.startsWith("[")}))]));
+            const quantityShapes = ["{predicate} {quantity?}", "{predicate} [{direction}] {quantity?}", "{difficulty} {predicate} {quantity?}", "{difficulty} {predicate} {quantity}", "{difficulty} [{method}] {predicate} {quantity?}", "{predicate} [{direction?}] {quantity?}"];
+           const operandShapes=new Map([...Object.values(syntax).filter(pattern=>pattern.includes("[")),...quantityShapes].map(pattern=>[pattern,pattern.split(" ").map(marker=>({role:marker.replace(/[\[\]{}?]/gu,""),optional:marker.includes("?"),list:marker.startsWith("[")}))]));
+            // Composed final Quantity is raw syntax: optional omission, N, or separate plain x/X N.
+           // Keep the old normalized/unbounded quantity and Countable paths untouched.
+           const composedQuantity = (text, part, optional) => {
+               const raw=text.slice(part.start,part.end), tokens=[...raw.matchAll(/\S+/gu)];
+               if(!tokens.length)return optional?{identity:"",roles:[]}:null;
+               if(tokens.length!==1&&(tokens.length!==2||!/^[xX]$/u.test(tokens[0][0])))return null;
+               const number=tokens.at(-1),token=number[0];
+               if(!/^[1-9][0-9]*$/u.test(token)||Number(token)>2147483647)return null;
+               const start=part.start+number.index;
+               return {identity:raw.trim(),roles:[{start,end:start+token.length,className:"requirements-quantity"}]};
+           };
            const difficulty = new Set(["easy","medium","hard","cbt","intended"]), direction = new Set(["left","right","up","down","both","either","any","all"]);
            const tokenizeAtom = text => { const chunks=[...text.matchAll(/\S+/gu)].map(match=>({start:match.index,end:match.index+match[0].length,identity:identify(match[0])})),meaningful=chunks.filter(chunk=>chunk.identity);return {text,chunks,meaningful}; };
               const matchingCandidates = tokens => { if(!tokens.length)return [];const matches=(requirementsLookups.predicateAliasesByFirstToken.get(tokens[0].identity)||[]).map(candidate=>({candidate,difficultyEnabled:false,invalidDifficulty:false}));if(tokens.length>1)for(const candidate of requirementsLookups.predicateAliasesByFirstToken.get(tokens[1].identity)||[]){const input=candidate.predicate.inputSyntax;if(difficulty.has(tokens[0].identity)&&(input===syntax.optional||input===syntax.required||input===syntax.difficultySoul))matches.push({candidate,difficultyEnabled:true,invalidDifficulty:false});else if(!difficulty.has(tokens[0].identity)&&(input===syntax.required||input===syntax.difficultySoul))matches.push({candidate,difficultyEnabled:false,invalidDifficulty:true});}return matches; };
@@ -1150,7 +1162,7 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
                   while(start<text.length&&/\s/u.test(text[start]))start++;
                   if(slot===slots.length-1){if(start<text.length||slots[slot].optional)result.push([...prefix,{start,end:text.length}]);return;}
                   for(const end of cuts)if(end>start)split(end,slot+1,[...prefix,{start,end}]);
-                  // Punctuation-only raw suffix is not optional-direction omission.
+                   // Punctuation-only raw suffix is not optional Direction/Quantity omission.
                   if(slot===slots.length-2&&slots.at(-1).optional&&start<text.length&&identify(text.match(/\S+$/u)?.[0]||""))result.push([...prefix,{start,end:text.length},{start:text.length,end:text.length}]);
               };
                split(0,0,[]);
@@ -1164,7 +1176,16 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
                         let start=end;while(start<text.length&&/\s/u.test(text[start]))start++;
                         if(start<text.length)result.push([{start:0,end},{start:end,end},{start,end:text.length}]);
                     }
-                return result;
+                 // QTY2 alone admits both supporting slots absent and empty-middle Direction
+                 // with present Quantity. Keep every complete boundary and actual source range.
+                 if(slots.length===3&&slots[0].role==="predicate"&&!slots[0].optional&&!slots[0].list&&slots[1].role==="direction"&&slots[1].optional&&slots[1].list&&slots[2].role==="quantity"&&slots[2].optional&&!slots[2].list){
+                     if(text.length&&identify(text.match(/\S+$/u)?.[0]||""))result.push([{start:0,end:text.length},{start:text.length,end:text.length},{start:text.length,end:text.length}]);
+                     for(const end of cuts){
+                         let start=end;while(start<text.length&&/\s/u.test(text[start]))start++;
+                         if(start<text.length)result.push([{start:0,end},{start:end,end},{start,end:text.length}]);
+                     }
+                 }
+                 return result;
           };
           const operandValues = (text,part,slot) => {
               const raw=text.slice(part.start,part.end);
@@ -1192,7 +1213,12 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
                       if(/[\[\],]/u.test(predicateRaw)||identify(predicateRaw)!==candidate.normalizedAlias)continue;
                       incomplete=true;let valid=true;const roles=[],identities=[];
                       for(let index=0;index<slots.length&&valid;index++){
-                          const slot=slots[index];if(slot.role==="predicate")continue;
+                           const slot=slots[index];if(slot.role==="predicate")continue;
+                           if(slot.role==="quantity"){
+                               const quantity=composedQuantity(text,parts[index],slot.optional);
+                               if(!quantity){valid=false;if(/[\[\],]/u.test(text.slice(parts[index].start,parts[index].end)))malformed=true;break;}
+                               identities.push(quantity.identity);roles.push(...quantity.roles);continue;
+                           }
                           const values=operandValues(text,parts[index],slot);
                           if(values===null){valid=false;if(/[\[\],]/u.test(text.slice(parts[index].start,parts[index].end)))malformed=true;break;}
                           identities.push(values.map(value=>identify(text.slice(value.start,value.end))));

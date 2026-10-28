@@ -1,0 +1,309 @@
+@page "/rooms/{RoomId:guid}/audit"
+@rendermode InteractiveServer
+@implements IAsyncDisposable
+@inject RoomAuditSnapshotService Loader
+@inject IJSRuntime JS
+@inject ILogger<RoomAudit> Logger
+@using System.Text.Json
+@using Microsoft.JSInterop
+@using Silksong_Rando_Logic_Manager.Components.RoomAudit
+
+<PageTitle>Room audit</PageTitle>
+<article class="room-audit" aria-label="Read-only room audit">
+    <header>
+        <h1>@(snapshot is null ? "Room audit" : $"{snapshot.Name} — room audit")</h1>
+        <a class="audit-action" href="@($"/rooms/{RoomId:D}")"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> back to editor</a>
+    </header>
+    @if (loading) { <p role="status">Loading fresh room data…</p> }
+    else if (failure is not null)
+    {
+        <p role="alert">@failure</p>
+        <button class="audit-action" type="button" @onclick="ReloadAsync">retry</button>
+    }
+    else if (snapshot is null) { <p role="status">Room unavailable: it is missing or archived.</p> }
+    else if (evaluator is not null && evaluation is not null)
+    {
+        var scenarioOwner = generation;
+        @if (notice is not null) { <p class="audit-notice" role="status">@notice</p> }
+        <div class="audit-workspace">
+            <section class="audit-controls" aria-label="Scenario inputs">
+                <fieldset disabled="@restoring">
+                    <legend>Scenario inputs</legend>
+                    <button class="audit-action" type="button" @onclick="@(() => OwnedInputAsync(scenarioOwner, ResetAsync))">reset scenario</button>
+                    <h2>Main movement</h2>
+                    <table class="audit-movement">
+                        <thead><tr><th scope="col">Capability</th><th scope="col">Available</th><th scope="col">All</th></tr></thead>
+                        <tbody>
+                            @foreach (var movement in RoomAuditEvaluator.Movement)
+                            {
+                                <tr><th scope="row">@movement.Label</th><td>
+                                    @if (movement.Directions.Length == 0)
+                                    {
+                                        var key = $"move:{movement.Key}";
+                                        <input type="checkbox" aria-label="@movement.Label" checked="@scenario.Has(key)" @onchange="@(e => OwnedInputAsync(scenarioOwner, () => FactChangedAsync(key, e)))" />
+                                    }
+                                    @foreach (var direction in movement.Directions)
+                                    {
+                                        var key = $"move:{movement.Key}:{direction}";
+                                        <label><input type="checkbox" checked="@scenario.Has(key)" @onchange="@(e => OwnedInputAsync(scenarioOwner, () => FactChangedAsync(key, e)))" /> @RoomAuditEvaluator.Friendly(direction)</label>
+                                    }
+                                </td><td>@if (movement.Directions.Length > 0) { <input type="checkbox" aria-label="@($"All {movement.Label} directions")" checked="@movement.Directions.All(d => scenario.Has($"move:{movement.Key}:{d}"))" @onchange="@(e => OwnedInputAsync(scenarioOwner, () => AllChangedAsync(movement.Key, movement.Directions, e)))" /> }</td></tr>
+                            }
+                        </tbody>
+                    </table>
+                    <h2>Crests</h2>
+                    <table><thead><tr><th scope="col">Owned</th><th scope="col">Shared difficulty</th></tr></thead><tbody>
+                        @foreach (var crest in snapshot.Crests)
+                        {
+                            var owned = RoomAuditEvaluator.ValueKey("crest", crest);
+                            var level = RoomAuditEvaluator.ValueKey("crest-level", crest);
+                            <tr><td><label><input type="checkbox" checked="@scenario.Has(owned)" @onchange="@(e => OwnedInputAsync(scenarioOwner, () => FactChangedAsync(owned, e)))" /> @crest.Name</label></td>
+                                <td><select aria-label="@($"{crest.Name} shared difficulty")" value="@scenario.Level(level)" @onchange="@(e => OwnedInputAsync(scenarioOwner, () => LevelChangedAsync(level, e)))">
+                                    @for (var i = 0; i < RoomAuditEvaluator.DifficultyNames.Length; i++) { <option value="@i">@RoomAuditEvaluator.DifficultyNames[i]</option> }
+                                </select></td></tr>
+                        }
+                    </tbody></table>
+                    @foreach (var groupName in new[] { "Tools / spells / kit", "Technique difficulty", "World and settings", "Souls", "External dependencies", "Other prerequisites" })
+                    {
+                        var group = evaluator.Controls.Where(x => x.Group == groupName).ToArray();
+                        @if (group.Length == 0 && groupName is not "Souls" and not "World and settings") { continue; }
+                        <section><h2>@groupName</h2>
+                            @if (groupName == "World and settings")
+                            {
+                                <label>Act <select value="@scenario.Act" @onchange="@(e => OwnedInputAsync(scenarioOwner, () => ActChangedAsync(e)))"><option value="1">I</option><option value="2">II</option><option value="3">III</option></select></label>
+                                @foreach (var control in evaluator.Controls.Where(x => x.Group == "Settings"))
+                                {
+                                    <fieldset class="audit-radio"><legend>@control.Label</legend>
+                                        <label><input type="radio" name="@control.Key" checked="@(!scenario.Has(control.Key))" @onchange="@(() => OwnedInputAsync(scenarioOwner, () => SetFactAsync(control.Key, false)))" /> Off</label>
+                                        <label><input type="radio" name="@control.Key" checked="@scenario.Has(control.Key)" @onchange="@(() => OwnedInputAsync(scenarioOwner, () => SetFactAsync(control.Key, true)))" /> On</label>
+                                    </fieldset>
+                                }
+                            }
+                            @if (groupName == "Souls")
+                            {
+                                <fieldset class="audit-radio"><legend>Soul Randomizer</legend>
+                                    <label><input type="radio" name="audit-souls" checked="@(!scenario.SoulRandomizer)" @onchange="@(() => OwnedInputAsync(scenarioOwner, () => SoulModeChangedAsync(false)))" /> Off</label>
+                                    <label><input type="radio" name="audit-souls" checked="@scenario.SoulRandomizer" @onchange="@(() => OwnedInputAsync(scenarioOwner, () => SoulModeChangedAsync(true)))" /> On</label>
+                                </fieldset>
+                                @if (group.Length == 0) { <p class="audit-help">No named Souls required in this room.</p> }
+                            }
+                            @foreach (var control in group)
+                            {
+                                if (control.Difficulty)
+                                {
+                                    <label class="audit-control" id="@AuditExpressionView.ControlId(control.Key)">@control.Label
+                                        <select value="@scenario.Level(control.Key)" @onchange="@(e => OwnedInputAsync(scenarioOwner, () => LevelChangedAsync(control.Key, e)))">
+                                            @for (var i = 0; i < RoomAuditEvaluator.DifficultyNames.Length; i++) { <option value="@i">@RoomAuditEvaluator.DifficultyNames[i]</option> }
+                                        </select>
+                                    </label>
+                                }
+                                else
+                                {
+                                    <label class="audit-control" id="@AuditExpressionView.ControlId(control.Key)"><input type="checkbox" checked="@scenario.Has(control.Key)" disabled="@(groupName == "Souls" && !scenario.SoulRandomizer)" @onchange="@(e => OwnedInputAsync(scenarioOwner, () => FactChangedAsync(control.Key, e)))" /> @control.Label
+                                        @if (groupName == "Other prerequisites") { <small title="Manual scenario assumption"> · manual</small> }
+                                    </label>
+                                }
+                            }
+                        </section>
+                    }
+                </fieldset>
+            </section>
+            <section class="audit-output" aria-label="Room reachability and authored results">
+                <AuditScene @key="generation" Snapshot="snapshot" Evaluator="evaluator" Evaluation="evaluation" Owner="generation" Origin="@scenario.Start" PickOrigin="pickOrigin" Selected="selectedTarget" Approach="selectedApproach" Intent="SceneIntentAsync">
+                    <OriginControls>
+                        <label class="audit-origin-control">Origin
+                            <select disabled="@restoring" value="@scenario.Start" @onchange="@(e => OwnedInputAsync(scenarioOwner, () => StartChangedAsync(e)))">
+                                <option value="">Select origin…</option>
+                                @foreach (var start in evaluator.Starts)
+                                { <option value="@start.Key" disabled="@(!start.Valid)">@start.Label</option> }
+                            </select>
+                        </label>
+                        <button disabled="@restoring" class="audit-action" type="button" aria-pressed="@pickOrigin" @onclick="@(() => OwnedInputAsync(scenarioOwner, TogglePickAsync))">@(pickOrigin ? "Cancel scene pick (Esc)" : "Pick on scene")</button>
+                    </OriginControls>
+                </AuditScene>
+                @if (selectedTarget is { } target)
+                {
+                    <div inert="@(pickOrigin ? "" : null)">
+                        <AuditTargetInspector Target="target" Selection="targetSelection" OriginLabel="@(evaluator.Starts.FirstOrDefault(x => x.Key == scenario.Start)?.Label ?? "Origin")" Evaluator="evaluator" Evaluation="evaluation" StartHere="@(start => OwnedInputAsync(scenarioOwner, () => SelectOriginAsync(start)))" TargetSelected="@(destination => SelectTarget(scenarioOwner, destination))" ApproachSelected="@(destination => SelectApproach(scenarioOwner, destination))" />
+                    </div>
+                }
+                else { <p class="audit-help">Select a destination on the scene or in the table.</p> }
+                <table class="audit-targets">
+                    <caption>Targets</caption>
+                    <thead><tr><th scope="col">Status</th><th scope="col">Kind</th><th scope="col">Name</th></tr></thead>
+                    <tbody>
+                        @foreach (var item in Targets())
+                        {
+                            var status = TargetStatus(item.Target);
+                            <tr class="@(selectedTarget == item.Target ? "audit-target-selected" : "")">
+                                <td><i class="@StatusIcon(status)" role="img" aria-label="@status" title="@status"></i></td>
+                                <td>@(item.Target.Kind == "exit" ? "Entrance / exit" : RoomAuditEvaluator.Friendly(item.Target.Kind))</td>
+                                <td><button type="button" disabled="@pickOrigin" aria-pressed="@(selectedTarget == item.Target)" @onclick="@(() => SelectTarget(scenarioOwner, item.Target))">@item.Name</button></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </section>
+        </div>
+    }
+</article>
+
+@code {
+    [Parameter] public Guid RoomId { get; set; }
+    private RoomAuditSnapshot? snapshot;
+    private RoomAuditEvaluator? evaluator;
+    private AuditScenario scenario = new();
+    private AuditEvaluation? evaluation;
+    private CancellationTokenSource? loadCancellation;
+    private IJSObjectReference? storage;
+    private long generation;
+    private bool disposed, loading, restoring, restoreInFlight;
+    private string? failure, notice;
+    private bool pickOrigin;
+    private AuditTarget? selectedTarget, selectedApproach;
+    private long targetSelection;
+    private string StorageKey => $"silksong-room-audit:inputs:{RoomId:D}";
+
+    protected override Task OnParametersSetAsync() => ReloadAsync();
+    private async Task ReloadAsync()
+    {
+        var owner = ++generation;
+        loadCancellation?.Cancel(); loadCancellation?.Dispose();
+        loadCancellation = new(); var token = loadCancellation.Token;
+        snapshot = null; evaluator = null; evaluation = null; failure = null; notice = null;
+        pickOrigin = false; selectedTarget = null; selectedApproach = null;
+        loading = true; restoring = false; restoreInFlight = false;
+        try
+        {
+            var loaded = await Loader.LoadAsync(RoomId, token);
+            if (disposed || generation != owner) return;
+            snapshot = loaded;
+            if (loaded is not null)
+            {
+                evaluator = new(loaded); scenario = evaluator.Reconcile(null);
+                evaluation = evaluator.Evaluate(scenario); restoring = true;
+            }
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+        catch (Exception exception)
+        {
+            Logger.LogError(exception, "Room audit load failed for {RoomId}", RoomId);
+            if (!disposed && owner == generation) failure = "Room audit could not load. Retry to read fresh data.";
+        }
+        finally { if (!disposed && owner == generation) loading = false; }
+    }
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!restoring || restoreInFlight || evaluator is null || disposed) return;
+        restoreInFlight = true;
+        var owner = generation; var key = StorageKey; var current = evaluator;
+        try
+        {
+            if (storage is null)
+            {
+                var module = await JS.InvokeAsync<IJSObjectReference>("import", "./room-audit-storage.js");
+                if (disposed || owner != generation) { await module.DisposeAsync(); return; }
+                storage = module;
+            }
+            var retained = await storage.InvokeAsync<StorageRead>("read", key);
+            if (disposed || owner != generation) return;
+            AuditScenario? restored = null;
+            if (retained.Value is not null)
+            {
+                restored = JsonSerializer.Deserialize<AuditScenario>(retained.Value);
+                if (restored is null || restored.Start is null || restored.Facts is null || restored.Levels is null ||
+                    restored.Act is < 1 or > 3 || restored.Levels.Values.Any(level => level is < 0 or > 4))
+                    throw new JsonException("Invalid retained scenario inputs.");
+            }
+            scenario = current.Reconcile(restored);
+            notice = retained.Notice;
+        }
+        catch (Exception exception) when (exception is JSException or JsonException)
+        {
+            if (disposed || owner != generation) return;
+            scenario = current.Reconcile(null);
+            notice = "Scenario storage is unavailable or corrupt; defaults are in use. Authored data is unaffected.";
+        }
+        if (disposed || owner != generation) return;
+        evaluation = current.Evaluate(scenario);
+        restoring = false; restoreInFlight = false;
+        await InvokeAsync(StateHasChanged);
+    }
+    private Task StartChangedAsync(ChangeEventArgs e) => SelectOriginAsync(e.Value?.ToString() ?? "");
+    private Task SelectOriginAsync(string start)
+    { scenario.Start = evaluator!.Starts.Any(x => x.Valid && x.Key == start) ? start : ""; return ChangedAsync(); }
+    private Task TogglePickAsync() { pickOrigin = !pickOrigin; return Task.CompletedTask; }
+    private void SelectTarget(long owner, AuditTarget target)
+    {
+        if (disposed || owner != generation || loading || pickOrigin || evaluator is null || evaluation is null || !Targets().Any(x => x.Target == target)) return;
+        selectedTarget = target;
+        targetSelection++;
+        selectedApproach = null;
+    }
+    private void SelectApproach(long owner, AuditTarget? target) { if (!disposed && owner == generation && !loading && !pickOrigin) selectedApproach = target; }
+    private Task SceneIntentAsync(AuditSceneIntent intent)
+    {
+        if (disposed || loading || intent.Owner != generation || evaluator is null) return Task.CompletedTask;
+        if (intent.Kind == "cancel") { pickOrigin = false; return Task.CompletedTask; }
+        var target = new AuditTarget(intent.Kind, intent.Id);
+        if (!Targets().Any(x => x.Target == target)) return Task.CompletedTask;
+        if (pickOrigin)
+        {
+            if (!intent.PickOrigin || evaluator.StartFor(target) is not { } start || restoring) return Task.CompletedTask;
+            pickOrigin = false; return SelectOriginAsync(start);
+        }
+        if (!intent.PickOrigin) SelectTarget(intent.Owner, target);
+        return Task.CompletedTask;
+    }
+    private IEnumerable<(AuditTarget Target, string Name)> Targets()
+    {
+        if (snapshot is null || evaluator is null) yield break;
+        if (snapshot.Subrooms.Count == 0) yield return (new("room", snapshot.RoomId), "Implicit room");
+        foreach (var subroom in snapshot.Subrooms) yield return (new("subroom", subroom.Id), subroom.Name);
+        foreach (var row in snapshot.Rows) yield return (new(row.Kind, row.Id), evaluator.RowName(row));
+    }
+    private string TargetStatus(AuditTarget target)
+    {
+        if (evaluation?.HasOrigin != true) return "Not evaluated";
+        if (target.Kind is "room" or "subroom") return evaluation.Reached.Contains(target.Id) ? "Reached" : "Not reached";
+        var row = snapshot!.Rows.First(x => x.Id == target.Id && x.Kind == target.Kind);
+        var result = evaluation.Rows[(target.Kind, target.Id)];
+        return result.Available ? "Available" : row.Requirement.Expression is null || result.Leaves.Values.Any(x => x.Unresolved) || result.Access == "Unresolved subroom assignment" ? "Unresolved" : "Blocked";
+    }
+    private static string StatusIcon(string status) => status switch
+    {
+        "Available" or "Reached" => "fa-solid fa-circle-check audit-status-passed",
+        "Unresolved" => "fa-solid fa-circle-exclamation audit-status-unresolved",
+        "Not evaluated" => "fa-regular fa-circle",
+        _ => "fa-solid fa-circle-minus"
+    };
+    private Task OwnedInputAsync(long owner, Func<Task> action) => !disposed && owner == generation && !loading && !restoring ? action() : Task.CompletedTask;
+    private Task ActChangedAsync(ChangeEventArgs e) { scenario.Act = int.TryParse(e.Value?.ToString(), out var act) && act is >= 1 and <= 3 ? act : 1; return ChangedAsync(); }
+    private Task SoulModeChangedAsync(bool on) { scenario.SoulRandomizer = on; return ChangedAsync(); }
+    private Task FactChangedAsync(string key, ChangeEventArgs e) => SetFactAsync(key, e.Value is true);
+    private Task SetFactAsync(string key, bool value) { RoomAuditEvaluator.SetFact(scenario, key, value); return ChangedAsync(); }
+    private Task AllChangedAsync(string movement, string[] directions, ChangeEventArgs e)
+    { foreach (var direction in directions) RoomAuditEvaluator.SetFact(scenario, $"move:{movement}:{direction}", e.Value is true); return ChangedAsync(); }
+    private Task LevelChangedAsync(string key, ChangeEventArgs e)
+    { scenario.Levels[key] = int.TryParse(e.Value?.ToString(), out var level) && level is >= 0 and <= 4 ? level : 0; return ChangedAsync(); }
+    private Task ResetAsync() { scenario = evaluator!.Reconcile(null); return ChangedAsync(); }
+    private async Task ChangedAsync()
+    {
+        if (disposed || evaluator is null) return;
+        evaluation = evaluator.Evaluate(scenario);
+        var owner = generation;
+        if (storage is null) { notice = "Scenario storage is unavailable; inputs last only while this page stays open."; return; }
+        try
+        {
+            var saved = await storage.InvokeAsync<bool>("write", StorageKey, JsonSerializer.Serialize(scenario));
+            if (!saved && owner == generation && !disposed) notice = "Scenario storage is unavailable; inputs last only while this page stays open.";
+        }
+        catch (JSException) { if (owner == generation && !disposed) notice = "Scenario storage is unavailable; inputs last only while this page stays open."; }
+    }
+    public async ValueTask DisposeAsync()
+    {
+        disposed = true; generation++; loadCancellation?.Cancel(); loadCancellation?.Dispose();
+        if (storage is not null) try { await storage.DisposeAsync(); } catch (JSDisconnectedException) { }
+    }
+    private sealed record StorageRead(string? Value, string? Notice);
+}

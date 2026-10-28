@@ -1,0 +1,10 @@
+<li class="@(Evidence.Unresolved ? "audit-unresolved" : Evidence.Passed ? "audit-passed" : "audit-unmet")">
+    <span>@Evidence.Label — @(Evidence.Unresolved ? "unresolved" : Evidence.Passed ? "passed" : "unmet")</span>
+    @if (Evidence.Children.Count > 0)
+    {
+        <ul aria-label="@(Evidence.Alternatives ? "OR alternatives" : "AND prerequisites")">
+            @foreach (var child in Evidence.Children) { <AuditPrerequisiteView Evidence="child" /> }
+        </ul>
+    }
+</li>
+@code { [Parameter, EditorRequired] public AuditPrerequisite Evidence { get; set; } = null!; }

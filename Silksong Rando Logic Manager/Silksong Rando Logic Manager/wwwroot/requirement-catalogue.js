@@ -43,11 +43,18 @@ window.requirementCatalogueDrag = (() => {
             "[{crest}] {predicate} {direction}": ["crest", "direction"], "{difficulty} [{crest}] {predicate}": ["difficulty", "crest"],
             "[{crest?}] {predicate} {direction}": ["crest", "direction"],
             "{difficulty} [{crest?}] {predicate}": ["difficulty", "crest"],
-            "{difficulty} [{method}] {predicate}": ["difficulty", "method"]
+            "{difficulty} [{method}] {predicate}": ["difficulty", "method"],
+            "{predicate} {quantity?}": ["quantity"],
+            "{predicate} [{direction}] {quantity?}": ["direction", "quantity"],
+            "{predicate} [{direction?}] {quantity?}": ["direction", "quantity"],
+            "{difficulty} {predicate} {quantity?}": ["difficulty", "quantity"],
+            "{difficulty} {predicate} {quantity}": ["difficulty", "quantity"],
+            "{difficulty} [{method}] {predicate} {quantity?}": ["difficulty", "method", "quantity"]
         }[syntax];
         if (!required) return "Input syntax is not supported.";
         if (syntax === "{difficulty} [{crest?}] {predicate}" && /\[\{(?:difficulty|crest)\}\]/u.test(output)) return "Output placeholders must not use input list brackets.";
         if (syntax === "{difficulty} [{method}] {predicate}" && /\[\{(?:difficulty|method)\}\]/u.test(output)) return "Output placeholders must not use input list brackets.";
+        if (["{predicate} {quantity?}", "{predicate} [{direction}] {quantity?}", "{difficulty} {predicate} {quantity?}", "{difficulty} {predicate} {quantity}", "{difficulty} [{method}] {predicate} {quantity?}", "{predicate} [{direction?}] {quantity?}"].includes(syntax) && /\[\{(?:quantity|difficulty|direction|method)\}\]/u.test(output)) return "Output placeholders must not use input list brackets.";
         const tokens = [];
         for (let index = 0; index < output.length; index++) {
             if (output[index] === "}") return "Output syntax has an unmatched closing brace.";

@@ -109,7 +109,8 @@
                                 }
                             </div>
                         }
-                            <RoomFieldEvidenceTable Fields="DistributedEvidencePresentation.RoomScalars.Select(name => comparison.TopLevelFields.Single(item => item.FieldName == name)).ToArray()" />
+                            <h3>image settings</h3>
+                            <RoomFieldEvidenceTable Comparison="comparison" Choice="ImageChoice(comparison.RoomId)" ChoicesDisabled="ChildChoicesDisabled" ChoiceChanged="ChooseImage" />
                             @if (RequiresOriginalChoice(comparison))
                             {
                                 <fieldset disabled="@ChildChoicesDisabled"><legend>Uploaded original differs</legend>
@@ -308,7 +309,7 @@
                 view.CurrentComparison = fresh.Comparison;
                 view.Reviews[view.RoomIndex] = fresh.Comparison;
                 ResetChildPlan(fresh.Comparison);
-                view.RoomStatuses[fresh.Comparison.RoomId] = new("Room import was not applied.", "The room changed after this comparison was loaded. The comparison was refreshed and this room's child choices were reset to incoming defaults.");
+                view.RoomStatuses[fresh.Comparison.RoomId] = new("Room import was not applied.", "The room changed after this comparison was loaded. The comparison was refreshed: image settings and original choices are unresolved, child choices were reset to incoming defaults, and view mode was reset to diff.");
                 fullDetailRoomId = null;
                 return;
             }
@@ -357,7 +358,7 @@
     }
     private Task ImportRoomAsync()
     {
-        if (view?.CurrentComparison is not { } comparison) return Task.CompletedTask;
+        if (!CanImportRoom || view?.CurrentComparison is not { } comparison) return Task.CompletedTask;
         if (comparison.Kind == DistributedRoomComparisonKind.New)
             return DecideAsync(new ImportIncomingRoom(comparison.RoomId));
         if (comparison.Kind == DistributedRoomComparisonKind.Changed && view.ChildPlans.TryGetValue(comparison.RoomId, out var choices))
@@ -365,7 +366,7 @@
             var decisions = ChildDifferences(comparison)
                 .Select(item => new DistributedChildDecision(item.Key.Category, item.Key.EntityId, item.Evidence, choices[item.Key]))
                 .ToArray();
-            return DecideAsync(new ImportChangedRoom(comparison.RoomId, new(comparison.RoomId, decisions), OriginalChoice(comparison.RoomId)));
+            return DecideAsync(new ImportChangedRoom(comparison.RoomId, new(comparison.RoomId, decisions), ImageChoice(comparison.RoomId), RequiresOriginalChoice(comparison) ? OriginalChoice(comparison.RoomId) : null));
         }
         return Task.CompletedTask;
     }
@@ -450,7 +451,10 @@
     private bool CanGoNext => view is not null && !busy && view.Failure is null && view.Started && !view.Completed && view.RoomIndex + 1 < view.RoomIds.Count;
     private bool CanKeepMaster => !busy && view?.Failure is null && HasCurrentUndecidedComparison && view!.CurrentComparison!.Kind == DistributedRoomComparisonKind.Changed;
     private bool CanSkipRoom => !busy && view?.Failure is null && HasCurrentUndecidedComparison && view!.CurrentComparison!.Kind == DistributedRoomComparisonKind.New;
-    private bool CanImportRoom => !busy && view?.Failure is null && HasCurrentUndecidedComparison && view!.CurrentComparison!.Kind is DistributedRoomComparisonKind.New or DistributedRoomComparisonKind.Changed;
+    private bool CanImportRoom => !busy && view?.Failure is null && HasCurrentUndecidedComparison
+        && view!.CurrentComparison is { Kind: DistributedRoomComparisonKind.New or DistributedRoomComparisonKind.Changed } comparison
+        && (!DistributedRoomImageComparison.RequiresChoice(comparison) || ImageChoice(comparison.RoomId) is not null)
+        && (!RequiresOriginalChoice(comparison) || OriginalChoice(comparison.RoomId) is not null);
     private bool CanKeepOmittedRooms => !busy && view?.Failure is null && view?.Sweep is not null;
     private bool CanArchiveOmittedRooms => CanKeepOmittedRooms;
     private bool CanGenerateSceneImages => !busy && view is { Completed: true, State: not null };
@@ -484,13 +488,21 @@
 
     private void ResetChildPlan(DistributedRoomComparison comparison)
     {
-        originalChoices.Remove(comparison.RoomId);
+        view!.ImageChoices.Remove(comparison.RoomId);
+        view.OriginalChoices.Remove(comparison.RoomId);
         view!.ChildPlans[comparison.RoomId] = ChildDifferences(comparison).ToDictionary(x => x.Key, _ => DistributedChildChoice.Incoming);
     }
-    private readonly Dictionary<Guid, DistributedOriginalChoice> originalChoices = [];
-    private DistributedOriginalChoice? OriginalChoice(Guid roomId) => originalChoices.TryGetValue(roomId, out var choice) ? choice : null;
-    private static bool RequiresOriginalChoice(DistributedRoomComparison comparison) => comparison.Kind == DistributedRoomComparisonKind.Changed && comparison.TopLevelFields.Any(x => x.FieldName == "sceneImageOriginalHash" && x.Evidence != DistributedComparisonEvidence.Neutral);
-    private void ChooseOriginal(Guid roomId, DistributedOriginalChoice choice) { if (!ChildChoicesDisabled) originalChoices[roomId] = choice; }
+    private DistributedImageChoice? ImageChoice(Guid roomId) => view!.ImageChoices.TryGetValue(roomId, out var choice) ? choice : null;
+    private DistributedOriginalChoice? OriginalChoice(Guid roomId) => view!.OriginalChoices.TryGetValue(roomId, out var choice) ? choice : null;
+    private bool RequiresOriginalChoice(DistributedRoomComparison comparison) => DistributedRoomImageComparison.RequiresChoice(comparison)
+        && ImageChoice(comparison.RoomId) == DistributedImageChoice.Incoming
+        && comparison.TopLevelFields.Any(x => x.FieldName == "sceneImageOriginalHash" && x.Evidence != DistributedComparisonEvidence.Neutral);
+    private void ChooseImage(DistributedImageChoice choice)
+    {
+        if (!ChildChoicesDisabled && view?.CurrentComparison is { } comparison && DistributedRoomImageComparison.RequiresChoice(comparison))
+            view.ImageChoices[comparison.RoomId] = choice;
+    }
+    private void ChooseOriginal(Guid roomId, DistributedOriginalChoice choice) { if (!ChildChoicesDisabled) view!.OriginalChoices[roomId] = choice; }
 
     private static IEnumerable<(DistributedChildDecisionKey Key, DistributedComparisonEvidence Evidence)> ChildDifferences(DistributedRoomComparison comparison)
     {
@@ -529,6 +541,8 @@
         public Dictionary<int, DistributedRoomComparison> Reviews { get; } = [];
         public HashSet<int> DecidedRoomIndexes { get; } = [];
         public Dictionary<Guid, Dictionary<DistributedChildDecisionKey, DistributedChildChoice>> ChildPlans { get; } = [];
+        public Dictionary<Guid, DistributedImageChoice> ImageChoices { get; } = [];
+        public Dictionary<Guid, DistributedOriginalChoice> OriginalChoices { get; } = [];
         public Dictionary<Guid, RoomStatus> RoomStatuses { get; } = [];
     }
 }

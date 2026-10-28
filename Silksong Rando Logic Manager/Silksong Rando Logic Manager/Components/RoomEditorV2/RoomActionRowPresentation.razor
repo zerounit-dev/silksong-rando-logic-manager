@@ -1,7 +1,7 @@
 @using Silksong_Rando_Logic_Manager.Components.RoomEditorV2.Contracts
 
 <div class="document-action-row">
-    <RoomNavigationContextControlsPresentation View="NavigationContext" BackToMap="BackToMap" ToggleMapContext="ToggleMapContext" />
+    <RoomNavigationContextControlsPresentation View="NavigationContext" BackToMap="BackToMap" AuditRoom="AuditRoom" ToggleMapContext="ToggleMapContext" />
     <RoomLifecycleContentControlsPresentation View="LifecycleContent" ExportLinks="ExportLinks" ToggleArchivedChildren="ToggleArchivedChildren" Intent="LifecycleContentIntent" Archive="Archive" Restore="Restore" PermanentDelete="PermanentDelete" />
 </div>
 
@@ -10,6 +10,7 @@
     [Parameter, EditorRequired] public RoomLifecycleContentControlsView LifecycleContent { get; set; } = null!;
     [Parameter, EditorRequired] public RoomExportLinksView ExportLinks { get; set; } = null!;
     [Parameter] public EventCallback BackToMap { get; set; }
+    [Parameter] public EventCallback AuditRoom { get; set; }
     [Parameter] public EventCallback ToggleMapContext { get; set; }
     [Parameter] public EventCallback ToggleArchivedChildren { get; set; }
     [Parameter] public EventCallback<RoomLifecycleContentControlsIntent> LifecycleContentIntent { get; set; }

@@ -1,5 +1,5 @@
 ﻿@rendermode InteractiveServer
-@implements IDisposable
+@implements IAsyncDisposable
 @inject LogicCatalogService Catalog
 @inject NavigationManager Navigation
 @inject WorkspaceChangeNotifier WorkspaceChanges
@@ -8,7 +8,8 @@
 @using Silksong_Rando_Logic_Manager.Services
 @using System.Text
 
-<div class="sidebar-layout">
+@{ sidebarViewVersion++; }
+<div class="sidebar-layout" @ref="sidebarRoot" data-sidebar-view="@sidebarViewVersion" data-sidebar-search="@AnySearchIsActive.ToString().ToLowerInvariant()">
     <div class="nav-header">
         <a class="nav-title" href="/">Silksong Logic</a>
         <input class="search-entry" placeholder="search groups or rooms" aria-label="Search groups or rooms" @bind="searchText" @bind:event="oninput" autocomplete="off" />
@@ -39,18 +40,21 @@ else
         @if (ungroupedRooms.Count > 0)
         {
             <section class="room-group">
-                <div class="group-heading" @ondragover:preventDefault @ondragover="(() => SetDropTarget(null, ungroupedRooms.Count(x => !x.IsArchived)))" @ondrop="(() => DropRoomAsync(null, ungroupedRooms.Count(x => !x.IsArchived)))">
+                <div class="group-heading" data-sidebar-room-target="" data-sidebar-room-index="@ungroupedRooms.Count(x => !x.IsArchived)">
                     <span class="group-label @StatusClass(GroupStatus(null))">Ungrouped</span>
                     <button class="rename-group-button icon-button" type="button" title="Auto-match ungrouped rooms" aria-label="Auto-match ungrouped rooms" @onclick="AutoMatchUngroupedRoomsAsync"><i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i></button>
                 </div>
-                <button class="new-page-button page-list-action" type="button" @onclick="(() => CreateRoomAsync(null))" aria-label="Add ungrouped page"><i class="fa-solid fa-file-circle-plus" aria-hidden="true"></i> page</button>
+                @if (!AnySearchIsActive)
+                {
+                    <button class="new-page-button page-list-action" type="button" @onclick="(() => CreateRoomAsync(null))" aria-label="Add ungrouped page"><i class="fa-solid fa-file-circle-plus" aria-hidden="true"></i> page</button>
+                }
                 @for (var index = 0; index < ungroupedRooms.Count(x => !x.IsArchived); index++)
                 {
                     var room = ungroupedRooms.Where(x => !x.IsArchived).ElementAt(index);
-                    <div class="@DropLineClass(null, index)" aria-hidden="true" @ondragover:preventDefault @ondragover:stopPropagation @ondragover="(() => SetDropTarget(null, index))" @ondrop:stopPropagation @ondrop="(() => DropRoomAsync(null, index))"></div>
-                    <a class="@RoomLinkClass(room)" href="@($"rooms/{room.Id}")" title="@RoomLinkLabel(room)" aria-label="@RoomLinkLabel(room)" draggable="true" @ondragstart="(() => StartDrag(room.Id))" @ondragend="ClearDropTarget" @ondragover:preventDefault @ondragover="(() => SetDropTarget(null, index))" @ondrop="(() => DropRoomAsync(null, index))">@RoomImageSlot(room)<span class="room-link-name">@room.FriendlyName</span></a>
+                    <div class="drop-line" aria-hidden="true" data-sidebar-room-target="" data-sidebar-room-index="@index"></div>
+                    <a class="@RoomLinkClass(room)" href="@($"rooms/{room.Id}")" title="@RoomLinkLabel(room)" aria-label="@RoomLinkLabel(room)" draggable="@(!AnySearchIsActive ? "true" : "false")" data-sidebar-room="@room.Id" data-sidebar-room-target="" data-sidebar-room-index="@index">@RoomImageSlot(room)<span class="room-link-name">@room.FriendlyName</span></a>
                 }
-                <div class="@DropLineClass(null, ungroupedRooms.Count(x => !x.IsArchived))" aria-hidden="true" @ondragover:preventDefault @ondragover:stopPropagation @ondragover="(() => SetDropTarget(null, ungroupedRooms.Count(x => !x.IsArchived)))" @ondrop:stopPropagation @ondrop="(() => DropRoomAsync(null, ungroupedRooms.Count(x => !x.IsArchived)))"></div>
+                <div class="drop-line" aria-hidden="true" data-sidebar-room-target="" data-sidebar-room-index="@ungroupedRooms.Count(x => !x.IsArchived)"></div>
                 @if (showArchivedRooms && ungroupedRooms.Any(x => x.IsArchived))
                 {
                     <div class="archived-section-label">[archived]</div>
@@ -72,21 +76,24 @@ else
                 continue;
             }
             <section class="room-group">
-                <div class="@GroupHeadingClass(groupDropIndex)" draggable="true" @ondragstart="(() => StartGroupDrag(group.Id))" @ondragend="ClearGroupDropTarget" @ondragover:preventDefault @ondragover="(() => HandleGroupHeadingDragOver(groupDropIndex, group.Id, groupRooms.Count(x => !x.IsArchived)))" @ondrop="(() => DropOnGroupHeadingAsync(groupDropIndex, group.Id, groupRooms.Count(x => !x.IsArchived)))">
+                <div class="group-heading" draggable="@(!AnySearchIsActive ? "true" : "false")" data-sidebar-group="@group.Id" data-sidebar-group-index="@groupDropIndex" data-sidebar-room-target="@group.Id" data-sidebar-room-index="@groupRooms.Count(x => !x.IsArchived)">
                     <button class="group-label @StatusClass(GroupStatus(group.Id))" type="button" @onclick="(() => ToggleGroupAsync(group.Id))" aria-expanded="@(!IsEffectivelyCollapsed(group.Id))"><span class="group-toggle-icon" aria-hidden="true"><i class="fa-solid @(IsEffectivelyCollapsed(group.Id) ? "fa-chevron-right" : "fa-chevron-down")"></i></span>@group.FriendlyName</button>
                     <button class="rename-group-button icon-button" type="button" title="Edit @group.FriendlyName" @onclick="(() => OpenGroupEditorAsync(group.Id))" aria-label="Edit @group.FriendlyName"><i class="fa-solid fa-pen-to-square" aria-hidden="true"></i></button>
                 </div>
                 @if (!IsEffectivelyCollapsed(group.Id))
                 {
-                    <button class="new-page-button page-list-action" type="button" @onclick="(() => CreateRoomAsync(group.Id))"><i class="fa-solid fa-file-circle-plus" aria-hidden="true"></i> page</button>
+                    @if (!AnySearchIsActive)
+                    {
+                        <button class="new-page-button page-list-action" type="button" @onclick="(() => CreateRoomAsync(group.Id))"><i class="fa-solid fa-file-circle-plus" aria-hidden="true"></i> page</button>
+                    }
                     @for (var index = 0; index < groupRooms.Count(x => !x.IsArchived); index++)
                     {
                         var room = groupRooms.Where(x => !x.IsArchived).ElementAt(index);
                         var dropIndex = index;
-                        <div class="@DropLineClass(group.Id, dropIndex)" aria-hidden="true" @ondragover:preventDefault @ondragover:stopPropagation @ondragover="(() => SetDropTarget(group.Id, dropIndex))" @ondrop:stopPropagation @ondrop="(() => DropRoomAsync(group.Id, dropIndex))"></div>
-                        <a class="@RoomLinkClass(room)" href="@($"rooms/{room.Id}")" title="@RoomLinkLabel(room)" aria-label="@RoomLinkLabel(room)" draggable="true" @ondragstart="(() => StartDrag(room.Id))" @ondragend="ClearDropTarget" @ondragover:preventDefault @ondragover="(() => SetDropTarget(group.Id, dropIndex))" @ondrop="(() => DropRoomAsync(group.Id, dropIndex))">@RoomImageSlot(room)<span class="room-link-name">@GroupedRoomLinkText(group, room)</span></a>
+                        <div class="drop-line" aria-hidden="true" data-sidebar-room-target="@group.Id" data-sidebar-room-index="@dropIndex"></div>
+                        <a class="@RoomLinkClass(room)" href="@($"rooms/{room.Id}")" title="@RoomLinkLabel(room)" aria-label="@RoomLinkLabel(room)" draggable="@(!AnySearchIsActive ? "true" : "false")" data-sidebar-room="@room.Id" data-sidebar-room-target="@group.Id" data-sidebar-room-index="@dropIndex">@RoomImageSlot(room)<span class="room-link-name">@GroupedRoomLinkText(group, room)</span></a>
                     }
-                    <div class="@DropLineClass(group.Id, groupRooms.Count(x => !x.IsArchived))" aria-hidden="true" @ondragover:preventDefault @ondragover:stopPropagation @ondragover="(() => SetDropTarget(group.Id, groupRooms.Count(x => !x.IsArchived)))" @ondrop:stopPropagation @ondrop="(() => DropRoomAsync(group.Id, groupRooms.Count(x => !x.IsArchived)))"></div>
+                    <div class="drop-line" aria-hidden="true" data-sidebar-room-target="@group.Id" data-sidebar-room-index="@groupRooms.Count(x => !x.IsArchived)"></div>
                     @if (showArchivedRooms && groupRooms.Any(x => x.IsArchived))
                     {
                         <div class="archived-section-label">[archived]</div>
@@ -98,7 +105,7 @@ else
                 }
             </section>
         }
-        <div class="@GroupDropLineClass(workspace.RoomGroups.Count)" aria-hidden="true" @ondragover:preventDefault @ondragover:stopPropagation @ondragover="(() => SetGroupDropTarget(workspace.RoomGroups.Count))" @ondrop:stopPropagation @ondrop="(() => DropRoomGroupAsync(workspace.RoomGroups.Count))"></div>
+        <div class="group-drop-line" aria-hidden="true" data-sidebar-group-index="@workspace.RoomGroups.Count"></div>
         @if (groupEditDraft is not null)
         {
             <div class="confirmation-backdrop">
@@ -167,11 +174,12 @@ else
 
 @code {
     private SidebarWorkspaceSnapshot? workspace;
-    private Guid? draggedRoomId;
-    private Guid? draggedRoomGroupId;
-    private Guid? dropGroupId;
-    private int? dropIndex;
-    private int? groupDropIndex;
+    private ElementReference sidebarRoot;
+    private IJSObjectReference? sidebarDragModule, sidebarDragOwner;
+    private DotNetObjectReference<NavMenu>? sidebarDragCallback;
+    private readonly string sidebarOwnerId = Guid.NewGuid().ToString();
+    private long sidebarViewVersion;
+    private bool sidebarOwnerInitializing, sidebarDisposed, sidebarMovePending;
     private bool focusGroupNameEditor;
     private ElementReference groupFriendlyNameInput;
     private readonly HashSet<Guid> collapsedGroupIds = [];
@@ -245,6 +253,8 @@ else
 
     private async Task ReloadAsync()
     {
+        // Retire callbacks from the displayed projection before an async replacement.
+        sidebarViewVersion++;
         workspace = await Catalog.GetWorkspaceAsync();
         if (!initialized)
         {
@@ -278,7 +288,8 @@ else
     private bool IsSelectedRoom(Guid roomId)
     {
         var path = Navigation.ToBaseRelativePath(Navigation.Uri).Split('?', '#')[0].TrimEnd('/');
-        return string.Equals(path, $"rooms/{roomId}", StringComparison.OrdinalIgnoreCase);
+        return string.Equals(path, $"rooms/{roomId}", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(path, $"rooms/{roomId}/audit", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string? RoomImageReason(SidebarRoom room) => room.ImageState switch
@@ -360,36 +371,56 @@ else
         WorkspaceChanges.NotifyChanged();
     });
 
-    private Task DropRoomAsync(Guid? groupId, int index) => ExecuteAsync(async () =>
+    public sealed record SidebarMoveIntent(string Owner, long ViewVersion, string Family, Guid SourceId, Guid? GroupId, int Index);
+
+    [JSInvokable]
+    public async Task SubmitSidebarMoveAsync(SidebarMoveIntent intent)
     {
-        if (draggedRoomId is not { } roomId)
+        if (sidebarDisposed || sidebarMovePending || workspace is null || AnySearchIsActive
+            || intent.Owner != sidebarOwnerId || intent.ViewVersion != sidebarViewVersion || intent.Index < 0)
         {
             return;
         }
 
-        var committedRooms = await Catalog.MoveRoomAsync(roomId, groupId, index);
-        ClearDropTarget();
-        ApplyCommittedRoomMove(committedRooms);
-        WorkspaceChanges.NotifyChanged(WorkspaceChangeScope.None);
-        await InvokeAsync(StateHasChanged);
-    });
-
-    private Task DropRoomGroupAsync(int index) => ExecuteAsync(async () =>
-    {
-        if (draggedRoomGroupId is not { } groupId)
+        var isRoom = intent.Family == "room";
+        if (isRoom)
         {
-            return;
+            if (!workspace.Rooms.Any(room => room.Id == intent.SourceId && !room.IsArchived)
+                || intent.GroupId is { } destination && !workspace.RoomGroups.Any(group => group.Id == destination)
+                || intent.Index > workspace.Rooms.Count(room => room.RoomGroupId == intent.GroupId && !room.IsArchived)) return;
         }
+        else if (intent.Family != "group" || intent.GroupId is not null
+            || !workspace.RoomGroups.Any(group => group.Id == intent.SourceId)
+            || intent.Index > workspace.RoomGroups.Count) return;
 
-        var committedGroups = await Catalog.MoveRoomGroupAsync(groupId, index);
-        ClearGroupDropTarget();
-        workspace = workspace! with { RoomGroups = committedGroups };
-        WorkspaceChanges.NotifyChanged(WorkspaceChangeScope.None);
-        await InvokeAsync(StateHasChanged);
-    });
+        sidebarMovePending = true;
+        var admittedWorkspace = workspace;
+        try
+        {
+            await ExecuteAsync(async () =>
+            {
+                if (isRoom)
+                {
+                    var committedRooms = await Catalog.MoveRoomAsync(intent.SourceId, intent.GroupId, intent.Index);
+                    if (sidebarDisposed || !ReferenceEquals(workspace, admittedWorkspace)) return;
+                    ApplyCommittedRoomMove(committedRooms);
+                }
+                else
+                {
+                    var committedGroups = await Catalog.MoveRoomGroupAsync(intent.SourceId, intent.Index);
+                    if (sidebarDisposed || !ReferenceEquals(workspace, admittedWorkspace)) return;
+                    workspace = admittedWorkspace with { RoomGroups = committedGroups };
+                }
 
-    private Task DropOnGroupHeadingAsync(int groupIndex, Guid groupId, int roomDropIndex) =>
-        draggedRoomGroupId is not null ? DropRoomGroupAsync(groupIndex) : DropRoomAsync(groupId, roomDropIndex);
+                WorkspaceChanges.NotifyChanged(WorkspaceChangeScope.None);
+                await InvokeAsync(StateHasChanged);
+            });
+        }
+        finally
+        {
+            sidebarMovePending = false;
+        }
+    }
 
     private void ApplyCommittedRoomMove(IReadOnlyList<Room> committedRooms)
     {
@@ -407,66 +438,6 @@ else
                 .ToList()
         };
     }
-
-    private void StartDrag(Guid roomId) => draggedRoomId = roomId;
-
-    private void StartGroupDrag(Guid groupId)
-    {
-        draggedRoomId = null;
-        draggedRoomGroupId = groupId;
-    }
-
-    private void SetDropTarget(Guid? groupId, int index)
-    {
-        if (dropGroupId == groupId && dropIndex == index)
-        {
-            return;
-        }
-
-        dropGroupId = groupId;
-        dropIndex = index;
-    }
-
-    private void ClearDropTarget()
-    {
-        draggedRoomId = null;
-        dropGroupId = null;
-        dropIndex = null;
-    }
-
-    private void SetGroupDropTarget(int index)
-    {
-        if (groupDropIndex != index)
-        {
-            groupDropIndex = index;
-        }
-    }
-
-    private void HandleGroupHeadingDragOver(int groupIndex, Guid groupId, int roomDropIndex)
-    {
-        if (draggedRoomGroupId is not null)
-        {
-            SetGroupDropTarget(groupIndex);
-            return;
-        }
-
-        SetDropTarget(groupId, roomDropIndex);
-    }
-
-    private void ClearGroupDropTarget()
-    {
-        draggedRoomGroupId = null;
-        groupDropIndex = null;
-    }
-
-    private string DropLineClass(Guid? groupId, int index) =>
-        draggedRoomId is not null && dropGroupId == groupId && dropIndex == index ? "drop-line active" : "drop-line";
-
-    private string GroupDropLineClass(int index) =>
-        draggedRoomGroupId is not null && groupDropIndex == index ? "group-drop-line active" : "group-drop-line";
-
-    private string GroupHeadingClass(int index) =>
-        draggedRoomGroupId is not null && groupDropIndex == index ? "group-heading group-drop-active" : "group-heading";
 
     private bool IsCollapsed(Guid groupId) => collapsedGroupIds.Contains(groupId);
 
@@ -596,6 +567,8 @@ else
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
+        await EnsureSidebarDragOwnerAsync();
+        if (sidebarDisposed) return;
         if (!sidebarStateRestored)
         {
             sidebarStateRestored = true;
@@ -668,7 +641,7 @@ else
     {
         var path = Navigation.ToBaseRelativePath(uri).Split('?', '#')[0].Trim('/');
         var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
-        return segments.Length == 2
+        return (segments.Length == 2 || segments.Length == 3 && string.Equals(segments[2], "audit", StringComparison.OrdinalIgnoreCase))
             && string.Equals(segments[0], "rooms", StringComparison.OrdinalIgnoreCase)
             && Guid.TryParse(segments[1], out var roomId)
                 ? roomId
@@ -724,10 +697,59 @@ else
         "saveSidebarSessionState",
         new SidebarSessionState(showArchivedRooms, collapsedGroupIds.ToArray())).AsTask();
 
-    public void Dispose()
+    private async Task EnsureSidebarDragOwnerAsync()
     {
+        if (sidebarDisposed || sidebarOwnerInitializing || sidebarDragOwner is not null) return;
+        sidebarOwnerInitializing = true;
+        try
+        {
+            var module = sidebarDragModule ?? await JS.InvokeAsync<IJSObjectReference>("import", "./sidebar-drag.js");
+            if (sidebarDisposed) { await module.DisposeAsync(); return; }
+            sidebarDragModule = module;
+            sidebarDragCallback ??= DotNetObjectReference.Create(this);
+            var owner = await module.InvokeAsync<IJSObjectReference>("mount", sidebarRoot, sidebarDragCallback, sidebarOwnerId);
+            if (sidebarDisposed)
+            {
+                await ReleaseSidebarDragOwnerAsync(owner);
+                return;
+            }
+            sidebarDragOwner = owner;
+        }
+        catch (JSDisconnectedException) { }
+        catch (ObjectDisposedException) when (sidebarDisposed) { }
+        catch (Exception exception) { if (!sidebarDisposed) Diagnostics.Show(exception.ToString()); }
+        finally { sidebarOwnerInitializing = false; }
+    }
+
+    private static async Task ReleaseSidebarDragOwnerAsync(IJSObjectReference owner)
+    {
+        try { await owner.InvokeVoidAsync("dispose"); }
+        catch (JSDisconnectedException) { }
+        catch (ObjectDisposedException) { }
+        finally
+        {
+            try { await owner.DisposeAsync(); }
+            catch (JSDisconnectedException) { }
+            catch (ObjectDisposedException) { }
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        sidebarDisposed = true;
         WorkspaceChanges.Changed -= HandleWorkspaceChanged;
         Navigation.LocationChanged -= HandleLocationChanged;
+        try
+        {
+            if (sidebarDragOwner is not null) await ReleaseSidebarDragOwnerAsync(sidebarDragOwner);
+        }
+        finally
+        {
+            sidebarDragCallback?.Dispose();
+            try { if (sidebarDragModule is not null) await sidebarDragModule.DisposeAsync(); }
+            catch (JSDisconnectedException) { }
+            catch (ObjectDisposedException) { }
+        }
     }
 
     private sealed record SidebarSessionState(bool ShowArchivedRooms, IReadOnlyList<Guid> CollapsedGroupIds);

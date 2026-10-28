@@ -1,0 +1,16 @@
+@if (Row.Requirement.Expression is not { } expression)
+{ <p class="audit-unresolved">Unresolved requirement: @string.Join("; ", Row.Requirement.Reasons)</p> }
+else
+{
+    <details class="audit-own-gate" open="@Expanded"><summary>Requirement · @(Result.Leaves.Values.Any(x => x.Unresolved) ? "unresolved" : Result.GatePassed ? "passed" : "unmet")</summary>
+        <AuditExpressionView Expression="expression" Requirement="Row.Requirement" Results="Result.Leaves" Evaluator="Evaluator" Evaluation="Evaluation" InspectCheck="InspectCheck" />
+    </details>
+}
+@code {
+    [Parameter, EditorRequired] public AuditRow Row { get; set; } = null!;
+    [Parameter, EditorRequired] public AuditRowResult Result { get; set; } = null!;
+    [Parameter, EditorRequired] public RoomAuditEvaluator Evaluator { get; set; } = null!;
+    [Parameter, EditorRequired] public AuditEvaluation Evaluation { get; set; } = null!;
+    [Parameter] public EventCallback<Guid> InspectCheck { get; set; }
+    [Parameter] public bool Expanded { get; set; }
+}

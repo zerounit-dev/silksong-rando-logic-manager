@@ -26,7 +26,7 @@ else
     var tableOwnerGeneration = childInteractionOwnerGeneration;
     <div @ref="pageRoot" class="room-editor-v2" data-v2-dialog-open="@SceneDialogOpen.ToString().ToLowerInvariant()">
         <article class="room-document" aria-label="Room editor">
-            <RoomHeaderPresentation View="view.Header" Map="mapView" MapOwnerGeneration="@(mapLoads?.AppliedGeneration ?? 0)" Scene="view.Scene" Placement="placementRequest" TakePlacementFocus="TakeScenePlacementFocus" SelectedItem="selectedSceneItem" ActionBox="SceneActionBox" ActionRequested="HandleSceneActionAsync" OwnerMounted="SetSceneOwnerAsync" LayerVisibilityChanged="SetSceneLayerVisibilityAsync" SelectionChanged="SetSceneSelectionAsync" PlacementCommitted="CommitScenePlacementAsync" PlacementCancelled="CancelScenePlacementAsync" MarkerDragCommitted="CommitSceneMarkerDragAsync" SceneNudgeCommitted="CommitSceneNudgeAsync" FrameGeometryCommitted="CommitSubroomGeometryAsync" Capture="RequestSceneImageCaptureAsync" LinkedRoomActivated="NavigateLinkedMapRoomAsync" MapLinksChanged="ReloadAreaMapAfterMapLinkChangeAsync" MapLinkModalStateChanged="SetRoomMapLinkModalStateAsync" Draft="headerDraft" RefreshDiagnostic="refreshDiagnostic" Status="headerSaveStatus" ShowMapContext="showMapContext" MapContextVisibilityResolved="mapContextVisibilityResolved" BackToMap="NavigateBackToMap" ToggleMapContext="ToggleMapContextAsync" ShowArchivedChildren="showArchivedChildren" ToggleArchivedChildren="ToggleArchivedChildren" LifecycleContentIntent="HandleLifecycleContentIntentAsync" RecheckRoomLogicBusy="recheckingRoomLogic" Archive="ArchiveRoomAsync" Restore="RestoreRoomAsync" PermanentDelete="RequestRoomPermanentDeleteAsync" ExportLinks="CreateExportLinks(view.Header)" DraftChanged="SetHeaderDraft" Save="SaveHeader" />
+            <RoomHeaderPresentation AuditRoom="RequestRoomAuditAsync" View="view.Header" Map="mapView" MapOwnerGeneration="@(mapLoads?.AppliedGeneration ?? 0)" Scene="view.Scene" Placement="placementRequest" TakePlacementFocus="TakeScenePlacementFocus" SelectedItem="selectedSceneItem" ActionBox="SceneActionBox" ActionRequested="HandleSceneActionAsync" OwnerMounted="SetSceneOwnerAsync" LayerVisibilityChanged="SetSceneLayerVisibilityAsync" SelectionChanged="SetSceneSelectionAsync" PlacementCommitted="CommitScenePlacementAsync" PlacementCancelled="CancelScenePlacementAsync" MarkerDragCommitted="CommitSceneMarkerDragAsync" SceneNudgeCommitted="CommitSceneNudgeAsync" FrameGeometryCommitted="CommitSubroomGeometryAsync" Capture="RequestSceneImageCaptureAsync" LinkedRoomActivated="NavigateLinkedMapRoomAsync" MapLinksChanged="ReloadAreaMapAfterMapLinkChangeAsync" MapLinkModalStateChanged="SetRoomMapLinkModalStateAsync" Draft="headerDraft" RefreshDiagnostic="refreshDiagnostic" Status="headerSaveStatus" ShowMapContext="showMapContext" MapContextVisibilityResolved="mapContextVisibilityResolved" BackToMap="NavigateBackToMap" ToggleMapContext="ToggleMapContextAsync" ShowArchivedChildren="showArchivedChildren" ToggleArchivedChildren="ToggleArchivedChildren" LifecycleContentIntent="HandleLifecycleContentIntentAsync" RecheckRoomLogicBusy="recheckingRoomLogic" Archive="ArchiveRoomAsync" Restore="RestoreRoomAsync" PermanentDelete="RequestRoomPermanentDeleteAsync" ExportLinks="CreateExportLinks(view.Header)" DraftChanged="SetHeaderDraft" Save="SaveHeader" />
             <div class="room-document-content">
                 <RoomCommentsPresentation View="new RoomCommentsView(headerDraft?.Comments ?? view.Header.Comments)" Editable="headerSaveStatus.IsEditable" DraftChanged="SetHeaderComments" Save="SaveHeader" />
                 <SubroomTablePresentation @ref="subroomTable" RoomId="RoomId" OwnerGeneration="tableOwnerGeneration" OwnerIsCurrent="@(() => IsTableOwnerCurrent(tableOwnerRoom,tableOwnerGeneration))" View="view.Subrooms" ShowArchivedChildren="showArchivedChildren" SceneActionsAvailable="SceneTableActionsAvailable" SceneActionsUnavailableReason="@SceneTableActionsUnavailableReason" Save="SaveSubroom" Create="CreateSubroom" Reorder="ReorderSubroom" SetArchive="SetSubroomArchive" AnnotationRequested="HandleSubroomAnnotationAsync" GeometryRequested="RequestSubroomGeometryAsync" DeleteConfirmationRequested="RequestChildPermanentDeleteAsync" DeleteConfirmationCancelled="CancelChildPermanentDeleteAsync" DeleteConfirmationConfirmed="ConfirmChildPermanentDeleteAsync" FocusRequested="RequestChildFocusAsync" DraftStateChanged="@(value => SetPendingDraft(ChildTableKind.Subroom, value, tableOwnerRoom, tableOwnerGeneration))" RefreshApplied="ApplyRefreshedState" ClearDragFeedback="ClearSubroomDragFeedbackAsync" />
@@ -1680,9 +1680,14 @@ else
     private Task<bool> RequestLinkedMapRoomNavigationAsync(AreaMapSurface.LinkedMapRoomIntent intent) =>
         Task.FromResult(intent.SourceRoomId is { } sourceRoomId &&
             TryNavigateToRoom(sourceRoomId, refresh?.RefreshGeneration ?? -1, intent.TargetRoomId, intent.HostGeneration));
-    private bool TryNavigateToRoom(Guid sourceRoomId, long sourceGeneration, Guid targetRoomId, long? requiredMapGeneration)
+    private Task RequestRoomAuditAsync() => PageEventAsync(() =>
     {
-        if (targetRoomId == sourceRoomId) return false;
+        TryNavigateToRoom(RoomId, refresh?.RefreshGeneration ?? -1, RoomId, null, audit: true);
+        return Task.CompletedTask;
+    });
+    private bool TryNavigateToRoom(Guid sourceRoomId, long sourceGeneration, Guid targetRoomId, long? requiredMapGeneration, bool audit = false)
+    {
+        if (targetRoomId == sourceRoomId && !audit) return false;
         if (disposed || applicationNavigationActive || meaningfulPendingDraft || modalState is not null ||
             roomMapLinkModalState != AreaMapPanePresentation.RoomMapLinkModalState.Closed ||
             commandGate.CurrentCount == 0 || sceneActionPending || recheckingRoomLogic ||
@@ -1692,8 +1697,9 @@ else
             refresh.RefreshGeneration != sourceGeneration || refresh.View is null) return false;
         if (requiredMapGeneration is { } mapGeneration &&
             (!showMapContext || refresh.View.Header.IsArchived || mapLoads?.View is null || mapLoads.AppliedGeneration != mapGeneration)) return false;
+        if (audit && (targetRoomId != sourceRoomId || refresh.View.Header.IsArchived)) return false;
         applicationNavigationActive = true;
-        Navigation.NavigateTo($"/rooms/{targetRoomId}");
+        Navigation.NavigateTo($"/rooms/{targetRoomId}{(audit ? "/audit" : "")}");
         return true;
     }
     public async Task BeginModalTestCommitAsync()

@@ -76,7 +76,18 @@ public sealed record SkipIncomingRoom(Guid RoomId) : DistributedRoomDecisionInte
 public sealed record ImportIncomingRoom(Guid RoomId) : DistributedRoomDecisionIntent(RoomId);
 public sealed record KeepMasterRoom(Guid RoomId) : DistributedRoomDecisionIntent(RoomId);
 public enum DistributedOriginalChoice { Keep, Remove }
-public sealed record ImportChangedRoom(Guid RoomId, DistributedRoomChildPlan ChildPlan, DistributedOriginalChoice? OriginalChoice) : DistributedRoomDecisionIntent(RoomId);
+public enum DistributedImageChoice { Current, Incoming }
+public static class DistributedRoomImageComparison
+{
+    public static readonly IReadOnlyList<string> Fields = ["useSceneImage", "useUploadedSceneImage", "sceneMinX", "sceneMinY", "sceneMaxX", "sceneMaxY", "sceneImagePixelsPerUnitX", "sceneImagePixelsPerUnitY", "sceneImagePixelOffsetX", "sceneImagePixelOffsetY", "sceneImageOriginalHash", "sceneImageCropHash"];
+
+    // Use complete raw comparison evidence, including grouped/hidden constituents.
+    // Numeric tolerance and safety remain owned by the comparison service.
+    public static bool RequiresChoice(DistributedRoomComparison comparison) =>
+        comparison.Kind == DistributedRoomComparisonKind.Changed &&
+        comparison.TopLevelFields.Any(x => Fields.Contains(x.FieldName) && x.Evidence != DistributedComparisonEvidence.Neutral);
+}
+public sealed record ImportChangedRoom(Guid RoomId, DistributedRoomChildPlan ChildPlan, DistributedImageChoice? ImageChoice, DistributedOriginalChoice? OriginalChoice) : DistributedRoomDecisionIntent(RoomId);
 public sealed record DistributedImportProgress(string Stage, int Completed, int Total, string? Detail);
 public abstract record DistributedImportOutcome;
 public sealed record DistributedImportPrepared(DistributedImportPackageSummary Summary) : DistributedImportOutcome;

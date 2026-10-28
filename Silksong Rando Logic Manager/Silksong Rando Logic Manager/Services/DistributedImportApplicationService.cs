@@ -90,7 +90,7 @@ public sealed class DistributedImportApplicationService(IDbContextFactory<LogicD
 
         try
         {
-            var outcome = await ApplyReviewedRoomAsync(incoming, reviewed, (intent as ImportChangedRoom)?.ChildPlan, (intent as ImportChangedRoom)?.OriginalChoice, ct);
+            var outcome = await ApplyReviewedRoomAsync(incoming, reviewed, (intent as ImportChangedRoom)?.ChildPlan, (intent as ImportChangedRoom)?.ImageChoice, (intent as ImportChangedRoom)?.OriginalChoice, ct);
             return outcome switch
             {
                 DistributedImportRoomApplied applied => applied with { State = Decide(state, applied.RoomId) },
@@ -134,7 +134,7 @@ public sealed class DistributedImportApplicationService(IDbContextFactory<LogicD
     }
 
     // Fresh comparison and mutation intentionally share this one SQLite transaction.
-    private async Task<DistributedImportOutcome> ApplyReviewedRoomAsync(DistributedRoomDocument incoming, DistributedRoomComparison reviewed, DistributedRoomChildPlan? childPlan, DistributedOriginalChoice? originalChoice, CancellationToken ct)
+    private async Task<DistributedImportOutcome> ApplyReviewedRoomAsync(DistributedRoomDocument incoming, DistributedRoomComparison reviewed, DistributedRoomChildPlan? childPlan, DistributedImageChoice? imageChoice, DistributedOriginalChoice? originalChoice, CancellationToken ct)
     {
         using var imageAdmission = await sceneImages.AcquireLifecycleAsync(ct);
         await using var db = await contexts.CreateDbContextAsync(ct);
@@ -150,14 +150,29 @@ public sealed class DistributedImportApplicationService(IDbContextFactory<LogicD
             if (planErrors.Count != 0) return new DistributedImportRejected(planErrors);
         }
 
+        var requiresImageChoice = DistributedRoomImageComparison.RequiresChoice(fresh);
+        if (requiresImageChoice && (imageChoice is null || !Enum.IsDefined(imageChoice.Value)))
+            return new DistributedImportRejected(["Choose current or incoming image settings before accepting this room."]);
+
         var room = await db.Rooms.SingleOrDefaultAsync(x => x.Id == incoming.Id, ct);
-        var originalDiffers = room is not null && room.SceneImageOriginalHash != incoming.SceneImageOriginalHash;
+        var keepCurrentImage = requiresImageChoice && imageChoice == DistributedImageChoice.Current;
+        if (keepCurrentImage)
+            incoming = incoming with
+            {
+                UseSceneImage = room!.UseSceneImage, UseUploadedSceneImage = room.UseUploadedSceneImage,
+                SceneMinX = room.SceneMinX, SceneMinY = room.SceneMinY, SceneMaxX = room.SceneMaxX, SceneMaxY = room.SceneMaxY,
+                SceneImagePixelsPerUnitX = room.SceneImagePixelsPerUnitX, SceneImagePixelsPerUnitY = room.SceneImagePixelsPerUnitY,
+                SceneImagePixelOffsetX = room.SceneImagePixelOffsetX, SceneImagePixelOffsetY = room.SceneImagePixelOffsetY,
+                SceneImageOriginalHash = room.SceneImageOriginalHash, SceneImageCropHash = room.SceneImageCropHash
+            };
+        var originalDiffers = !keepCurrentImage && room is not null && room.SceneImageOriginalHash != incoming.SceneImageOriginalHash;
         if (originalDiffers && (originalChoice is null || !Enum.IsDefined(originalChoice.Value)))
             return new DistributedImportRejected(["Choose Keep or Remove for the uploaded original before accepting this room."]);
         var removeOriginal = originalDiffers && originalChoice == DistributedOriginalChoice.Remove;
         if (originalDiffers && originalChoice == DistributedOriginalChoice.Keep)
             incoming = incoming with { SceneImageOriginalHash = room!.SceneImageOriginalHash, UseUploadedSceneImage = room.UseUploadedSceneImage };
-        var invalidateSceneImage = room is null || CaptureStateDiffers(room, incoming) || incoming.UseSceneImage && !sceneImages.Exists(incoming.Id);
+        var missingSceneImage = incoming.UseSceneImage && !sceneImages.Exists(incoming.Id);
+        var invalidateSceneImage = !keepCurrentImage && (room is null || CaptureStateDiffers(room, incoming) || missingSceneImage);
         if (room is null) { room = new Room { Id = incoming.Id }; db.Rooms.Add(room); }
         var groupExists = incoming.RoomGroupId is { } group && await db.RoomGroups.AnyAsync(x => x.Id == group, ct);
         CopyRoom(room, incoming, groupExists ? incoming.RoomGroupId : null);
@@ -166,7 +181,9 @@ public sealed class DistributedImportApplicationService(IDbContextFactory<LogicD
         room.SceneImageCropHash = incoming.SceneImageCropHash;
         // Mark locally before commit: deletion failure must never reveal the old
         // artifact as fresh. Equivalent settings retain receiver-local state.
-        if (invalidateSceneImage) room.IsSceneImageStale = true;
+        // Retention never deletes either asset. Preserve existing missing-output
+        // flagging without clearing stale or repairing/regenerating the setup.
+        if (invalidateSceneImage || missingSceneImage) room.IsSceneImageStale = true;
         var operationUtc = timeProvider.GetUtcNow().UtcDateTime;
         if (reviewed.Kind == DistributedRoomComparisonKind.New)
             await ReplaceChildrenAsync(db, room.Id, incoming, operationUtc, ct);
