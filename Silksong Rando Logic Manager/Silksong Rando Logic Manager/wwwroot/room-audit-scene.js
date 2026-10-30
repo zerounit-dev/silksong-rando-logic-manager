@@ -91,7 +91,16 @@ export function mount(root, dotnet, owner) {
         if (button.dataset.camera === 'fit') { box = fit.slice(); scale = 1; paint(); }
         else { const r = svg.getBoundingClientRect(); zoom(button.dataset.camera === 'in' ? 1.25 : .8, r.x + r.width / 2, r.y + r.height / 2); }
     });
-    const api = { dispose() {
+    const api = { revealControl(id) {
+        if (!current()) return;
+        const control = Array.from(keyboardRoot.querySelectorAll('[id]')).find(element => element.id === id);
+        if (!control) return;
+        for (let ancestor = control.parentElement; ancestor && ancestor !== keyboardRoot; ancestor = ancestor.parentElement)
+            if (ancestor instanceof HTMLDetailsElement) ancestor.open = true;
+        const input = control.matches('input,select,button') ? control : control.querySelector('input,select,button');
+        input?.focus({ preventScroll: true });
+        control.scrollIntoView({ block: 'nearest' });
+    }, dispose() {
         if (disposed) return;
         disposed = true; release(); listeners.splice(0).forEach(remove => remove());
         if (owners.get(root) === api) owners.delete(root);

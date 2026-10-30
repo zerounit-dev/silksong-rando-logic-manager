@@ -1,112 +1,257 @@
-<section class="audit-inspector" aria-label="Destination inspection">
-    <h2>Selected destination: @Name(Target)</h2>
-    @if (StartHere.HasDelegate && Evaluator.StartFor(Target) is { } start)
-    { <button type="button" class="audit-action" @onclick="@(() => StartHere.InvokeAsync(start))">Start here</button> }
-    @if (Row(Target) is { Kind: "connection" } selectedRow)
-    {
-        var directions = Evaluator.Snapshot.Rows.Where(x => x.Kind == "connection" && string.Equals(x.Alias?.Trim(), selectedRow.Alias?.Trim(), StringComparison.OrdinalIgnoreCase)).ToArray();
-        @if (directions.Length > 1)
-        {
-            <div aria-label="Directed connection">
-                @foreach (var direction in directions)
-                { <button type="button" class="audit-approach-choice" aria-pressed="@(direction.Id == Target.Id)" @onclick="@(() => TargetSelected.InvokeAsync(new("connection", direction.Id)))">@Evaluator.RowName(direction)</button> }
-            </div>
-        }
-    }
-    <div class="audit-modes" role="group" aria-label="Inspection mode">
-        <button type="button" aria-pressed="@(!Current.Approaches)" @onclick="@(() => SetMode(false))">Route</button>
-        <button type="button" aria-pressed="@Current.Approaches" @onclick="@(() => SetMode(true))">Approaches</button>
-    </div>
-    <nav class="audit-breadcrumbs" aria-label="Inspection breadcrumbs">
-        <button type="button" disabled="@(history.Count == 1)" @onclick="@(() => ReturnTo(history.Count - 2))">Back</button>
-        @for (var i = 0; i < history.Count; i++)
-        {
-            var index = i;
-            <span aria-hidden="true"> / </span><button type="button" aria-current="@(i == history.Count - 1 ? "location" : null)" @onclick="@(() => ReturnTo(index))">@Name(history[i].Target)</button>
-        }
-    </nav>
-    @if (Current.Cycle)
-    { <p>Repeated reference: @Name(Current.Target). Cycle/reference — not a successful route. Use Back to return.</p> }
+@implements IDisposable
+@inject ILogger<AuditTargetInspector> Logger
+
+<section class="audit-inspector" aria-label="Reach a target" inert="@(Disabled ? "" : null)">
+    @if (Target is null) { <p>Select a destination to compare ways to reach it.</p> }
     else
     {
-        var focus = Current.Target;
-        var row = Row(focus);
-        var node = row is null ? focus.Id : Evaluator.SourceNode(row);
-        <h3>@Name(focus)</h3>
-        <p>@Status(focus, row)</p>
-        @if (Current.Approaches)
+        @if (history.Count > 1)
         {
-            <AuditAccessView NodeId="node" Chosen="Current.Edge" Evaluator="Evaluator" Evaluation="Evaluation" ApproachSelected="ChooseApproach" SourceSelected="FollowSource" InspectCheck="InspectCheck" />
+            <button type="button" @onclick="BackAsync">Back to @ContextName(history[^2])</button>
+            <button type="button" @onclick="ReturnAsync">Return to destination</button>
         }
-        else if (!Evaluation.HasOrigin)
-        { <p>Select origin…</p> }
-        else if (!Available(focus, row))
+        <h3>@(Current.Target.Kind == "check" ? "Activation requirements: " : "")@Name(Current.Target)</h3>
+        <AuditPointState Target="Current.Target" Evaluator="Evaluator" Evaluation="Evaluation" Scenario="Scenario" />
+        <button type="button" @onclick="@(() => RoomStateRequested.InvokeAsync(Current.Target))">Room state</button>
+        @if (!Current.Direct && !Current.Repeated && Row(Current.Target) is not null)
+        { <button type="button" @onclick="ShowOwnGateAsync">Inspect destination condition</button> }
+        @if (Current.Repeated) { <p>Repeated activation reference — use Back to return. Already activated is a separate scenario input.</p> }
+        else if (Current.Direct && Row(Current.Target) is { } direct)
         {
-            <p>No route with this scenario</p>
-            <button type="button" class="audit-action" @onclick="@(() => SetMode(true))">View approaches</button>
+            <p>Source access: @Evaluation.Rows[(direct.Kind, direct.Id)].Access</p>
+            <AuditGateFocus Row="direct" Evaluator="Evaluator" Evaluation="Evaluation" InspectCheck="InspectCheckAsync" ControlRequested="ControlRequested" />
+            <button type="button" @onclick="ViewAlternativesAsync">View routes</button>
         }
-        else if (node is { } source && Evaluation.NodeProofs.TryGetValue(source, out var proof))
+        else if (analyzing)
+        { <p role="status">Analyzing alternatives…</p><button type="button" @onclick="Cancel">Cancel</button> }
+        else if (analysisFailure is not null)
+        { <p role="status">@analysisFailure</p><button type="button" @onclick="AnalyzeAsync">Retry</button> }
+        else if (analysis is { HasOrigin: false }) { <p>Select origin…</p> }
+        else if (analysis is { } answer)
         {
-            <h4>@(row is null ? "Route" : "Route to source")</h4>
-            <AuditProofView Proof="proof" Evaluator="Evaluator" Evaluation="Evaluation" OriginLabel="OriginLabel" InspectCheck="InspectCheck" />
-        }
-        @if (row is not null)
-        {
-            <section class="audit-target-gate">
-                <h3>@(row.Kind == "connection" ? $"Own directed gate to {Evaluator.NodeName(row.DestinationId)}" : "Own requirement")</h3>
-                <AuditRequirementView @key="(row.Id, Evaluation)" Row="row" Result="OwnResult(row)" Evaluator="Evaluator" Evaluation="Evaluation" InspectCheck="InspectCheck" />
-            </section>
+            <p class="audit-condition-legend"><span class="audit-legend-met">✓ Met</span> · <span class="audit-legend-missing">✕ Missing / not matched</span> · <span class="audit-manual-tag">Manual assumption</span></p>
+            @if (answer.Unresolved.Count > 0)
+            {
+                <p class="audit-unresolved">Completeness limited by unresolved data.</p>
+                <details><summary>Unresolved branches (@answer.Unresolved.Count)</summary>
+                    @foreach (var issue in answer.Unresolved)
+                    { <p>@Evaluator.RowName(issue.Row): @issue.Reason</p><button type="button" @onclick="@(() => InspectDirectAsync(issue.Row))">Inspect condition</button> }
+                </details>
+            }
+            @if (answer.Impassable is { Count: > 0 } impassable)
+            { <details><summary>Explicitly blocked gates (@impassable.Count)</summary>@foreach (var issue in impassable) { <p>@Evaluator.RowName(issue.Row): @issue.Reason</p> }</details> }
+            @if (ChosenAlternative is not { } alternative)
+            {
+                @if (answer.Alternatives.Count == 0)
+                { <p>@(answer.Unresolved.Count > 0 ? "No resolved alternative found; unresolved branches remain." : answer.Disconnected ? "Disconnected: no directed source route from this origin." : answer.Impassable is { Count: > 0 } ? "No sufficient route; explicitly blocked gates are listed above." : "No consistent finite route from this origin (including contradictory conditions).")</p> }
+                else
+                {
+                    <p>@answer.Alternatives.Count alternatives · choose requirements to view their routes</p>
+                    <div class="audit-alternatives" aria-label="Alternative requirements">
+                        @foreach (var option in answer.Alternatives)
+                        {
+                            <section class="audit-alternative @(Current.Alternative == option.Identity ? "audit-alternative-selected" : "")" aria-label="@($"Alternative {answer.Alternatives.ToList().IndexOf(option) + 1}")">
+                                <AuditConditionBadges Conditions="option.Conditions" Scenario="Scenario" />
+                                <div class="audit-alternative-actions"><span>@ConditionCount(option.Conditions)</span><button type="button" @onclick="@(() => ChooseAlternativeAsync(option))">View routes (@option.Routes.Count)</button></div>
+                                @foreach (var note in Notices(option.Routes)) { <p class="audit-help">@note</p> }
+                            </section>
+                        }
+                    </div>
+                }
+            }
+            else
+            {
+                <button type="button" @onclick="BackToAlternativesAsync">Back to alternatives</button>
+                <h3>Requirements <small>@ConditionCount(alternative.Conditions)</small></h3>
+                <AuditConditionBadges Conditions="alternative.Conditions" Scenario="Scenario" />
+                @foreach (var note in Notices(alternative.Routes)) { <p class="audit-help">@note</p> }
+                @if (alternative.Routes.Count > 1)
+                {
+                    <div class="audit-route-choices" aria-label="Route choices">
+                        @foreach (var route in alternative.Routes)
+                        { <button type="button" aria-pressed="@(ChosenRoute?.Identity == route.Identity)" @onclick="@(() => ChooseRouteAsync(route))">Route @(alternative.Routes.ToList().IndexOf(route) + 1): @RouteName(route) · @ConditionCount(route.Conditions)</button> }
+                    </div>
+                }
+                <p>@alternative.Routes.Count routes</p>
+                @if (ChosenRoute is { } chosen)
+                {
+                    <ol class="audit-route-strip" aria-label="Selected route">
+                        <li>Origin: @OriginLabel</li>
+                        @foreach (var step in chosen.Steps)
+                        {
+                            var index = chosen.Steps.ToList().IndexOf(step);
+                            <li><button type="button" class="@(Current.Step == step.Row.Id ? "audit-step-focus" : "")" aria-pressed="@(Current.Step == step.Row.Id)" @onclick="@(() => FocusStepAsync(step.Row.Id))">@(index + 1). @Evaluator.RowName(step.Row) · @GateStatus(step.Row)</button>
+                                @Contribution(chosen, index, step)
+                            </li>
+                        }
+                        <li><button type="button" aria-pressed="@(Current.Step is null)" @onclick="@(() => FocusStepAsync(null))">Destination: @Name(Current.Target)</button>
+                            @if (chosen.OwnGate is { } own) { <div>Own gate (separate from getting there): @Contribution(chosen, chosen.Steps.Count, own)</div> }
+                        </li>
+                    </ol>
+                    var focused = chosen.Steps.FirstOrDefault(x => x.Row.Id == Current.Step) ?? chosen.OwnGate;
+                    @if (focused is not null)
+                    {
+                        <h3>@(Current.Step is null ? "Destination’s own condition" : Evaluator.RowName(focused.Row))</h3>
+                        @foreach (var note in focused.Notices) { <p class="audit-help">@note</p> }
+                        <h4>Chosen sufficient conditions <small>@ConditionCount(focused.Conditions)</small></h4>
+                        <AuditConditionBadges Conditions="focused.Conditions" Scenario="Scenario" />
+                        <AuditGateFocus Row="focused.Row" ChosenAtoms="focused.UsedAtoms" Evaluator="Evaluator" Evaluation="Evaluation" InspectCheck="InspectCheckAsync" ControlRequested="ControlRequested" />
+                    }
+                    else { <p>Arrival at destination; no separate gate.</p> }
+                    @if (Notices([chosen]).Length > 0)
+                    { <details><summary>Evaluation scope</summary>@foreach (var note in Notices([chosen])) { <p>@note</p> }</details> }
+                }
+            }
         }
     }
 </section>
 @code {
-    [Parameter, EditorRequired] public AuditTarget Target { get; set; } = null!;
+    [Parameter] public AuditTarget? Target { get; set; }
     [Parameter] public long Selection { get; set; }
+    [Parameter] public bool Active { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public bool Direct { get; set; }
     [Parameter, EditorRequired] public RoomAuditEvaluator Evaluator { get; set; } = null!;
     [Parameter, EditorRequired] public AuditEvaluation Evaluation { get; set; } = null!;
+    [Parameter, EditorRequired] public AuditScenario Scenario { get; set; } = null!;
     [Parameter] public string OriginLabel { get; set; } = "Origin";
-    [Parameter] public EventCallback<string> StartHere { get; set; }
-    [Parameter] public EventCallback<AuditTarget> TargetSelected { get; set; }
-    [Parameter] public EventCallback<AuditTarget?> ApproachSelected { get; set; }
-    private sealed record Context(AuditTarget Target, bool Approaches, Guid? Edge = null, bool Cycle = false);
+    [Parameter] public EventCallback<AuditRouteHighlight> HighlightChanged { get; set; }
+    [Parameter] public EventCallback<string> ControlRequested { get; set; }
+    [Parameter] public EventCallback<AuditTarget> RoomStateRequested { get; set; }
+    [Parameter] public AuditTarget? SceneStep { get; set; }
+    [Parameter] public long SceneStepSelection { get; set; }
+    private sealed record Context(AuditTarget Target, bool Direct = false, bool Repeated = false,
+        string? Alternative = null, string? Route = null, Guid? Step = null, bool Routes = false);
     private readonly List<Context> history = [];
-    private long selection = -1;
     private Context Current => history[^1];
-    protected override void OnParametersSet()
+    private RoomAuditEvaluator? owner;
+    private long selection = -1, revision, sceneSelection = -1;
+    private string origin = "";
+    private CancellationTokenSource? cancellation;
+    private AuditAlternativeAnalysis? analysis;
+    private bool analyzing, disposed;
+    private string? analysisFailure;
+    private AuditRouteHighlight publishedHighlight = new([], null);
+    private AuditAlternative? ChosenAlternative => history.Count > 0 && Current.Routes ? analysis?.Alternatives.FirstOrDefault(x => x.Identity == Current.Alternative) : null;
+    private AuditAlternativeRoute? ChosenRoute => ChosenAlternative?.Routes.FirstOrDefault(x => x.Identity == Current.Route) ?? ChosenAlternative?.Routes.FirstOrDefault();
+    protected override async Task OnParametersSetAsync()
     {
-        if (history.Count > 0 && selection == Selection && history[0].Target == Target) return;
-        var mode = history.Count > 0 && Current.Approaches;
-        history.Clear(); history.Add(new(Target, mode)); selection = Selection;
+        if (disposed) return;
+        if (owner != Evaluator || selection != Selection || history.FirstOrDefault()?.Target != Target)
+        {
+            CancelWork(); owner = Evaluator; selection = Selection; origin = Scenario.Start;
+            history.Clear(); analysis = null; analysisFailure = null;
+            if (Target is not null) history.Add(new(Target, Direct));
+            if (Active && Target is not null) await AnalyzeAsync();
+            else await PublishHighlight();
+        }
+        else if (origin != Scenario.Start)
+        { origin = Scenario.Start; CancelWork(); analysis = null; analysisFailure = null; if (Active && Target is not null) await AnalyzeAsync(); else await PublishHighlight(); }
+        else if (Active && history.Count > 0 && analysis is null && !analyzing && analysisFailure is null && !Current.Direct && !Current.Repeated) await AnalyzeAsync();
+        if (sceneSelection != SceneStepSelection)
+        {
+            sceneSelection = SceneStepSelection;
+            if (SceneStep is { } step && ChosenRoute is { } route)
+            {
+                if (route.Steps.Any(x => x.Row.Id == step.Id)) await FocusStepAsync(step.Id);
+                else if (route.OwnGate?.Row.Id == step.Id) await FocusStepAsync(null);
+            }
+        }
+    }
+    private async Task AnalyzeAsync()
+    {
+        if (disposed) return;
+        CancelWork(); analysisFailure = null; analysis = null;
+        var version = revision;
+        // A highlight callback can render the parent and redeliver parameters before it completes.
+        analyzing = history.Count > 0 && !Current.Direct && !Current.Repeated;
+        await PublishHighlight();
+        if (disposed || version != revision || history.Count == 0 || Current.Direct || Current.Repeated) return;
+        var evaluator = Evaluator; var start = Scenario.Start; var target = Current.Target;
+        cancellation = new(); var token = cancellation.Token; analyzing = true;
+        try
+        {
+            var result = await Task.Run(() => evaluator.Analyze(start, target, token), token);
+            if (disposed || version != revision || owner != evaluator) return;
+            analysis = result;
+            ReconcileAnswer(result);
+            await PublishHighlight();
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+        catch (Exception exception)
+        {
+            Logger.LogError(exception, "Room audit alternative analysis failed");
+            if (!disposed && version == revision) analysisFailure = "Alternatives could not be analyzed. Retry.";
+        }
+        finally { if (!disposed && version == revision) analyzing = false; }
+    }
+    private void CancelWork() { revision++; cancellation?.Cancel(); cancellation?.Dispose(); cancellation = null; analyzing = false; }
+    private Task Cancel() { CancelWork(); analysis = null; analysisFailure = "Analysis canceled. No route conclusion was made."; return PublishHighlight(); }
+    private void ReconcileAnswer(AuditAlternativeAnalysis answer)
+    {
+        var context = Current;
+        var alternative = answer.Alternatives.FirstOrDefault(x => x.Identity == context.Alternative);
+        var route = alternative?.Routes.FirstOrDefault(x => x.Identity == context.Route) ?? alternative?.Routes.FirstOrDefault();
+        history[^1] = context with
+        {
+            Alternative = alternative?.Identity,
+            Route = route?.Identity,
+            Step = route?.Steps.Any(x => x.Row.Id == context.Step) == true ? context.Step : null,
+            Routes = context.Routes && alternative is not null
+        };
     }
     private AuditRow? Row(AuditTarget target) => Evaluator.Snapshot.Rows.FirstOrDefault(x => x.Kind == target.Kind && x.Id == target.Id);
     private string Name(AuditTarget target) => Row(target) is { } row ? Evaluator.RowName(row) : Evaluator.NodeName(target.Id);
-    private bool Available(AuditTarget target, AuditRow? row) => row is null ? Evaluation.Reached.Contains(target.Id) : Evaluation.Rows[(row.Kind, row.Id)].Available;
-    private AuditRowResult OwnResult(AuditRow row)
+    private string ContextName(Context context) => context.Step is { } step && Evaluator.Snapshot.Rows.FirstOrDefault(x => x.Kind == "connection" && x.Id == step) is { } row ? Evaluator.RowName(row) : Name(context.Target);
+    private string ConditionCount(IReadOnlyList<AuditCondition> conditions) => $"{conditions.Count(x => x.Matches(Scenario))}/{conditions.Count} met";
+    private string GateStatus(AuditRow row) => RoomAuditEvaluator.GateStatus(row, Evaluation.Rows[(row.Kind, row.Id)]);
+    private string RouteName(AuditAlternativeRoute route) => route.Steps.Count == 0 ? "From origin" : string.Join(" → ", route.Steps.Select(x => Evaluator.RowName(x.Row)));
+    private static IEnumerable<AuditRouteStep> AllSteps(AuditAlternativeRoute route) => route.Steps.Concat(route.OwnGate is { } own ? [own] : []);
+    private static string[] Notices(IEnumerable<AuditAlternativeRoute> routes) => routes.SelectMany(AllSteps).SelectMany(x => x.Notices).Distinct().ToArray();
+    private RenderFragment Contribution(AuditAlternativeRoute route, int index, AuditRouteStep step)
     {
-        var result = Evaluation.Rows[(row.Kind, row.Id)];
-        if (row.Kind != "check" || !Evaluation.CheckProofs.TryGetValue(row.Id, out var proof)) return result;
-        // Keep current gate subresults/grouping, marking the retained completion's actual prerequisite choice.
-        return result with { Leaves = result.Leaves.ToDictionary(x => x.Key, x => x.Value with
-            { WitnessUsed = proof.Leaves.TryGetValue(x.Key, out var witness) && witness.WitnessUsed }) };
+        var before = RoomAuditEvaluator.Combine([], route.Steps.Take(index).SelectMany(x => x.Conditions)) ?? [];
+        var adds = step.Conditions.Where(x => !RoomAuditEvaluator.Covers([x], before)).ToArray();
+        return @<div class="audit-contribution">
+            @if (adds.Length > 0)
+            {
+                <span>Adds</span><AuditConditionBadges Conditions="adds" Scenario="Scenario" />
+                @if (adds.Length < step.Conditions.Count) { <span>Already required (shared conditions)</span> }
+            }
+            else { <span>@(step.Conditions.Count > 0 ? "Already required" : "No requirements")</span> }
+        </div>;
     }
-    private string Status(AuditTarget target, AuditRow? row) => !Evaluation.HasOrigin ? "Not evaluated — select origin…" : row is not null && Evaluation.Rows[(row.Kind, row.Id)].Access == "Unresolved subroom assignment" ? "Unresolved subroom assignment" : Available(target, row) ? "Reached / available" : "Blocked";
-    private Task SetMode(bool approaches)
-    { history[^1] = Current with { Approaches = approaches }; return Highlight(); }
-    private Task ChooseApproach(AuditTarget edge)
-    { history[^1] = Current with { Edge = edge.Id }; return Highlight(); }
-    private Task FollowSource(Guid node) => Navigate(new(Evaluator.Snapshot.Subrooms.Count == 0 ? "room" : "subroom", node), true);
-    private Task InspectCheck(Guid check) => Navigate(new("check", check), Current.Approaches);
-    private Task Navigate(AuditTarget target, bool approaches)
+    private Task PublishHighlight()
     {
-        var cycle = history.Any(x => x.Target == target);
-        history.Add(new(target, approaches, Cycle: cycle));
-        return Highlight();
+        if (disposed) return Task.CompletedTask;
+        var route = ChosenRoute;
+        var connections = route?.Steps.Select(x => x.Row.Id).Concat(route.OwnGate is { Row.Kind: "connection" } own ? [own.Row.Id] : []).ToArray() ?? [];
+        var focus = route is null ? null : route.Steps.Any(x => x.Row.Id == Current.Step) ? Current.Step : route.OwnGate is { Row.Kind: "connection" } gate ? (Guid?)gate.Row.Id : null;
+        if (publishedHighlight.Step == focus && publishedHighlight.Connections.SequenceEqual(connections)) return Task.CompletedTask;
+        // Record before invoking: EventCallback automatically renders its receiving component.
+        publishedHighlight = new(connections, focus);
+        return HighlightChanged.InvokeAsync(publishedHighlight);
     }
-    private Task ReturnTo(int index)
+    private Task ChooseAlternativeAsync(AuditAlternative option)
     {
-        if (index < 0 || index >= history.Count) return Task.CompletedTask;
-        history.RemoveRange(index + 1, history.Count - index - 1);
-        return Highlight();
+        if (disposed) return Task.CompletedTask;
+        history[^1] = Current.Alternative == option.Identity && option.Routes.Any(x => x.Identity == Current.Route)
+            ? Current with { Routes = true } : Current with { Alternative = option.Identity, Route = option.Routes[0].Identity, Step = null, Routes = true };
+        return PublishHighlight();
     }
-    private Task Highlight() => ApproachSelected.InvokeAsync(Current.Approaches && !Current.Cycle && Current.Edge is { } edge ? new AuditTarget("connection", edge) : null);
+    private Task ChooseRouteAsync(AuditAlternativeRoute route) { if (disposed) return Task.CompletedTask; history[^1] = Current with { Route = route.Identity, Step = null }; return PublishHighlight(); }
+    private Task FocusStepAsync(Guid? step) { if (disposed) return Task.CompletedTask; history[^1] = Current with { Step = step }; return PublishHighlight(); }
+    private Task BackToAlternativesAsync() { if (disposed) return Task.CompletedTask; history[^1] = Current with { Routes = false }; return PublishHighlight(); }
+    private Task ViewAlternativesAsync() { history[^1] = Current with { Direct = false }; return AnalyzeAsync(); }
+    private async Task ShowOwnGateAsync() { if (disposed) return; history[^1] = Current with { Direct = true }; CancelWork(); analysis = null; await PublishHighlight(); }
+    private async Task InspectDirectAsync(AuditRow row) { if (disposed) return; history.Add(new(new(row.Kind, row.Id), true)); CancelWork(); analysis = null; await PublishHighlight(); }
+    private async Task InspectCheckAsync(Guid check)
+    {
+        if (disposed) return;
+        var target = new AuditTarget("check", check); var repeated = history.Any(x => x.Target == target);
+        history.Add(new(target, Repeated: repeated)); await AnalyzeAsync();
+    }
+    private async Task BackAsync() { if (disposed || history.Count < 2) return; history.RemoveAt(history.Count - 1); await AnalyzeAsync(); }
+    private async Task ReturnAsync() { if (disposed || history.Count < 2) return; history.RemoveRange(1, history.Count - 1); await AnalyzeAsync(); }
+    public void Dispose() { disposed = true; CancelWork(); }
 }

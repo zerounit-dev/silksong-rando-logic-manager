@@ -1,0 +1,32 @@
+@if (Expression is AuditBoolean boolean)
+{
+    <span class="audit-authored-group" role="group" aria-label="@(boolean.IsAnd ? "AND group" : "OR group")">
+        <span>(</span>
+        <AuditAuthoredBadges Expression="boolean.Left" Requirement="Requirement" Results="Results" />
+        <strong>@(boolean.IsAnd ? "AND" : "OR")</strong>
+        <AuditAuthoredBadges Expression="boolean.Right" Requirement="Requirement" Results="Results" />
+        <span>)</span>
+    </span>
+}
+else if (Expression is AuditAtom atom && Results.TryGetValue(atom, out var result))
+{
+    <span class="audit-condition-badge @(result.Unresolved ? "audit-condition-unknown" : result.Passed ? "audit-condition-met" : "audit-condition-missing")">
+        <span aria-hidden="true">@(result.Unresolved ? "?" : result.Passed ? "✓" : "✕")</span>
+        <span class="audit-sr-only">@(result.Unresolved ? "Unresolved: " : result.Passed ? "Met: " : "Missing: ")</span>
+        @if (result.Manual) { <span class="audit-manual-tag">Manual</span> }
+        @if (Config(result.Evidence)) { <span class="audit-config-tag">Config</span> }
+        <span class="audit-condition-label">@(atom.Signature == "none" ? "No requirements" : Requirement.Source.Substring(atom.Start, atom.Length))</span>
+        @if (result.LocalCheckId is not null) { <span>Already activated @(result.Passed ? "On" : "Off")</span> }
+        @foreach (var note in result.Notices ?? []) { <span class="audit-manual-tag">@note</span> }
+    </span>
+}
+else
+{ <span class="audit-condition-badge audit-condition-unknown">? Unresolved: @string.Join("; ", Requirement.Reasons.DefaultIfEmpty("Authored requirement unavailable"))</span> }
+
+@code {
+    [Parameter] public AuditExpression? Expression { get; set; }
+    [Parameter, EditorRequired] public AuditRequirement Requirement { get; set; } = null!;
+    [Parameter, EditorRequired] public IReadOnlyDictionary<AuditAtom, AuditLeafResult> Results { get; set; } = null!;
+    private static bool Config(AuditPrerequisite? evidence) => evidence is not null &&
+        (evidence.ControlKey is "act" or "soul-mode" || evidence.ControlKey?.StartsWith("setting:", StringComparison.Ordinal) == true || evidence.Children.Any(Config));
+}

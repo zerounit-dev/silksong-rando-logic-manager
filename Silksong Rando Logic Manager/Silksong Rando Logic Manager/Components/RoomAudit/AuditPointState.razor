@@ -1,0 +1,24 @@
+@{
+    var row = Evaluator.Snapshot.Rows.FirstOrDefault(x => x.Kind == Target.Kind && x.Id == Target.Id);
+    var status = Evaluator.TargetStatus(Target, Evaluation);
+    var met = status is "Reached" or "Available" or "Can activate";
+    var unknown = status.StartsWith("Unresolved", StringComparison.Ordinal);
+}
+<div class="audit-point-state">
+    <strong class="@(unknown ? "audit-state-unknown" : met ? "audit-legend-met" : Evaluation.HasOrigin ? "audit-legend-missing" : "")">@(unknown ? "?" : met ? "✓" : Evaluation.HasOrigin ? "✕" : "○") @status</strong>
+    @if (row is not null)
+    {
+        var result = Evaluation.Rows[(row.Kind, row.Id)];
+        <span>Source: @result.Access</span>
+        <span>@RoomAuditEvaluator.GateStatus(row, result)</span>
+    }
+    @if (ShowActivation && Target.Kind == "check" && Evaluator.Controls.FirstOrDefault(x => x.LocalCheckId == Target.Id) is { } control)
+    { <span><span class="audit-manual-tag">Manual</span> Already activated @(Scenario.Has(control.Key) ? "On" : "Off")</span> }
+</div>
+@code {
+    [Parameter, EditorRequired] public AuditTarget Target { get; set; } = null!;
+    [Parameter, EditorRequired] public RoomAuditEvaluator Evaluator { get; set; } = null!;
+    [Parameter, EditorRequired] public AuditEvaluation Evaluation { get; set; } = null!;
+    [Parameter, EditorRequired] public AuditScenario Scenario { get; set; } = null!;
+    [Parameter] public bool ShowActivation { get; set; } = true;
+}

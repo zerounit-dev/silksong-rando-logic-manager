@@ -263,6 +263,12 @@ button, input, textarea { font: inherit; }
 .room-editor-v2 .room-context-scene-pane [data-scene-layout-canvas] .row-annotation-foreground .row-annotation-border {
     stroke: var(--row-attention-color); stroke-width: var(--row-attention-width); vector-effect: non-scaling-stroke;
 }
+/* RH3D colors existing live bodies and independently attended RH2 visible copies,
+   not dark edges. Ordinary neutral fill/widths remain; destination then cyan win. */
+.room-editor-v2 .room-context-scene-pane [data-scene-layout-canvas] .scene-layout-subroom-body.row-connection-source { stroke: rgb(230 161 90); }
+.room-editor-v2 .room-context-scene-pane [data-scene-layout-canvas] .scene-layout-subroom-body.row-connection-destination { stroke: rgb(120 214 75); }
+.room-editor-v2 .room-context-scene-pane [data-scene-layout-canvas] .scene-layout-subroom.selected .scene-layout-subroom-body,
+.room-editor-v2 .room-context-scene-pane [data-scene-layout-canvas] .row-annotation-foreground > .scene-layout-subroom.row-annotation-selected .row-annotation-border { stroke: #0dcaf0; }
 .scene-layout-subroom.selected .scene-layout-subroom-body { stroke: #0dcaf0; filter: drop-shadow(0 0 2px #0dcaf0); cursor: move; }
 [data-scene-layout-marker].selected > :not(text):not(title) { stroke: #0dcaf0; filter: drop-shadow(0 0 2px #0dcaf0); cursor: move; }
 .scene-layout-subroom text { fill: #202428; font: 600 4px Arial, sans-serif; pointer-events: none; user-select: none; }

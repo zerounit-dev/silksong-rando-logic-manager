@@ -1327,10 +1327,11 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
       // RH1 keeps two independent DOM associations, not scene selection or row drafts.
       // Fresh reconciliation reads actual hover/focus and C# facts; a removed row
       // never leaves its former marker identity as a sticky attention target.
-      const attentionSelector = "tr[data-v2-row-annotation-kind][data-v2-row-annotation-id]";
+      const attentionSelector = "tr[data-v2-row-annotation-kind]:is([data-v2-row-annotation-id],[data-v2-row-source-subroom-id],[data-v2-row-destination-subroom-id])";
       let hoveredAttentionRow = null, focusedAttentionRow = null;
       let attentionSurface = null;
       const suppressedAttentionParts = new Set();
+      const tintedEndpointBodies = new Set();
       const attentionRow = node => {
           const row = node instanceof Element ? node.closest(attentionSelector) : null;
           if (!row || !root.contains(row)) return null;
@@ -1354,15 +1355,29 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
               surface = layer?.querySelector("[data-v2-row-annotation-foreground]");
           if (disposed || !svg?.__v2SceneViewport?.isLive() || !surface || layer.style.display === "none") return;
           attentionSurface = surface;
-          const current = new Map();
+           const current = new Map(), endpointRoles = new Map();
           // Insertion order is visual only: hover first, focus last. A shared
           // canonical target is projected once at focus strength.
           for (const [row, strength] of [[hoveredAttentionRow, "hover"], [focusedAttentionRow, "focus"]]) {
               if (!attentionRow(row)) continue;
               const kind = row.dataset.v2RowAnnotationKind, id = row.dataset.v2RowAnnotationId;
-              const item = layer.querySelector(`[data-scene-selection-kind='${CSS.escape(kind)}'][data-scene-id='${CSS.escape(id)}']`);
-              if (item && svg.__v2SceneViewport.isKindVisible(kind)) { current.delete(item); current.set(item, strength); }
-          }
+               const item = id ? layer.querySelector(`[data-scene-selection-kind='${CSS.escape(kind)}'][data-scene-id='${CSS.escape(id)}']`) : null;
+               if (item && svg.__v2SceneViewport.isKindVisible(kind)) { current.delete(item); current.set(item, strength); }
+               // Directed facts belong to this row, not its canonical marker.
+               // Each visible frame qualifies independently, even without a marker.
+               if (kind === "connection" && svg.__v2SceneViewport.isKindVisible("subroom")) {
+                   for (const [endpointId, role] of [[row.dataset.v2RowSourceSubroomId, "source"], [row.dataset.v2RowDestinationSubroomId, "destination"]]) {
+                       if (!endpointId) continue;
+                       const frame = layer.querySelector(`[data-scene-layout-frame][data-scene-id='${CSS.escape(endpointId)}']`),
+                           body = frame?.querySelector(".scene-layout-subroom-body");
+                       if (body && (role === "destination" || !endpointRoles.has(body))) endpointRoles.set(body, role);
+                   }
+               }
+           }
+           for (const [body, role] of endpointRoles) {
+               body.classList.add(`row-connection-${role}`);
+               tintedEndpointBodies.add(body);
+           }
           for (const [item, strength] of current) {
               const frame = item.dataset.sceneSelectionKind === "subroom",
                   body = frame ? item.querySelector(".scene-layout-subroom-body") : item.querySelector(":scope > rect, :scope > circle"),
@@ -1379,7 +1394,9 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
               projection.style.transform = item.style.transform;
               const edge = projectAttentionPart(body), visible = projectAttentionPart(body);
               edge.classList.add("row-annotation-dark-edge");
-              visible.classList.add("row-annotation-border");
+               visible.classList.add("row-annotation-border");
+               const endpointRole = endpointRoles.get(body);
+               if (endpointRole) visible.classList.add(`row-connection-${endpointRole}`);
               projection.append(edge, visible);
               if (label) projection.append(projectAttentionPart(label));
               surface.append(projection);
@@ -1398,7 +1415,9 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
           return part;
       };
       const clearAttentionSurface = () => {
-          for (const part of suppressedAttentionParts) part.classList.remove("row-annotation-source-suppressed");
+           for (const body of tintedEndpointBodies) body.classList.remove("row-connection-source", "row-connection-destination");
+           tintedEndpointBodies.clear();
+           for (const part of suppressedAttentionParts) part.classList.remove("row-annotation-source-suppressed");
           suppressedAttentionParts.clear();
           attentionSurface?.replaceChildren();
           attentionSurface = null;

@@ -89,10 +89,10 @@ public static class DistributedRoomComparisonService
     }
 
     // Evidence keeps both unmodified serialized sides, including neutral timestamps
-    // and tolerated numbers: SameComparison must still detect exact local edits.
+    // and tolerated numbers/crop identity: SameComparison must detect exact local edits.
     private static bool Matches(string name, object? current, object? incoming, IReadOnlySet<string> exact)
     {
-        if (name is "createdUtc" or "updatedUtc" or "archivedUtc") return true;
+        if (name is "createdUtc" or "updatedUtc" or "archivedUtc" or "sceneImageCropHash") return true;
         if (Equals(current, incoming)) return true;
         if (exact.Contains(name) || current is not double c || incoming is not double i || !double.IsFinite(c) || !double.IsFinite(i)) return false;
         var tolerance = name switch

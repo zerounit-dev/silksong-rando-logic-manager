@@ -11,7 +11,7 @@
     { <p>No positioned geometry. Select targets in the table.</p> }
     else
     {
-        <svg class="audit-scene" viewBox="@ViewBox(scene)" data-fit="@ViewBox(scene)" tabindex="0" role="group" aria-label="Room scene. Drag to pan; wheel to zoom. Focus a target and press Enter or Space to select.">
+        <svg hidden="@HideMap" class="audit-scene" viewBox="@ViewBox(scene)" data-fit="@ViewBox(scene)" tabindex="0" role="group" aria-label="Room scene. Drag to pan; wheel to zoom. Focus a target and press Enter or Space to select.">
             @if (scene.HasValidBounds && scene.Image?.IsAvailable == true)
             {
                 <image href="@($"/data/scenes/{Snapshot.RoomId:D}.webp?v={scene.Image.ImageVersion}")" x="@N(scene.SceneMinX)" y="@N(-scene.SceneMaxY!.Value)" width="@N(scene.SceneUnitWidth!.Value)" height="@N(scene.SceneUnitHeight!.Value)" preserveAspectRatio="none" />
@@ -34,12 +34,13 @@
                 var rows = MarkerRows(marker).ToArray();
                 var row = rows.FirstOrDefault();
                 if (row is null) { continue; }
-                var inspected = rows.FirstOrDefault(x => Selected?.Kind == x.Kind && Selected.Id == x.Id);
+                var inspected = rows.FirstOrDefault(x => x.Id == Route.Step) ?? rows.FirstOrDefault(x => Route.Connections.Contains(x.Id)) ?? rows.FirstOrDefault(x => Selected?.Kind == x.Kind && Selected.Id == x.Id);
                 var direction = inspected ?? row;
-                var status = !Evaluation.HasOrigin ? "not evaluated" : marker.Kind == "connection" && inspected is null ? "choose direction" : Evaluation.Rows[(direction.Kind, direction.Id)].Available ? "available" : "blocked";
-                var names = string.Join(" / ", rows.Select(x => $"{Evaluator.RowName(x)} — {(!Evaluation.HasOrigin ? "not evaluated" : Evaluation.Rows[(x.Kind, x.Id)].Available ? "available" : "blocked")}"));
-                var target = new AuditTarget(marker.Kind, marker.EntityId);
-                <g data-audit-kind="@marker.Kind" data-audit-id="@marker.EntityId" tabindex="0" role="button" aria-label="@($"{names} — {status}")" class="@Decoration(target, status)">
+                var status = marker.Kind == "connection" && inspected is null ? "choose direction" : Evaluator.TargetStatus(new(direction.Kind, direction.Id), Evaluation).ToLowerInvariant();
+                var names = string.Join(" / ", rows.Select(x => $"{Evaluator.RowName(x)} - {Evaluator.TargetStatus(new(x.Kind, x.Id), Evaluation)}{ActivationState(x)}"));
+                var target = new AuditTarget(marker.Kind, direction.Id);
+                var routeText = rows.Any(x => x.Id == Route.Step) ? " — focused route step" : rows.Any(x => Route.Connections.Contains(x.Id)) ? " — selected route" : "";
+                <g data-audit-kind="@marker.Kind" data-audit-id="@direction.Id" tabindex="0" role="button" aria-label="@($"{names} — {status}{routeText}")" class="@Decoration(target, status)">
                     <title>@names — @status</title>
                     @if (marker.Kind == "check")
                     { <circle cx="@N(marker.X)" cy="@N(-marker.Y)" r="1.8" /> }
@@ -55,23 +56,27 @@
         </svg>
     }
     <div class="audit-camera-controls" aria-label="Scene camera and origin">
-        <button type="button" disabled="@(!HasCamera)" data-camera="out" aria-label="Zoom out" title="Zoom out"><i class="fa-solid fa-minus" aria-hidden="true"></i></button>
-        <button type="button" disabled="@(!HasCamera)" data-camera="in" aria-label="Zoom in" title="Zoom in"><i class="fa-solid fa-plus" aria-hidden="true"></i></button>
-        <button type="button" disabled="@(!HasCamera)" data-camera="fit">Fit</button>
+        <button hidden="@HideMap" type="button" disabled="@(!HasCamera)" data-camera="out" aria-label="Zoom out" title="Zoom out"><i class="fa-solid fa-minus" aria-hidden="true"></i></button>
+        <button hidden="@HideMap" type="button" disabled="@(!HasCamera)" data-camera="in" aria-label="Zoom in" title="Zoom in"><i class="fa-solid fa-plus" aria-hidden="true"></i></button>
+        <button hidden="@HideMap" type="button" disabled="@(!HasCamera)" data-camera="fit">Fit</button>
         @OriginControls
     </div>
-    <p class="audit-help">Drag to pan · wheel to zoom. Green: reached/available · dashed: blocked · solid gray: not evaluated · cyan: inspected · gold: origin</p>
+    <p hidden="@HideMap" class="audit-help">Drag to pan · wheel to zoom. Green: reached/available · dashed: blocked · gray: not evaluated · cyan: destination · gold: origin · white halo: route · double outline: focused step</p>
 </section>
 
 @code {
     [Parameter, EditorRequired] public RoomAuditSnapshot Snapshot { get; set; } = null!;
     [Parameter, EditorRequired] public RoomAuditEvaluator Evaluator { get; set; } = null!;
     [Parameter, EditorRequired] public AuditEvaluation Evaluation { get; set; } = null!;
+    [Parameter, EditorRequired] public AuditScenario Scenario { get; set; } = null!;
     [Parameter] public long Owner { get; set; }
     [Parameter] public string Origin { get; set; } = "";
     [Parameter] public bool PickOrigin { get; set; }
     [Parameter] public AuditTarget? Selected { get; set; }
-    [Parameter] public AuditTarget? Approach { get; set; }
+    [Parameter] public AuditRouteHighlight Route { get; set; } = new([], null);
+    [Parameter] public bool HideMap { get; set; }
+    [Parameter] public string? ControlFocus { get; set; }
+    [Parameter] public long ControlFocusRevision { get; set; }
     [Parameter] public EventCallback<AuditSceneIntent> Intent { get; set; }
     [Parameter] public RenderFragment? OriginControls { get; set; }
     private ElementReference root;
@@ -79,6 +84,7 @@
     private DotNetObjectReference<AuditScene>? callback;
     private bool mounting, disposed, cameraFailed;
     private long mountedOwner;
+    private long controlFocusRevision;
     private bool HasCamera => !cameraFailed && Snapshot.Scene is { } scene && HasExtent(scene);
     private IEnumerable<AuditRow> MarkerRows(SceneMarkerView marker)
     {
@@ -93,10 +99,13 @@
         var b = Snapshot.Rows.FirstOrDefault(x => x.Kind == "connection" && x.Id == target.Id);
         return a is not null && b is not null && string.Equals(a.Alias?.Trim(), b.Alias?.Trim(), StringComparison.OrdinalIgnoreCase);
     }
+    private string ActivationState(AuditRow row) => row.Kind == "check" && Evaluator.Controls.FirstOrDefault(x => x.LocalCheckId == row.Id) is { } control
+        ? $" - Manual Already activated {(Scenario.Has(control.Key) ? "On" : "Off")}" : "";
     private string Decoration(AuditTarget target, string status) =>
-        $"audit-scene-target {(status is "reached" or "available" ? "audit-scene-reached" : status is "not evaluated" or "choose direction" ? "audit-scene-neutral" : "audit-scene-blocked")} {(Matches(Selected, target) ? "audit-selected" : "")} {(Matches(Approach, target) ? "audit-approach" : "")} {(Origin == $"{target.Kind}:{target.Id}" ? "audit-origin" : "")}";
+        $"audit-scene-target {(status.StartsWith("unresolved", StringComparison.Ordinal) ? "audit-scene-unresolved" : status is "reached" or "available" or "can activate" ? "audit-scene-reached" : status is "not evaluated" or "select origin…" or "choose direction" ? "audit-scene-neutral" : "audit-scene-blocked")} {(Matches(Selected, target) ? "audit-selected" : "")} {(Route.Connections.Any(id => Matches(new("connection", id), target)) ? "audit-route-marker" : "")} {(Route.Step is { } step && Matches(new("connection", step), target) ? "audit-focused-marker" : "")} {(Origin == $"{target.Kind}:{target.Id}" ? "audit-origin" : "")}";
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
+        await RevealControlAsync();
         if (mounting || camera is not null || disposed || cameraFailed) return;
         mounting = true; var owner = Owner; mountedOwner = owner;
         try
@@ -107,6 +116,7 @@
             var mounted = await imported.InvokeAsync<IJSObjectReference>("mount", root, callback, owner);
             if (disposed || Owner != owner) { await mounted.InvokeVoidAsync("dispose"); await mounted.DisposeAsync(); return; }
             camera = mounted;
+            await RevealControlAsync();
         }
         catch (Exception exception) when (exception is JSException or JSDisconnectedException)
         {
@@ -114,6 +124,13 @@
             if (!disposed && Owner == owner) { cameraFailed = true; await InvokeAsync(StateHasChanged); }
         }
         finally { mounting = false; }
+    }
+    private async Task RevealControlAsync()
+    {
+        if (disposed || camera is null || ControlFocus is null || controlFocusRevision == ControlFocusRevision) return;
+        controlFocusRevision = ControlFocusRevision;
+        try { await camera.InvokeVoidAsync("revealControl", ControlFocus); }
+        catch (JSException exception) { Logger.LogError(exception, "Audit scenario control focus failed"); }
     }
     [JSInvokable] public Task SelectAsync(AuditSceneIntent intent) =>
         !disposed && intent.Owner == Owner && mountedOwner == Owner ? Intent.InvokeAsync(intent) : Task.CompletedTask;

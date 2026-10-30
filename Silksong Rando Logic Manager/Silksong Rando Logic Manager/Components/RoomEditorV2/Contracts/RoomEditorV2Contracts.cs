@@ -280,6 +280,9 @@ public sealed record ConnectionRowView(Guid EntityId, int SortOrder, bool IsArch
 {
     /// <summary>Presentation identity only; never part of an editable baseline or draft.</summary>
     public Guid? AnnotationMarkerEntityId { get; init; }
+    /// <summary>Individual applied directed endpoints, independent of canonical marker eligibility.</summary>
+    public Guid? AttentionSourceSubroomId { get; init; }
+    public Guid? AttentionDestinationSubroomId { get; init; }
     public RowTargetCoordinateState TargetCoordinateState { get; init; }
 }
 public sealed record ConnectionTableView(IReadOnlyList<ConnectionRowView> activeRows, IReadOnlyList<ConnectionRowView> archivedRows,

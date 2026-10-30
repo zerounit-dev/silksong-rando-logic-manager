@@ -4,6 +4,11 @@
 {
     <div class="document-navigation-actions">
         <button class="back-to-map-button" type="button" @onclick="BackToMap"><i class="fa-solid fa-map" aria-hidden="true"></i> back to map</button>
+        @{
+#if DEBUG
+            <button class="back-to-map-button" type="button" @onclick="AuditRoom"><i class="fa-solid fa-route" aria-hidden="true"></i> audit room</button>
+#endif
+        }
         <button class="room-map-context-toggle room-map-context-toggle-hide" type="button" aria-pressed="true" aria-label="Hide map context" title="Hide map context" @onclick="ToggleMapContext"><i class="fa-solid fa-eye-slash" aria-hidden="true"></i> hide map context</button>
         <button class="room-map-context-toggle room-map-context-toggle-show" type="button" aria-pressed="false" aria-label="Show map context" title="Show map context" @onclick="ToggleMapContext"><i class="fa-solid fa-eye" aria-hidden="true"></i> show map context</button>
     </div>

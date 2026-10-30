@@ -1,0 +1,29 @@
+@{
+    var result = Evaluation.Rows[(Row.Kind, Row.Id)];
+    if (ChosenAtoms is not null) { result = result with { Leaves = result.Leaves.ToDictionary(x => x.Key, x => x.Value with { WitnessUsed = ChosenAtoms.Contains(x.Key) }) }; }
+}
+@if (Row.Requirement.Expression is null)
+{ <p class="audit-unresolved">Unresolved: @string.Join("; ", Row.Requirement.Reasons)</p> }
+else
+{
+    @foreach (var marker in result.Leaves.Where(x => x.Value.Manual && (result.GatePassed || x.Value.Passed)))
+    { <p class="audit-help">@Row.Requirement.Source.Substring(marker.Key.Start, marker.Key.Length) · Manual · @(marker.Value.Passed ? "checked" : "unchecked")</p> }
+    @foreach (var note in result.Leaves.Values.SelectMany(x => x.Notices ?? []).Distinct())
+    { <p class="audit-help">@note</p> }
+    @if (!result.GatePassed || result.Leaves.Values.Any(x => x.Unresolved))
+    { <p>@(result.GatePassed ? "Passing gate with unresolved branches — grouped condition:" : "Still needed — grouped condition:")</p>
+        <AuditExpressionView Compact="true" Expression="Row.Requirement.Expression" Requirement="Row.Requirement" Results="result.Leaves" Evaluator="Evaluator" Evaluation="Evaluation" InspectCheck="InspectCheck" ControlRequested="ControlRequested" />
+    }
+    else { <p>Own gate passed with this scenario.</p> }
+    <details><summary>Full authored condition and macro details</summary>
+        <AuditExpressionView Expression="Row.Requirement.Expression" Requirement="Row.Requirement" Results="result.Leaves" Evaluator="Evaluator" Evaluation="Evaluation" InspectCheck="InspectCheck" ControlRequested="ControlRequested" />
+    </details>
+}
+@code {
+    [Parameter, EditorRequired] public AuditRow Row { get; set; } = null!;
+    [Parameter, EditorRequired] public RoomAuditEvaluator Evaluator { get; set; } = null!;
+    [Parameter, EditorRequired] public AuditEvaluation Evaluation { get; set; } = null!;
+    [Parameter] public EventCallback<Guid> InspectCheck { get; set; }
+    [Parameter] public EventCallback<string> ControlRequested { get; set; }
+    [Parameter] public IReadOnlyList<AuditAtom>? ChosenAtoms { get; set; }
+}

@@ -1,0 +1,21 @@
+<div class="audit-condition-badges" aria-label="Scenario requirements">
+    @if (Conditions.Count == 0)
+    { <span class="audit-no-requirements">No requirements</span> }
+    @foreach (var condition in Conditions)
+    {
+        var met = condition.Matches(Scenario);
+        var config = condition.Kind is "act" or "soul-mode" || condition.Key.StartsWith("setting:", StringComparison.Ordinal);
+        <span class="audit-condition-badge @(met ? "audit-condition-met" : "audit-condition-missing")">
+            <span aria-hidden="true">@(met ? "✓" : "✕")</span>
+            <span class="audit-sr-only">@(met ? "Met: " : "Missing / not matched: ")</span>
+            @if (condition.Manual) { <span class="audit-manual-tag">Manual</span> }
+            @if (config) { <span class="audit-config-tag">Config</span> }
+            <span class="audit-condition-label">@((condition with { Manual = false }).Summary)</span>
+        </span>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<AuditCondition> Conditions { get; set; } = null!;
+    [Parameter, EditorRequired] public AuditScenario Scenario { get; set; } = null!;
+}

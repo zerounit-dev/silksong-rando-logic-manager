@@ -31,7 +31,7 @@ internal static class DistributedEvidencePresentation
             : DistributedComparisonEvidence.Neutral;
     }
 
-    public static bool IsIcon(string name) => name is "id" or "localPositionX" or "useSceneImage" or "sceneImageOriginalHash" or "sceneImageCropHash" or "isArchived" or "enableAnnotation" or "createdUtc";
+    public static bool IsIcon(string name) => name is "id" or "localPositionX" or "useSceneImage" or "sceneImageOriginalHash" or "isArchived" or "enableAnnotation" or "createdUtc";
 
     public static bool IsNoWrapTableValue(string name) =>
         name is "locationType" or "friendlyName" or "subroomReferenceText" or "sourceSubroomReferenceText" or "destinationSubroomReferenceText"
@@ -58,7 +58,7 @@ internal static class DistributedEvidencePresentation
         "id" => "fa-fingerprint",
         "localPositionX" => "fa-location-dot",
         "useSceneImage" => Raw(name, fields, incoming) == "false" ? "fa-ban" : Raw("useUploadedSceneImage", fields, incoming) == "true" ? "fa-image" : "fa-map",
-        "sceneImageOriginalHash" or "sceneImageCropHash" => Evidence(name, fields) == DistributedComparisonEvidence.Changed ? "fa-not-equal" : Evidence(name, fields) == DistributedComparisonEvidence.Neutral ? "fa-equals" : "fa-fingerprint",
+        "sceneImageOriginalHash" => Evidence(name, fields) == DistributedComparisonEvidence.Changed ? "fa-not-equal" : Evidence(name, fields) == DistributedComparisonEvidence.Neutral ? "fa-equals" : "fa-fingerprint",
         "isArchived" => Raw(name, fields, incoming) == "true" ? "fa-box-archive" : "fa-box-open",
         "enableAnnotation" => Raw(name, fields, incoming) == "true" ? "fa-eye" : "fa-eye-slash",
         "createdUtc" => "fa-calendar-plus",
@@ -122,7 +122,7 @@ internal static class DistributedEvidencePresentation
         "localPositionX" => "Local XYZ", "localPositionY" => "Local Y", "localPositionZ" => "Local Z",
         "sceneImagePixelsPerUnitX" => "Scale X", "sceneImagePixelsPerUnitY" => "Scale Y",
         "sceneImagePixelOffsetX" => "Offset X", "sceneImagePixelOffsetY" => "Offset Y", "useSceneImage" => "Image source",
-        "useUploadedSceneImage" => "Uploaded", "sceneImageOriginalHash" => "Original hash", "sceneImageCropHash" => "Crop hash",
+        "useUploadedSceneImage" => "Uploaded", "sceneImageOriginalHash" => "Original hash",
         "archivedUtc" => "Archived UTC", "createdUtc" => "Created", "updatedUtc" => "Updated UTC",
         "requirements" => "Requirements", "notes" => "Notes", "contributors" => "Contributors", "comments" => "Comments",
         _ => field

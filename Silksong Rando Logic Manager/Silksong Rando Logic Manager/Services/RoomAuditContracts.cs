@@ -16,6 +16,7 @@ public sealed record AuditRow(Guid Id, string Kind, string Name, Guid? SourceId,
 public sealed record AuditCheckIdentity(Guid Id, Guid RoomId, string Name, string RoomName);
 public sealed record AuditTarget(string Kind, Guid Id);
 public sealed record AuditSceneIntent(long Owner, string Kind, Guid Id, bool PickOrigin);
+public sealed record AuditRouteHighlight(IReadOnlyList<Guid> Connections, Guid? Step);
 public sealed record RoomAuditSnapshot(Guid RoomId, string Name, IReadOnlyList<AuditSubroom> Subrooms,
     IReadOnlyList<AuditRow> Rows, IReadOnlyList<AuditCheckIdentity> Checks, IReadOnlyList<AuditValue> Items,
     IReadOnlyList<AuditValue> Crests, IReadOnlyList<AuditValue> Methods, IReadOnlyList<AuditValue> Souls,

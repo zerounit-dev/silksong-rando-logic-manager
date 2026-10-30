@@ -79,7 +79,9 @@ public enum DistributedOriginalChoice { Keep, Remove }
 public enum DistributedImageChoice { Current, Incoming }
 public static class DistributedRoomImageComparison
 {
-    public static readonly IReadOnlyList<string> Fields = ["useSceneImage", "useUploadedSceneImage", "sceneMinX", "sceneMinY", "sceneMaxX", "sceneMaxY", "sceneImagePixelsPerUnitX", "sceneImagePixelsPerUnitY", "sceneImagePixelOffsetX", "sceneImagePixelOffsetY", "sceneImageOriginalHash", "sceneImageCropHash"];
+    // Comparison/presentation only: all twelve values still compose on import.
+    // Raw crop identity stays in TopLevelFields solely for exact review freshness.
+    public static readonly IReadOnlyList<string> Fields = ["useSceneImage", "useUploadedSceneImage", "sceneMinX", "sceneMinY", "sceneMaxX", "sceneMaxY", "sceneImagePixelsPerUnitX", "sceneImagePixelsPerUnitY", "sceneImagePixelOffsetX", "sceneImagePixelOffsetY", "sceneImageOriginalHash"];
 
     // Use complete raw comparison evidence, including grouped/hidden constituents.
     // Numeric tolerance and safety remain owned by the comparison service.

@@ -1,10 +1,17 @@
-@if (Expression is AuditBoolean boolean)
+@{
+    var state = State(Expression);
+}
+@if (Compact && state.Passed && !state.Unresolved)
+{
+    <span class="audit-help">@(Expression is AuditBoolean satisfied ? $"({(satisfied.IsAnd ? "AND" : "OR")} group satisfied)" : "(condition satisfied)")</span>
+}
+else if (Expression is AuditBoolean boolean)
 {
     <div class="audit-boolean" role="group" aria-label="@(boolean.IsAnd ? "AND group" : "OR group")">
         <span class="audit-operator">(</span>
-        <AuditExpressionView Expression="boolean.Left" Requirement="Requirement" Results="Results" Evaluator="Evaluator" Evaluation="Evaluation" InspectCheck="InspectCheck" />
+        <AuditExpressionView Compact="Compact" Expression="boolean.Left" Requirement="Requirement" Results="Results" Evaluator="Evaluator" Evaluation="Evaluation" InspectCheck="InspectCheck" ControlRequested="ControlRequested" />
         <strong class="audit-operator">@(boolean.IsAnd ? "AND" : "OR")</strong>
-        <AuditExpressionView Expression="boolean.Right" Requirement="Requirement" Results="Results" Evaluator="Evaluator" Evaluation="Evaluation" InspectCheck="InspectCheck" />
+        <AuditExpressionView Compact="Compact" Expression="boolean.Right" Requirement="Requirement" Results="Results" Evaluator="Evaluator" Evaluation="Evaluation" InspectCheck="InspectCheck" ControlRequested="ControlRequested" />
         <span class="audit-operator">)</span>
     </div>
 }
@@ -14,17 +21,17 @@ else if (Expression is AuditAtom atom && Results.TryGetValue(atom, out var resul
         <span class="audit-leaf-source">@Requirement.Source.Substring(atom.Start, atom.Length)</span>
         <strong> — @(result.Unresolved ? "unresolved" : result.Passed ? "passed" : "unmet")</strong>
         @if (result.Manual)
-        { <p>Manual · @(result.Passed ? "checked" : "unchecked")</p> }
+        { <p>Manual · @(result.LocalCheckId is not null ? $"Already activated {(result.Passed ? "On" : "Off")}" : result.Passed ? "checked" : "unchecked")</p> }
         @if (result.WitnessUsed) { <small> · used by this approach</small> }
         @if (!result.Manual && result.Evidence is { } evidence)
-        { <ul class="audit-prerequisites"><AuditPrerequisiteView Evidence="evidence" /></ul> }
+        { <details><summary>@(Compact ? "Macro prerequisite failures" : "Macro prerequisites")</summary><ul class="audit-prerequisites"><AuditPrerequisiteView Compact="Compact" Evidence="evidence" ControlRequested="ControlRequested" /></ul></details> }
         else if (!result.Manual) { <p>@result.Explanation</p> }
         @if (result.LocalCheckId is { } checkId)
         {
-            <button type="button" class="audit-action" @onclick="@(() => InspectCheck.InvokeAsync(checkId))">Inspect check</button>
+            <button type="button" class="audit-action" @onclick="@(() => InspectCheck.InvokeAsync(checkId))">Can activate / activation requirements</button>
         }
-        else if (result.ControlKey is { } key)
-        { <a class="audit-control-link" href="@($"#{ControlId(key)}")">Scenario control</a> }
+        @if (result.ControlKey is { } key)
+        { <button type="button" class="audit-control-link" @onclick="@(() => ControlRequested.InvokeAsync(key))">Scenario control</button> }
     </div>
 }
 
@@ -35,5 +42,15 @@ else if (Expression is AuditAtom atom && Results.TryGetValue(atom, out var resul
     [Parameter, EditorRequired] public RoomAuditEvaluator Evaluator { get; set; } = null!;
     [Parameter, EditorRequired] public AuditEvaluation Evaluation { get; set; } = null!;
     [Parameter] public EventCallback<Guid> InspectCheck { get; set; }
+    [Parameter] public EventCallback<string> ControlRequested { get; set; }
+    [Parameter] public bool Compact { get; set; }
+    // Presentation-only fold of supplied leaf results; gameplay bindings stay in the evaluator.
+    private (bool Passed, bool Unresolved) State(AuditExpression expression)
+    {
+        if (expression is AuditAtom atom && Results.TryGetValue(atom, out var result)) return (result.Passed, result.Unresolved);
+        if (expression is not AuditBoolean boolean) return (false, true);
+        var left = State(boolean.Left); var right = State(boolean.Right);
+        return (boolean.IsAnd ? left.Passed && right.Passed : left.Passed || right.Passed, left.Unresolved || right.Unresolved);
+    }
     public static string ControlId(string key) => "audit-control-" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(key)));
 }
