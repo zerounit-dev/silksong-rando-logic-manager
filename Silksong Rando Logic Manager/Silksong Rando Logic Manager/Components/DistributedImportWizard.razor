@@ -97,7 +97,7 @@
                         <div class="distributed-import-comparison">
                             @if (comparison.Summary is { } summary)
                             {
-                                <strong class="distributed-import-comparison-summary">incoming updated: <span class="@UpdatedUtcClass(summary.UpdatedUtc)">@summary.UpdatedUtc.ToString().ToLowerInvariant()</span> · <span class="@(summary.HeaderFieldChanges > 0 ? "distributed-import-summary-count" : null)">header fields: @summary.HeaderFieldChanges</span> · <span class="@(summary.SubroomChanges > 0 ? "distributed-import-summary-count" : null)">subrooms: @summary.SubroomChanges</span> · <span class="@(summary.TransitionChanges > 0 ? "distributed-import-summary-count" : null)">transitions: @summary.TransitionChanges</span> · <span class="@(summary.ConnectionChanges > 0 ? "distributed-import-summary-count" : null)">connections: @summary.ConnectionChanges</span> · <span class="@(summary.CheckChanges > 0 ? "distributed-import-summary-count" : null)">checks: @summary.CheckChanges</span></strong>
+                                <strong class="distributed-import-comparison-summary">incoming updated: <span class="@UpdatedUtcClass(summary.UpdatedUtc)">@summary.UpdatedUtc.ToString().ToLowerInvariant()</span>@if (summary.UpdatedUtc == DistributedUpdatedUtcComparison.Older) { <span class="distributed-import-detail distributed-import-older-warning" tabindex="0" role="img" title="@DistributedEvidencePresentation.IncomingOlderWarning" aria-label="@DistributedEvidencePresentation.IncomingOlderWarning"><i class="fa-solid fa-triangle-exclamation fa-fw" aria-hidden="true"></i><span class="distributed-import-detail-tooltip" aria-hidden="true">@DistributedEvidencePresentation.IncomingOlderWarning</span></span> } · <span class="@(summary.HeaderFieldChanges > 0 ? "distributed-import-summary-count" : null)">header fields: @summary.HeaderFieldChanges</span> · <span class="@(summary.SubroomChanges > 0 ? "distributed-import-summary-count" : null)">subrooms: @summary.SubroomChanges</span> · <span class="@(summary.TransitionChanges > 0 ? "distributed-import-summary-count" : null)">transitions: @summary.TransitionChanges</span> · <span class="@(summary.ConnectionChanges > 0 ? "distributed-import-summary-count" : null)">connections: @summary.ConnectionChanges</span> · <span class="@(summary.CheckChanges > 0 ? "distributed-import-summary-count" : null)">checks: @summary.CheckChanges</span></strong>
                             }
                         <h3>room fields</h3>
                         @foreach (var name in DistributedEvidencePresentation.RoomProse)
@@ -133,6 +133,23 @@
                 @if (view.Completed)
                 {
                     <div class="distributed-import-stage"><strong>import complete</strong><span>applied: @view.Applied · skipped/kept: @view.Skipped · failed: @view.Failed</span></div>
+                    <div class="distributed-import-stage">
+                        <strong>imported rooms</strong>
+                        @if (view.AppliedRooms.Count == 0)
+                        {
+                            <p>No rooms were imported.</p>
+                        }
+                        else
+                        {
+                            <p>Open an imported room in a new tab to verify its state.</p>
+                            <ul>
+                                @foreach (var room in view.AppliedRooms)
+                                {
+                                    <li><a href="@($"/rooms/{room.Key:D}")" target="_blank" rel="noopener noreferrer">@(string.IsNullOrWhiteSpace(room.Value) ? room.Key.ToString("D") : $"{room.Value} ({room.Key:D})")</a></li>
+                                }
+                            </ul>
+                        }
+                    </div>
                     @if (view.SceneImageError is { } imageError) { <p class="danger">@imageError</p> }
                     @if (view.SceneImageResult is { } imageResult)
                     {
@@ -326,7 +343,12 @@
                 await LoadCurrentAsync();
                 return;
             }
-            if (outcome is DistributedImportRoomApplied applied) { view.State = applied.State; if (view.DecidedRoomIndexes.Add(view.RoomIndex)) view.Applied++; }
+            if (outcome is DistributedImportRoomApplied applied)
+            {
+                view.State = applied.State;
+                view.AppliedRooms.TryAdd(applied.RoomId, applied.State.Package.Rooms.Single(room => room.Id == applied.RoomId).FriendlyName);
+                if (view.DecidedRoomIndexes.Add(view.RoomIndex)) view.Applied++;
+            }
             if (outcome is DistributedImportRoomSkipped skipped) { view.State = skipped.State; if (view.DecidedRoomIndexes.Add(view.RoomIndex)) view.Skipped++; }
             if (outcome is DistributedImportRoomKept kept) { view.State = kept.State; if (view.DecidedRoomIndexes.Add(view.RoomIndex)) view.Skipped++; }
             if (outcome is DistributedImportFailed failed) { view.Failure = failed; view.RetryIntent = intent; view.Failed++; return; }
@@ -538,6 +560,7 @@
         public SceneImageRebuildResult? SceneImageResult { get; set; }
         public string? SceneImageError { get; set; }
         public List<Guid> RoomIds { get; set; } = [];
+        public Dictionary<Guid, string> AppliedRooms { get; } = [];
         public Dictionary<int, DistributedRoomComparison> Reviews { get; } = [];
         public HashSet<int> DecidedRoomIndexes { get; } = [];
         public Dictionary<Guid, Dictionary<DistributedChildDecisionKey, DistributedChildChoice>> ChildPlans { get; } = [];

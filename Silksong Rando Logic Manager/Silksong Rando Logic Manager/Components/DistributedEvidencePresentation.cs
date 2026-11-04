@@ -7,6 +7,18 @@ namespace Silksong_Rando_Logic_Manager.Components;
 // Display only. Never replace the raw comparison sides used for freshness/copying.
 internal static class DistributedEvidencePresentation
 {
+    public const string IncomingOlderWarning = "Incoming record is older than local.";
+
+    public static bool IsIncomingOlder(IReadOnlyList<DistributedComparisonValue> fields)
+    {
+        var updated = fields.Single(x => x.FieldName == "updatedUtc");
+        if (updated.CurrentValue is null || updated.IncomingValue is null) return false;
+        // Compare exact instants, not the neutral evidence or minute-formatted text.
+        DateTimeOffset Instant(string raw) => DateTimeOffset.Parse(JsonSerializer.Deserialize<string>(raw)!,
+            CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal);
+        return Instant(updated.IncomingValue) < Instant(updated.CurrentValue);
+    }
+
     public static readonly IReadOnlyList<string> RoomProse = ["id", "friendlyName", "referenceId", "inGameId", "contributors", "comments", "roomGroupId", "sortOrder", "isArchived", "archivedUtc", "createdUtc", "updatedUtc"];
 
     // Display keys only. The underlying comparison inventory remains complete and
@@ -34,7 +46,7 @@ internal static class DistributedEvidencePresentation
     public static bool IsIcon(string name) => name is "id" or "localPositionX" or "useSceneImage" or "sceneImageOriginalHash" or "isArchived" or "enableAnnotation" or "createdUtc";
 
     public static bool IsNoWrapTableValue(string name) =>
-        name is "locationType" or "friendlyName" or "subroomReferenceText" or "sourceSubroomReferenceText" or "destinationSubroomReferenceText"
+        name is "locationType" or "subroomReferenceText" or "sourceSubroomReferenceText" or "destinationSubroomReferenceText"
         or "alias" or "destinationTransitionAliasText" or "destinationRoomReferenceText" or "referenceId"
         or "sortOrder" or "isTodo" or "isVerified" or "isUnsafeArrival"
         || Decimals(name) is not null;

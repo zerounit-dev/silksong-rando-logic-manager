@@ -1,6 +1,6 @@
 @typeparam T
 <table class="distributed-import-child-table">
-    <thead><tr>@if (Choices is not null) { <th class="distributed-import-choice-column"><span class="visually-hidden">choice</span></th> }@foreach (var field in Columns) { <th title="@DistributedEvidencePresentation.Heading(field)" aria-label="@DistributedEvidencePresentation.Heading(field)">@DistributedEvidencePresentation.Heading(field)</th> }</tr></thead>
+    <thead><tr>@if (Choices is not null) { <th class="distributed-import-choice-column"><span class="visually-hidden">choice</span></th> }@foreach (var field in Columns) { <th class="@(field == "friendlyName" ? "distributed-import-name-column" : null)" title="@DistributedEvidencePresentation.Heading(field)" aria-label="@DistributedEvidencePresentation.Heading(field)">@DistributedEvidencePresentation.Heading(field)</th> }</tr></thead>
     <tbody>
         @foreach (var item in Rows)
         {
@@ -25,7 +25,7 @@
                 }
                 @foreach (var name in Columns)
                 {
-                    <td><DistributedEvidenceValue Name="@name" Fields="item.Fields" /></td>
+                    <td class="@(name == "friendlyName" ? "distributed-import-name-column" : null)"><DistributedEvidenceValue Name="@name" Fields="item.Fields" WarnIfIncomingOlder="true" /></td>
                 }
             </tr>
             @if (changed)
@@ -37,7 +37,7 @@
                     }
                     @foreach (var name in Columns)
                     {
-                        <td><DistributedEvidenceValue Name="@name" Fields="item.Fields" Delta="true" /></td>
+                        <td class="@(name == "friendlyName" ? "distributed-import-name-column" : null)"><DistributedEvidenceValue Name="@name" Fields="item.Fields" Delta="true" /></td>
                     }
                 </tr>
             }

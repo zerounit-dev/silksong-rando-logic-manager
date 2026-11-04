@@ -1,0 +1,15 @@
+<section class="audit-requirement-group @(Header.Count > 0 ? "audit-requirement-group-settings" : "") @(!Header.All(condition => condition.Matches(Context)) ? "audit-requirement-group-inactive" : "")" aria-label="Alternative requirements sharing settings and world state">
+    @if (Header.Count > 0)
+    {
+        <header class="audit-requirement-header">
+            <AuditConditionBadges Conditions="Header" Context="Context" />
+        </header>
+    }
+    @ChildContent
+</section>
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<AuditCondition> Header { get; set; } = null!;
+    [Parameter, EditorRequired] public AuditFactContext Context { get; set; } = null!;
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+}

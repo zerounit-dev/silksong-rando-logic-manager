@@ -1,24 +1,31 @@
 @{
     var row = Evaluator.Snapshot.Rows.FirstOrDefault(x => x.Kind == Target.Kind && x.Id == Target.Id);
-    var status = Evaluator.TargetStatus(Target, Evaluation);
-    var met = status is "Reached" or "Available" or "Can activate";
-    var unknown = status.StartsWith("Unresolved", StringComparison.Ordinal);
+    var status = Reverse is not null ? Reverse.Status(Target) : Access is null ? Evaluator.TargetStatus(Target, Evaluation) : Evaluator.TargetStatus(Target, Access);
+    var met = status == "Accessible";
+    var neutral = status == "—";
+    var unknown = status.StartsWith("Unresolved", StringComparison.Ordinal) || status == "No entrance with a resolved subroom";
+    var automatic = Target.Kind != "check" ? null : Access is not null
+        ? AuditComparisons.AutomaticReason(Evaluator, Target.Id, Access)
+        : Evaluation.Facts.Collected.Contains(Target.Id) ? "Automatically collected for this origin" : null;
+    var activated = Access is null ? Evaluation.Facts.Activated(Target.Id)
+        : Access.Unstarted.Facts.Activated(Target.Id) || automatic is not null;
 }
 <div class="audit-point-state">
-    <strong class="@(unknown ? "audit-state-unknown" : met ? "audit-legend-met" : Evaluation.HasOrigin ? "audit-legend-missing" : "")">@(unknown ? "?" : met ? "✓" : Evaluation.HasOrigin ? "✕" : "○") @status</strong>
-    @if (row is not null)
+    <strong class="@(neutral || status == "Disconnected" ? "audit-state-neutral" : unknown ? "audit-state-unknown" : met ? "audit-legend-met" : "audit-legend-missing")" title="@(neutral ? "Neither endpoint selected; accessibility is neutral" : status)">@if (neutral) { <span aria-hidden="true">—</span><span class="audit-sr-only">Neither endpoint selected; accessibility is neutral</span> } else { <span>@(unknown ? "?" : met ? "✓" : "✕") @status</span> }</strong>
+    @if (Reverse is null && !Compact && row is not null && (Access is null || !Access.Scope.AnyEntrance && !Access.Scope.Neutral))
     {
         var result = Evaluation.Rows[(row.Kind, row.Id)];
         <span>Source: @result.Access</span>
-        <span>@RoomAuditEvaluator.GateStatus(row, result)</span>
     }
-    @if (ShowActivation && Target.Kind == "check" && Evaluator.Controls.FirstOrDefault(x => x.LocalCheckId == Target.Id) is { } control)
-    { <span><span class="audit-manual-tag">Manual</span> Already activated @(Scenario.Has(control.Key) ? "On" : "Off")</span> }
+    @if (ShowActivation && Target.Kind == "check" && (automatic is not null || Evaluator.Controls.Any(x => x.LocalCheckId == Target.Id)))
+    { <span title="@automatic">State @(activated ? "On" : "Off") (@(automatic ?? "independent of access"))</span> }
 </div>
 @code {
     [Parameter, EditorRequired] public AuditTarget Target { get; set; } = null!;
     [Parameter, EditorRequired] public RoomAuditEvaluator Evaluator { get; set; } = null!;
     [Parameter, EditorRequired] public AuditEvaluation Evaluation { get; set; } = null!;
-    [Parameter, EditorRequired] public AuditScenario Scenario { get; set; } = null!;
+    [Parameter] public AuditCurrentAccess? Access { get; set; }
+    [Parameter] public AuditReverseAccess? Reverse { get; set; }
     [Parameter] public bool ShowActivation { get; set; } = true;
+    [Parameter] public bool Compact { get; set; }
 }

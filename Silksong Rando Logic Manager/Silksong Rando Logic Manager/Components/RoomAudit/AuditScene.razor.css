@@ -1,0 +1,9 @@
+/* Root-owned gates also cover nodes inserted by a render before interop reconciliation. */
+.audit-scene-panel[data-audit-hide-subroom] [data-audit-layer="subroom"],
+.audit-scene-panel[data-audit-hide-exit] [data-audit-layer="exit"],
+.audit-scene-panel[data-audit-hide-check] [data-audit-layer="check"],
+[data-audit-layer][hidden] { display: none !important; }
+
+.audit-layer-controls { display: inline-flex; align-items: center; gap: .25rem; }
+.audit-layer-controls button { display: inline-flex; align-items: center; justify-content: center; min-width: 1.7rem; }
+.audit-layer-icon { width: 1rem; height: 1rem; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }

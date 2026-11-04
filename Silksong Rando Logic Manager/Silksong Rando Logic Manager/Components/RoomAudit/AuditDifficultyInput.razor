@@ -1,0 +1,21 @@
+<fieldset id="@AuditControlIds.ControlId(LevelKey)" class="audit-difficulty" aria-label="@Label">
+    <div class="audit-difficulty-row">
+    @if (ShowLabel) { <span class="audit-difficulty-name" title="@Label">@Label</span> }
+    <div class="audit-difficulty-options">
+        @for (var rank = 0; rank < RoomAuditEvaluator.DifficultyNames.Length; rank++)
+        {
+            var value = rank;
+            var name = RoomAuditEvaluator.DifficultyNames[value];
+            <label title="@name"><input id="@($"{AuditControlIds.ControlId(LevelKey)}-{value}")" type="radio" name="@AuditControlIds.ControlId(LevelKey)" value="@value" checked="@(Value == value)" aria-label="@name" title="@name" @onchange="@(() => ValueChanged.InvokeAsync(value))" /><span><span class="audit-toggle-text">@(name[..1])</span></span></label>
+        }
+    </div>
+    </div>
+</fieldset>
+
+@code {
+    [Parameter, EditorRequired] public string LevelKey { get; set; } = "";
+    [Parameter, EditorRequired] public string Label { get; set; } = "";
+    [Parameter] public int Value { get; set; }
+    [Parameter] public bool ShowLabel { get; set; } = true;
+    [Parameter] public EventCallback<int> ValueChanged { get; set; }
+}

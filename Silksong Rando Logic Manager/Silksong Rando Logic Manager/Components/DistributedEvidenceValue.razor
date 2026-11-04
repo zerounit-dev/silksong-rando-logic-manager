@@ -17,6 +17,10 @@
         @if (!IsRoomProse && Name == "updatedUtc" && formatted is not null)
         {
             <span class="distributed-import-timestamp @css" title="@DistributedEvidencePresentation.Details(Name, Fields, incoming)"><span class="distributed-import-nowrap">@formatted[..10]</span> <span class="distributed-import-nowrap">@formatted[11..]</span></span>
+            @if (WarnIfIncomingOlder && !Delta && DistributedEvidencePresentation.IsIncomingOlder(Fields))
+            {
+                <span class="distributed-import-detail distributed-import-older-warning" tabindex="0" role="img" title="@DistributedEvidencePresentation.IncomingOlderWarning" aria-label="@DistributedEvidencePresentation.IncomingOlderWarning"><i class="fa-solid fa-triangle-exclamation fa-fw" aria-hidden="true"></i><span class="distributed-import-detail-tooltip" aria-hidden="true">@DistributedEvidencePresentation.IncomingOlderWarning</span></span>
+            }
         }
         else
         {
@@ -29,6 +33,8 @@
     [Parameter, EditorRequired] public string Name { get; set; } = "";
     [Parameter, EditorRequired] public IReadOnlyList<DistributedComparisonValue> Fields { get; set; } = [];
     [Parameter] public bool Delta { get; set; }
+    // Only the ordinary child row owns a recency warning, never a delta or room field.
+    [Parameter] public bool WarnIfIncomingOlder { get; set; }
     // Room prose has no table-width constraint; only its ID stays fully inline.
     [Parameter] public bool IsRoomProse { get; set; }
 }

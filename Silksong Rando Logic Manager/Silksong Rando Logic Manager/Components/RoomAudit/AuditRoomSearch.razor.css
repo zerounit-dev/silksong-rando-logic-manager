@@ -1,0 +1,13 @@
+.audit-room-search { position: relative; flex: 0 1 20rem; min-width: 0; max-width: 100%; }
+.audit-room-search ::deep label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+.audit-room-search ::deep input { display: block; width: 100%; min-width: 0; box-sizing: border-box; font: inherit; line-height: inherit; min-height: 1.45rem; padding: .1rem .25rem; border: 1px solid #99978f; border-radius: 0; color: inherit; background: transparent; }
+.audit-room-search ::deep .audit-search-popup { position: absolute; top: 100%; left: 0; width: 100%; box-sizing: border-box; z-index: 10; border: 1px solid #627b88; background: #f6f5f1; color: #242424; box-shadow: 0 .2rem .4rem #0003; }
+.audit-room-search ::deep .audit-search-popup[hidden] { display: none; }
+.audit-room-search ::deep .audit-search-status { padding: .3rem; overflow-wrap: anywhere; }
+.audit-room-search ::deep [role=listbox] { max-height: min(50dvh, 26rem); overflow-y: auto; overscroll-behavior: contain; }
+.audit-room-search ::deep [role=option] { padding: .4rem; border-top: 1px solid #bec9cc; cursor: pointer; white-space: normal; overflow-wrap: anywhere; }
+.audit-room-search ::deep [aria-selected=true] { background: #e2edf6; outline: 2px solid #1766b1; outline-offset: -2px; }
+.audit-room-search ::deep .audit-search-context { display: block; }
+@media (forced-colors: active) {
+    .audit-room-search ::deep [aria-selected=true] { outline-color: Highlight; }
+}

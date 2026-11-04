@@ -1,0 +1,10 @@
+@inherits LayoutComponentBase
+<DiagnosticErrorBoundary>
+    <ChildContent>
+        <main class="audit-layout" aria-label="Room audit workspace">@Body</main>
+    </ChildContent>
+    <ErrorContent>
+        <span class="diagnostic-boundary-fallback">The diagnostic modal contains the error details.</span>
+    </ErrorContent>
+</DiagnosticErrorBoundary>
+<DiagnosticModal />

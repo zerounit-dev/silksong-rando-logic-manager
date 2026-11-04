@@ -428,8 +428,11 @@ button, input, textarea { font: inherit; }
 .distributed-import-choice-archive { accent-color: #842029; }
 .distributed-import-child-table th, .distributed-import-child-table td { padding: .22rem .3rem; border: 1px solid #aaa9a1; border-right: 0; border-bottom: 0; vertical-align: top; white-space: pre-wrap; overflow-wrap: anywhere; }
 .distributed-import-child-table .distributed-import-nowrap { white-space: nowrap; overflow-wrap: normal; word-break: normal; }
+.distributed-import-child-table .distributed-import-name-column { min-width: 12rem; width: 16rem; }
+.distributed-import-child-table td.distributed-import-name-column > span { display: block; min-width: 12rem; max-width: 20rem; white-space: pre-wrap; overflow-wrap: anywhere; word-break: normal; }
 .distributed-import-child-table .distributed-import-timestamp { white-space: normal; overflow-wrap: normal; word-break: normal; }
 .distributed-import-detail { display: inline-block; }
+.distributed-import-older-warning { color: #842029; margin-left: .25rem; text-decoration: none; }
 .distributed-import-detail:focus-visible { outline: 1px solid #575650; outline-offset: 2px; }
 .distributed-import-detail-tooltip { display: none; }
 .distributed-import-detail:focus-visible > .distributed-import-detail-tooltip { display: block; position: fixed; z-index: 1; left: 1rem; right: 1rem; bottom: 1rem; max-height: 40vh; overflow: auto; padding: .5rem; border: 1px solid #aaa9a1; background: #fff; color: #171717; font-size: .72rem; font-weight: normal; text-decoration: none; white-space: pre-wrap; overflow-wrap: anywhere; pointer-events: none; }

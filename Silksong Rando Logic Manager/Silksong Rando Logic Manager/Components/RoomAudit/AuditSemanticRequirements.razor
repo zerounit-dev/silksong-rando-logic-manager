@@ -1,0 +1,138 @@
+@* Rendering and trace payload presence consume the same already-scoped view. *@
+@foreach (var group in AuditSemanticProjection.Bind(View, Context, Comparisons).Where(group => !Compact || group.Header.Length > 0 || group.Sections.Any(section => section.Entries.Any(entry => entry.Cells.Length > 0))))
+{
+    <AuditRequirementGroup Header="group.Header" Context="group.HeaderFacts">
+        @foreach (var section in group.Sections)
+        {
+            @if (section.Origin is { } origin)
+            {
+                <div class="audit-origin-comparison" aria-label="@($"Requirements from {origin}")">
+                    <span class="audit-comparison-origin">From: @origin</span>
+                    @Answer(section.Entries, section.Facts)
+                </div>
+            }
+            else { @Answer(section.Entries, section.Facts) }
+        }
+    </AuditRequirementGroup>
+}
+
+@code {
+    [Parameter, EditorRequired] public PreparedAuditRequirementView View { get; set; } = null!;
+    [Parameter, EditorRequired] public AuditFactContext Context { get; set; } = null!;
+    [Parameter] public IReadOnlyList<AuditOriginComparison> Comparisons { get; set; } = [];
+    [Parameter] public bool Compact { get; set; }
+
+    private RenderFragment Answer(IReadOnlyList<AuditPreparedEntry> alternatives, AuditFactContext facts) =>
+        @<div class="audit-semantic-requirements" role="group" aria-label="Section header AND any one complete requirement entry">
+            @for (var row = 0; row < alternatives.Count; row++)
+            {
+                var alternative = alternatives[row];
+                var entryName = "Complete requirement entry: all requirements together; " +
+                    string.Join(" AND ", alternative.Cells.Select(cell => "(" + string.Join(" OR ", cell.Options.Select(option => string.Join(" AND ", option.Identities))) + ")")) +
+                    "; " + WitnessName(alternative.Witness, facts);
+                <div class="audit-flat-alternative" role="group" aria-label="@entryName">
+                    @for (var column = 0; column < alternative.Cells.Length; column++)
+                    {
+                        var cell = alternative.Cells[column];
+                        @if (column > 0) { @Conjunction() }
+                          @if (cell.Form != AuditPresentationForm.Ordinary)
+                         { @CompactCell(cell, facts) }
+                          else if (cell.Options.Length > 1 && cell.Options.Any(option => option.Parts.Length > 0))
+                        {
+                              var met = Met(cell.Witness, facts);
+                            <span class="audit-joined-requirement @(met ? "audit-condition-met" : "audit-condition-missing")" role="group" aria-label="@($"{cell.Header}: any one of these complete options; {(met ? "met" : "missing / not matched")}")">
+                                <span class="audit-badge-starter"><span class="audit-joined-header @(met ? "audit-condition-met" : "audit-condition-missing")" aria-hidden="true">@cell.Header</span>@JoinedOption(cell, cell.Options[0], facts)</span>@foreach (var option in cell.Options.Skip(1))
+                                {
+                                    @JoinedOption(cell, option, facts)
+                                }
+                            </span>
+                        }
+                          else if (cell.Options.Length == 1)
+                         {
+                            var option = cell.Options[0];
+                             <span class="audit-flat-single">@Parts(option, facts, false)</span>
+                         }
+                    }
+                     @if (!Compact && alternative.Cells.Length == 0 && alternative.Free)
+                    { <span class="audit-contribution-empty"><span>No requirements</span></span> }
+                      else if (!Compact && alternative.Cells.Length == 0)
+                    { <span class="audit-contribution-empty"><span>No other requirements</span></span> }
+                </div>
+            }
+        </div>;
+
+    private static string OptionName(AuditPreparedCell cell, AuditPreparedOption option, AuditFactContext facts) =>
+        string.Join(" AND ", option.Identities) + "; " + string.Join(" AND ", option.Parts.Select(part => part.FullName)) +
+         "; " + WitnessName(option.Witness, facts);
+
+    private static bool Met(AuditPreparedWitness witness, AuditFactContext facts) => witness.Matches(facts);
+    private static string WitnessName(AuditPreparedWitness witness, AuditFactContext facts) => witness.Describe(facts);
+
+    private RenderFragment JoinedOption(AuditPreparedCell cell, AuditPreparedOption option, AuditFactContext facts)
+    {
+        var name = OptionName(cell, option, facts);
+        return @<span class="audit-joined-option" role="group" aria-label="@name" title="@name">@Parts(option, facts, true)</span>;
+    }
+
+    private RenderFragment CompactCell(AuditPreparedCell cell, AuditFactContext facts)
+    {
+        var met = Met(cell.Witness, facts);
+        var body = cell.Options.SelectMany(option => option.Parts).Where(part => !part.Header).ToArray();
+        var alternative = cell.Options.Length > 1;
+        string? summary = cell.Summary switch
+        { AuditDirectionSummary.Both => "Both", AuditDirectionSummary.Either => "Either", AuditDirectionSummary.Any => "Any", AuditDirectionSummary.All => "All", _ => null };
+        var title = cell.Header + ": " + string.Join(" OR ", cell.Options.Select(option => OptionName(cell, option, facts)));
+        return @<span class="@((body.Length == 0 ? "audit-condition-badge audit-compact-technique " : "audit-joined-requirement audit-compact-requirement ") + (met ? "audit-condition-met" : "audit-condition-missing"))" role="group" aria-label="@title" title="@title">
+            <span class="audit-badge-starter"><span class="audit-joined-header audit-condition-label @(met ? "audit-condition-met" : "audit-condition-missing")" aria-hidden="true">@cell.Header</span>@if (body.Length > 0)
+            {<span class="audit-compact-body" aria-hidden="true">@if (summary is not null)
+                {<span class="audit-joined-option @(met ? "audit-condition-met" : "audit-condition-missing")">@summary</span>}
+                else { @CompactPart(cell, body[0], facts) }</span>}</span>@if (summary is null)
+            {
+                @foreach (var part in body.Skip(1))
+                {
+                    <span class="audit-compact-unit" aria-hidden="true"><span class="audit-compact-operator">@(alternative ? "|" : "&")</span>@CompactPart(cell, part, facts)</span>
+                }
+            }
+        </span>;
+    }
+
+    private RenderFragment CompactPart(AuditPreparedCell cell, AuditPreparedPart part, AuditFactContext facts) =>
+        @<span class="audit-joined-option @(Met(part.Witness, facts) ? "audit-condition-met" : "audit-condition-missing")" title="@($"{part.FullName}: {WitnessName(part.Witness, facts)}")">@BodyCaption(cell, part)</span>;
+
+    private static string BodyCaption(AuditPreparedCell cell, AuditPreparedPart part)
+    {
+        // AP3-C1: every typed Crest body, including singleton; metadata stays exact.
+        if (cell.Form != AuditPresentationForm.Crest || part.Names.Length != 1 || part.Names[0].Role != AuditNameRole.Crest)
+            return part.Caption;
+        var name = part.Names[0].Name;
+        const string suffix = "Crest";
+        var boundary = name.Length - suffix.Length;
+        return boundary > 0 && char.IsWhiteSpace(name[boundary - 1]) && name.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)
+            ? name[..boundary].TrimEnd() : name;
+    }
+
+    private RenderFragment Parts(AuditPreparedOption option, AuditFactContext facts, bool joined, bool application = false)
+    {
+        var parts = option.Parts.Where(part => !joined || !part.Header || option.Parts.All(item => item.Header)).ToArray();
+        return @<span class="audit-flat-payload">
+            @for (var index = 0; index < parts.Length; index++)
+            {
+                 var part = parts[index];
+                 var partName = part.FullName + ": " + WitnessName(part.Witness, facts);
+                  @if (index > 0 && parts[index - 1].Witness.HasEffectiveRequirements) { @Conjunction() }
+                  @if (!part.Witness.HasEffectiveRequirements)
+                {
+                    <span class="@(joined || application ? "audit-option-identity" : "audit-condition-badge audit-identity-badge")" title="@partName">@(joined ? part.Caption : part.FullName)</span><text> </text>
+                }
+                else
+                {
+                         var met = Met(part.Witness, facts);
+                         <span class="@(joined || application ? "audit-option-part" : "audit-condition-badge") @(met ? "audit-condition-met" : "audit-condition-missing")" title="@partName">
+                            <span class="audit-sr-only">@(met ? "Met: " : "Missing / not matched: ")@partName </span><span class="audit-condition-label" aria-hidden="@(joined ? "true" : null)">@(joined ? part.Caption : part.FullName)</span>
+                        </span>
+                }
+            }
+        </span>;
+    }
+    private RenderFragment Conjunction() => @<span class="audit-semantic-conjunction"><span aria-hidden="true">@(" + ")</span><span class="audit-sr-only">@(" AND ")</span></span>;
+}
