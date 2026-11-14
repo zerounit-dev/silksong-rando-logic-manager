@@ -4,13 +4,13 @@ using Silksong_Rando_Logic_Manager.Data;
 namespace Silksong_Rando_Logic_Manager.Services;
 
 /// <summary>Applies only a parser-accepted snapshot after the caller's one confirmation.</summary>
-public sealed class RequirementCatalogueImportService(RequirementCatalogueWriteCoordinator writes, ILogger<RequirementCatalogueImportService> logger)
+public sealed class RequirementCatalogueImportService(RequirementCatalogueWriteCoordinator writes, ILogger<RequirementCatalogueImportService> logger, Authentication.LiveAccess access)
 {
     public async Task<RequirementCatalogueImportOutcome> ReplaceConfirmedAsync(RequirementCatalogueSnapshot snapshot, CancellationToken cancellationToken = default)
     {
         try
         {
-            return await writes.ExecuteAsync(async (db, ct) =>
+            return await writes.ExecuteAsync(access, async (db, ct) =>
             {
                 var issues = Validate(snapshot);
                 if (issues.Count != 0) return RequirementCatalogueImportOutcome.ValidationRejected(issues);
@@ -64,7 +64,8 @@ public sealed class RequirementCatalogueImportService(RequirementCatalogueWriteC
                 }));
                 await db.SaveChangesAsync(ct);
                 return RequirementCatalogueImportOutcome.Committed();
-            }, cancellationToken);
+            }, (result, patch) => result.Status == RequirementCatalogueImportStatus.Committed ? result with { Shared = patch } : result,
+                true, cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception exception) when (RequirementCatalogueService.TryClassifyStorageFailure(exception, out var message))

@@ -13,7 +13,7 @@ public static class LocalExchangeDownloadEndpoints
 
     public static IEndpointRouteBuilder MapLocalExchangeDownloadEndpoints(this IEndpointRouteBuilder endpoints)
     {
-        endpoints.MapGet(CompletePath, DownloadCompleteAsync);
+        endpoints.MapGet(CompletePath, DownloadCompleteAsync).WithMetadata(new ApplicationVersionEndpoint(ApplicationVersionChannel.WorkspaceArtifact));
         endpoints.MapGet(CurrentRoomPath, DownloadCurrentRoomAsync);
         endpoints.MapGet(ZonePath, DownloadZoneAsync);
         return endpoints;

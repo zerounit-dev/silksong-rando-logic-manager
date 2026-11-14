@@ -1,11 +1,11 @@
 // One explicitly mounted audit-only owner. Camera motion never crosses the circuit.
 const owners = new WeakMap();
-export function mount(root, dotnet, owner) {
+export function mount(root, dotnet, owner, externalModal = null) {
     owners.get(root)?.dispose();
     const svg = root.querySelector('svg.audit-scene');
     // Escape is scoped to this mounted audit article, never document/window.
     const keyboardRoot = root.closest('.room-audit') ?? root;
-    const modalOpen = () => !!keyboardRoot.querySelector('dialog[data-audit-modal][open]');
+    const modalOpen = () => externalModal?.open === true || !!keyboardRoot.querySelector('dialog[data-audit-modal][open]');
     const fit = svg ? svg.dataset.fit.split(/\s+/).map(Number) : [];
     if (svg && (fit.length !== 4 || !fit.every(Number.isFinite) || fit[2] <= 0 || fit[3] <= 0))
         throw new Error('Audit scene extent is unusable.');
@@ -41,11 +41,13 @@ export function mount(root, dotnet, owner) {
     const modals = new MutationObserver(records => {
         if (!current()) return;
         if (records.some(record => record.type === 'attributes' &&
-            record.target.matches('dialog[data-audit-modal]') &&
+            (record.target === externalModal || record.target.matches('dialog[data-audit-modal]')) &&
             (record.target.open || record.oldValue !== null)) || modalOpen()) release();
     });
     modals.observe(keyboardRoot, { subtree: true, childList: true, attributes: true,
         attributeFilter: ['open', 'data-audit-modal'], attributeOldValue: true });
+    if (externalModal instanceof HTMLDialogElement)
+        modals.observe(externalModal, { attributes: true, attributeFilter: ['open'], attributeOldValue: true });
     function paint() {
         if (!svg) return;
         if (!box.every(Number.isFinite) || box[2] <= 0 || box[3] <= 0) throw new Error('Nonfinite audit camera.');

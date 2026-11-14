@@ -106,6 +106,9 @@ public sealed class LogicReferenceResolver(LogicDbContext dbContext, ScopedResol
 
         if (dbContext.ChangeTracker.HasChanges())
         {
+            // Resolver saves belong to the caller's original transaction. The
+            // permanent write scope captures their actual effects and publishes only
+            // after that transaction commits; a helper save is not a commit seam.
             await dbContext.SaveChangesAsync(cancellationToken);
         }
 

@@ -254,7 +254,7 @@ public sealed class MapManifestParser
     }
 }
 
-public sealed class MapManifestService(IDbContextFactory<LogicDbContext> dbContextFactory)
+public sealed class MapManifestService(IDbContextFactory<LogicDbContext> dbContextFactory, SharedPublicationCoordinator publications, Authentication.LiveAccess access)
 {
     public async Task<MapReconciliationResult> ReconcileAsync(MapManifest manifest, CancellationToken cancellationToken = default)
     {
@@ -267,6 +267,7 @@ public sealed class MapManifestService(IDbContextFactory<LogicDbContext> dbConte
 
     public async Task<MapReconciliationPlan> BuildPlanAsync(MapManifest manifest, CancellationToken cancellationToken = default)
     {
+        await access.RequireAsync(Authentication.AccessPolicies.Author, cancellationToken);
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         var map = await db.Maps.SingleOrDefaultAsync(x => x.InGameId == manifest.MapInGameId, cancellationToken);
         var rows = new List<MapReconciliationPlanRow>();
@@ -364,8 +365,10 @@ public sealed class MapManifestService(IDbContextFactory<LogicDbContext> dbConte
 
     public async Task<MapReconciliationResult> ApplyPlanAsync(MapReconciliationPlan plan, CancellationToken cancellationToken = default)
     {
+        using var publication = await publications.AcquireAsync(cancellationToken);
+        var historyActor = HistoryActor.From(await access.RequireAsync(Authentication.AccessPolicies.Author, cancellationToken));
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
-        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        await using var transaction = await LogicWriteScope.BeginAsync(db, publication, historyActor, cancellationToken);
         var result = new Counter();
         var selected = plan.Rows.Where(x => x.Selected && x.Kind != MapReconciliationKind.Unchanged).ToList();
         var map = plan.ExistingMapId is { } mapId ? await db.Maps.SingleOrDefaultAsync(x => x.Id == mapId, cancellationToken) : null;
@@ -444,7 +447,9 @@ public sealed class MapManifestService(IDbContextFactory<LogicDbContext> dbConte
         await db.SaveChangesAsync(cancellationToken);
         await AutoLinkBlankMapScenesAsync(db, autoLinkCandidates, result, cancellationToken);
         await new LogicReferenceResolver(db).ResolveAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+        await transaction.FinalizeAsync(cancellationToken);
+        var prepared = publication.PrepareAdvance(transaction.FinalEffects.RoomFactsChanged, false);
+        await transaction.CommitAsync(() => publication.PublishCommitted(prepared), cancellationToken);
         return new(result.New, result.Missing, result.MatchedDifferent, result.MatchedUnchanged, result.AutoLinked, result.UnresolvedAutoLinkCandidates, plan.Manifest.ExcludedAnnotations);
     }
 

@@ -20,7 +20,7 @@ dotnet build "tools/BulkEnemyImporter/BulkEnemyImporter.csproj" -c Release -o $b
 
 Run the built DLL, **not** `dotnet run` (which builds again). Commands below are
 examples, not execution authorization. Make an operator directory outside both the
-dump input tree and the database's Data directory. Plan/report/receipt paths must
+dump input tree and the database's storage directory. Plan/report/receipt paths must
 be new, distinct paths; directories must exist. Do not use filesystem links to
 alias artifacts to source data. Preserve artifacts and backups for recovery.
 
@@ -36,7 +36,7 @@ in a new shell, set them to the directories you previously selected.
 ```powershell
 $tool = Join-Path $buildOutput "BulkEnemyImporter.dll"
 $input = (Resolve-Path "..\references\scenedump").Path
-$db = (Resolve-Path "Silksong Rando Logic Manager\Silksong Rando Logic Manager\Data\silksong-rando-logic.db").Path
+$db = (Resolve-Path "Silksong Rando Logic Manager\Silksong Rando Logic Manager\Storage\silksong-rando-logic.db").Path
 $operator = Join-Path ([System.IO.Path]::GetTempPath()) ("BI1-operator-" + [Guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $operator | Out-Null
 dotnet $tool plan --input $input --database $db --plan "$operator\plan.json" --report "$operator\report.txt"
@@ -46,7 +46,7 @@ The relative input path above assumes the original source checkout's scene-dump
 folder. In a published checkout, select your own existing scene-dump directory
 instead (for example, `$input = (Resolve-Path $env:BI1_SCENE_DUMPS).Path` after
 setting that environment variable). The database example selects the checkout's
-Data database; replace `$db` with the exact intended existing database path when
+Storage database; replace `$db` with the exact intended existing database path when
 operating elsewhere. Neither input nor database is inferred by the utility.
 
 Only recursive case-insensitive `.sceneReady.json` suffixes are parsed, serially

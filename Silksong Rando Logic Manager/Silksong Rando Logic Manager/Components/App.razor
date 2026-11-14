@@ -6,10 +6,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <base href="/" />
     <link rel="stylesheet" href="@Assets["app.css"]" />
+    <link rel="stylesheet" href="@Assets["tools-header.css"]" />
     <link rel="stylesheet" href="@Assets["archipelago.css"]" />
     <style id="archipelago-status" data-permanent></style>
     <link rel="stylesheet" href="@Assets["lib/fontawesome/css/all.min.css"]" />
     <link rel="stylesheet" href="@Assets["Silksong_Rando_Logic_Manager.styles.css"]" />
+    <link rel="stylesheet" href="@Assets["tools-body.css"]" />
     <ImportMap />
     <link rel="icon" type="image/png" href="favicon.png" />
     <style id="room-context-preferences" data-permanent>
@@ -24,7 +26,9 @@
         .map-wireframe[data-has-overlay="true"] [data-map-owner="linked"] { fill: transparent; stroke: transparent; pointer-events: all; cursor: pointer; }
         .map-wireframe[data-has-overlay="true"] [data-map-owner="linked"]:is(:hover, :focus) { stroke: rgb(255 255 255 / 35%); stroke-width: 1px; }
     </style>
+    <script src="@Assets["map-support.js"]"></script>
     <script src="@Assets["editor.js"]"></script>
+    <PageTitle>Silksong Logic Manager</PageTitle>
     <HeadOutlet />
 </head>
 
@@ -48,7 +52,8 @@
     <script src="@Assets["requirement-catalogue.js"]"></script>
     <script src="@Assets["map-navigation.js"]"></script>
     <script src="@Assets["fatal-circuit-fallback.js"]"></script>
-    <script src="@Assets["_framework/blazor.web.js"]"></script>
+    <script src="@Assets["_framework/blazor.web.js"]" autostart="false"></script>
+    <script src="@Assets["authentication-server.js"]"></script>
     <script id="archipelago-script" src="@Assets["archipelago.js"]" data-permanent></script>
 </body>
 

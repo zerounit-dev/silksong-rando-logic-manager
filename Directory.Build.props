@@ -1,0 +1,27 @@
+<Project>
+  <PropertyGroup>
+    <LogicApplicationProject Condition="'$(MSBuildProjectName)' == 'Silksong Rando Logic Manager' Or '$(MSBuildProjectName)' == 'SilksongRandoLogicManager.Client' Or '$(MSBuildProjectName)' == 'SilksongRandoLogicManager.Contracts' Or '$(MSBuildProjectName)' == 'SilksongRandoLogicManager.Audit' Or '$(MSBuildProjectName)' == 'SilksongRandoLogicManager.SceneProcessing'">true</LogicApplicationProject>
+    <!-- Approved release baseline; explicit MSBuild Version remains authoritative. -->
+    <Version Condition="'$(LogicApplicationProject)' == 'true' And '$(Version)' == ''">1.0.0</Version>
+    <!-- Informational release metadata is authored, not the internal build identity. -->
+    <IncludeSourceRevisionInInformationalVersion Condition="'$(LogicApplicationProject)' == 'true'">false</IncludeSourceRevisionInInformationalVersion>
+    <!-- Optional evidence output isolation does not alter the backup tool or hook. -->
+    <BaseIntermediateOutputPath Condition="'$(LogicApplicationProject)' == 'true' And '$(LogicBuildEvidenceRoot)' != ''">$(LogicBuildEvidenceRoot)\obj\$(MSBuildProjectName)\</BaseIntermediateOutputPath>
+    <BaseOutputPath Condition="'$(LogicApplicationProject)' == 'true' And '$(LogicBuildEvidenceRoot)' != ''">$(LogicBuildEvidenceRoot)\bin\$(MSBuildProjectName)\</BaseOutputPath>
+    <DefaultItemExcludes Condition="'$(LogicApplicationProject)' == 'true'">$(DefaultItemExcludes);bin\**;obj\**</DefaultItemExcludes>
+  </PropertyGroup>
+  <!-- Build-only declarations; these never read or change runtime configuration.
+       Resolve once against project/, not each referenced project's directory. -->
+  <PropertyGroup>
+    <LogicManagerSourceRoot>$(MSBuildThisFileDirectory)</LogicManagerSourceRoot>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(LogicApplicationProject)' == 'true'">
+    <_LogicManagerPrivateRoot Include="$(LogicManagerSourceRoot)Silksong Rando Logic Manager/Silksong Rando Logic Manager/Config;$(LogicManagerSourceRoot)Silksong Rando Logic Manager/Silksong Rando Logic Manager/Storage;$(LogicManagerPrivateRoots)">
+      <Root>$([MSBuild]::NormalizeDirectory('$(LogicManagerSourceRoot)', '%(Identity)'))</Root>
+    </_LogicManagerPrivateRoot>
+  </ItemGroup>
+  <PropertyGroup Condition="'$(LogicApplicationProject)' == 'true'">
+    <_LogicManagerPrivateGlobs>@(_LogicManagerPrivateRoot->'%(Root)**')</_LogicManagerPrivateGlobs>
+    <DefaultItemExcludes>$(DefaultItemExcludes);$(_LogicManagerPrivateGlobs)</DefaultItemExcludes>
+  </PropertyGroup>
+</Project>

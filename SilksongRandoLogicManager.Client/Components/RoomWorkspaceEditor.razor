@@ -1,0 +1,284 @@
+@using System.Collections.Immutable
+@using SilksongRandoLogicManager.Client.RoomEditing
+@using SilksongRandoLogicManager.Contracts
+@using SilksongRandoLogicManager.Client.Components.RoomEditorV2
+@using SilksongRandoLogicManager.Client.Components.RequirementCatalogue
+@using Silksong_Rando_Logic_Manager.Components.RoomEditorV2.Contracts
+@using Markdig
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+@inject ConfirmedCatalogue Catalogue
+@inject NavigationManager Navigation
+
+<PageTitle>@DocumentTitle</PageTitle>
+<div class="room-editor-v2" @ref="root" inert="@presentationRetired" data-v2-dialog-open="@((localModal is not null || guide is not null || imageDraft is not null || roomLinksOpen || workspace.AdmittedQueue?.Blocked is not null || workspace.AdmittedQueue?.TrackingUnavailable == true || entryAdmissionUnavailable).ToString().ToLowerInvariant())">
+@if (externalRoomDeleted)
+{
+    <article class="v3-summary"><h1>Room no longer available</h1><p>The selected room was deleted outside this workspace.</p><button type="button" @onclick='() => Depart("/")'>back to map</button></article>
+}
+else
+{
+    EnsurePresentation();
+    var renderDepartureBlocked = DepartureBlocked;
+    var showRetry = workspace.IsAdmitted && (roomResponseObservationFailed || workspace.AcceptanceFailed || workspace.Queue.RecoveryRequired || workspace.Queue.ProjectionPending || keyboardUnsentFailure);
+    var showEntryRetry = EntryRefreshFailed;
+    var showMapRetry = mapReloadFailed && !Archived && !roomLinksOpen;
+<article class="room-document" aria-label="Room editor">
+    <section class="room-sticky-context" aria-label="Room document workspace">
+        <header class="document-header">
+            <div class="room-title-row">
+                <i class="fa-solid fa-fw @TitleStatusIcon room-header-status @TitleStatusClass" role="img" title="@TitleStatusLabel" aria-label="@TitleStatusLabel"></i>
+                <label aria-label="Room friendly name"><textarea id="room-friendly-name" data-v2-header-field="name" class="room-title @HeaderDiagnostic("name")" aria-label="Room friendly name" readonly="@AuthoringBlocked" rows="1">@workspace.InitialHeader.FriendlyName</textarea></label>
+            </div>
+            @if (Archived) { <span class="archived-indicator">[archived]</span> }
+            <div class="room-meta"><div class="room-meta-authored">
+                <label>ref <textarea id="room-reference-editor" data-v2-header-field="reference" class="@HeaderDiagnostic("reference")" aria-label="Room reference ID" rows="1" autocomplete="off" readonly="@AuthoringBlocked">@workspace.InitialHeader.ReferenceId</textarea></label>
+                <label>game <textarea id="room-game-editor" data-v2-header-field="game" class="@HeaderDiagnostic("game")" aria-label="Room game ID" rows="1" readonly="@AuthoringBlocked">@workspace.InitialHeader.InGameId</textarea></label>
+                <label>contributors <textarea id="room-contributors-editor" data-v2-header-field="contributors" aria-label="Room contributors" rows="1" readonly="@AuthoringBlocked">@workspace.InitialHeader.Contributors</textarea></label>
+            </div><div class="room-meta-status">
+                <span class="room-updated">updated: @workspace.Confirmed.Document?.Header.Observation.UpdatedUtc.ToLocalTime()</span>
+                <span class="room-entry-freshness-slot" role="status" title="@EntryFreshnessLabel" aria-label="@EntryFreshnessLabel">@if (EntryFreshnessIcon is { } freshnessIcon) { <i class="fa-solid fa-fw @freshnessIcon" aria-hidden="true"></i> }</span>
+                <span class="v3-icon-slot" role="status" title="@SaveLabel" aria-label="@SaveLabel">@if (SaveIcon is { } saveIcon) { <i class="fa-solid fa-fw @saveIcon" aria-hidden="true"></i> }</span>
+                <span class="v2-refresh-diagnostic" title="@SaveTimingLabel" aria-label="@SaveTimingLabel">updates processed @ProgressInteger(workspace.AdmittedQueue?.TerminalThrough ?? 0) / @ProgressInteger(workspace.AdmittedQueue?.QueuedThrough ?? 0) · @VisibleElapsedText ms</span>
+                <button class="room-recovery-action" type="button" data-inactive="@((!showRetry).ToString().ToLowerInvariant())" aria-hidden="@((!showRetry).ToString().ToLowerInvariant())" disabled="@(!showRetry || controlPending || draining || Shell.GeneralErrorOpen)" @onclick="RetryAsync">Retry</button>
+                <button class="room-recovery-action" type="button" data-inactive="@((!showEntryRetry).ToString().ToLowerInvariant())" aria-hidden="@((!showEntryRetry).ToString().ToLowerInvariant())" disabled="@(!showEntryRetry || entryAdmissionActive || entryCheckWaiting || entryCheckActive || roomPullInFlight || controlPending || draining || Shell.GeneralErrorOpen)" @onclick="RetryEntryRefreshAsync">Retry refresh</button>
+                <button class="room-recovery-action" type="button" data-inactive="@((!showMapRetry).ToString().ToLowerInvariant())" aria-hidden="@((!showMapRetry).ToString().ToLowerInvariant())" aria-busy="@((mapReloadsInFlight != 0).ToString().ToLowerInvariant())" disabled="@(!showMapRetry || mapReloadsInFlight != 0 || Shell.GeneralErrorOpen)" @onclick="() => RetryRoomMapAsync(true)">Retry map refresh</button>
+            </div></div>
+        </header>
+        <div class="document-action-row">
+            @if (!Archived)
+            {
+                <div class="document-navigation-actions">
+                    <button class="back-to-map-button" type="button" disabled="@renderDepartureBlocked" @onclick='() => Depart("/")'><i class="fa-solid fa-map" aria-hidden="true"></i> back to map</button>
+                    <button class="back-to-map-button" type="button" disabled="@renderDepartureBlocked" @onclick='() => Depart($"/rooms/{Entry.RoomId:D}/audit")'><i class="fa-solid fa-route" aria-hidden="true"></i> audit room logic</button>
+                    <button class="room-map-context-toggle room-map-context-toggle-hide" type="button" aria-pressed="true" aria-label="Hide map context" title="Hide map context" @onclick="ToggleMapContext"><i class="fa-solid fa-eye-slash" aria-hidden="true"></i> hide map context</button>
+                    <button class="room-map-context-toggle room-map-context-toggle-show" type="button" aria-pressed="false" aria-label="Show map context" title="Show map context" @onclick="ToggleMapContext"><i class="fa-solid fa-eye" aria-hidden="true"></i> show map context</button>
+                </div>
+            }
+            <div class="room-actions">
+                @if (!Archived) { <button class="room-content-toggle" type="button" disabled="@AuthoringBlocked" @onclick="RecheckAsync"><i class="fa-solid fa-rotate" aria-hidden="true"></i> recheck room logic</button> }
+                <button class="room-content-toggle" type="button" aria-pressed="@showArchived.ToString().ToLowerInvariant()" @onclick="ToggleArchivedContents"><i class="fa-solid @(showArchived ? "fa-eye-slash" : "fa-eye")" aria-hidden="true"></i> @(showArchived ? "hide archived room contents" : "show archived room contents")</button>
+                @if (Archived)
+                {
+                    <button id="room-restore" class="icon-button" type="button" disabled="@AuthoringBlocked" aria-label="restore room" title="restore room" @onclick="() => ArchiveAsync(false)"><i class="fa-solid fa-rotate-left" aria-hidden="true"></i></button>
+                    <button id="room-permanent-delete" class="icon-button" type="button" disabled="@AuthoringBlocked" aria-label="delete room permanently" title="delete room permanently" @onclick="OpenRoomDelete"><i class="fa-solid fa-trash" aria-hidden="true"></i></button>
+                }
+                else { <button id="room-archive" class="archive-room-button" type="button" disabled="@AuthoringBlocked" @onclick="() => ArchiveAsync(true)"><i class="fa-solid fa-box-archive" aria-hidden="true"></i> archive room</button> }
+                @if (workspace.Confirmed.Document?.Header.RoomGroupId is not null) { <a id="room-zone-export" class="icon-button room-current-export" href="@($"/exports/zones/{Entry.RoomId:D}")" download aria-label="export zone" title="Export every active and archived room in this room group."><i class="fa-solid fa-file-export" aria-hidden="true"></i> export zone</a> }
+                else { <button id="room-zone-export" class="icon-button room-current-export" disabled aria-label="export zone" title="Export zone is unavailable because this room is not in a room group."><i class="fa-solid fa-file-export" aria-hidden="true"></i> export zone</button> }
+                <a id="room-current-export" class="icon-button room-current-export" href="@($"/exports/rooms/{Entry.RoomId:D}")" download aria-label="export current room" title="export current room"><i class="fa-solid fa-file-export" aria-hidden="true"></i> export room</a>
+            </div>
+        </div>
+        @if (!Archived && showMapContext)
+        {
+            <div class="room-map-context-height-host" data-v2-map-context-height-host="true">
+                <section class="room-map-context with-zone-map" aria-label="Room map context" inert="@(!EntryControlsReady)">
+                    <div class="room-context-zone-pane" aria-label="Area map pane">
+                        @if (roomMap.Surface is { } map)
+                        {
+                            <AreaMapSurface @ref="areaMap" View="map" Compact="true" HostGeneration="mapGeneration" KeyboardActivation="true" LinkedRoomActivated="DepartLinkedRoom" MapLinkRequested="OpenRoomLinksAsync" />
+                        }
+                        else
+                        {
+                            <div class="room-map-context-empty"><span>@(roomMap.State == RoomMapContextState.NoImportedMap ? "No imported map frames yet." : "The imported map has no available chunk geometry.")</span><button type="button" disabled="@renderDepartureBlocked" @onclick="() => OpenRoomLinksAsync(new(null, null))">edit map links</button></div>
+                        }
+                    </div>
+                    <div class="room-context-divider" aria-hidden="true"></div>
+                    <SceneContextPanePresentation InteractionAdmission="AdmitSceneInteractionAsync" RoomId="Entry.RoomId" AuthoringAllowed="@(!AuthoringBlocked)" UseCurrentViewportBasis="true" SettleKeyboardNudges="true" NudgeCaptured="CaptureKeyboardNudge" NudgeAdmitted="AdmitKeyboardNudge" NudgeRetryRequested="RetryKeyboardNudgeAsync" View="workspace.Confirmed.Document?.Scene" Placement="scenePlacement" TakePlacementFocus="TakeSceneFocus"
+                        @ref="scenePane" SelectedItem="sceneSelection" ActionBox="SceneActionBox" ActionRequested="SceneActionAsync" OwnerMounted="SceneMountedAsync" OwnerReady="SceneReadyAsync" OwnerFailed="SceneFailedAsync" BrowserSetupAllowed="SceneSetupAllowed" LayerVisibilityChanged="SceneLayerVisibilityAsync"
+                        SelectionChanged="SceneSelectionAsync" PlacementCommitted="ScenePlacementAsync" PlacementCancelled="SceneCancelPlacementAsync" MarkerDragCommitted="SceneMoveAsync" SceneNudgeCommitted="SceneMoveAsync" FrameGeometryCommitted="SceneRectangleAsync" Capture="OpenImageAsync" />
+                </section>
+                <div class="room-map-context-height-handle" data-v2-map-context-height-handle="true" aria-hidden="true"></div>
+            </div>
+        }
+    </section>
+    <div class="room-document-content">
+    <section class="document-section" aria-labelledby="room-comments-heading"><h2 id="room-comments-heading">comments</h2><div class="document-comments" aria-label="Room comments" @onclick="BeginComments">
+        @if (editingComments) { <textarea id="room-comments-editor" data-v2-header-field="comments" class="markdown-editor" aria-label="Room comments" readonly="@AuthoringBlocked">@commentsInitial</textarea> }
+        else { <div class="markdown-preview">@((MarkupString)Markdown.ToHtml(workspace.Header.Comments ?? "", MarkdownPipeline))</div> }
+    </div></section>
+        @if (workspace.BoundaryFeedback is { } feedback) { <p class="warning" role="status">@feedback</p> }
+        <RoomTables @ref="tables" RoomId="Entry.RoomId" SceneActionsAvailable="SceneContextReady" SceneUnavailableReason="@SceneUnavailableReason" Subrooms="workspace.Subrooms" Transitions="workspace.Transitions" Connections="workspace.Connections" CheckLocations="workspace.CheckLocations" Enemies="workspace.Enemies"
+                    BoundaryRequested="BoundaryAsync" LatentSuccessors="workspace.LatentSuccessors" CheckTypes="CheckTypes"
+                     ShowArchived="showArchived" Blocked="@(AuthoringBlocked || nativeOwner is null)" InspectionBlocked="@(InspectionBlocked || nativeOwner is null)" ActionRequested="RowActionAsync"
+                      RoomReferences="RoomReferences" SubroomReferences="SubroomReferences" />
+    </div>
+    <footer class="room-reminder-footer" aria-label="Room options reminder"><strong>@ReminderFooterProse</strong><button id="room-syntax-guide" type="button" disabled="@(InspectionBlocked || guideLoading)" @onmousedown:preventDefault="true" @onclick="OpenGuideAsync">syntax guide</button></footer>
+</article>
+@if (guide is { } reference)
+{
+    <RequirementSyntaxGuideModal Reference="reference" DialogId="v3-room-syntax-guide" Close="CloseGuideAsync" Manage="ManageRequirementsAsync" />
+}
+<div data-v2-requirements-expanded-host></div>
+<MapLinksDialog @ref="mapLinks" Owns="@(() => Current)" CanUse="@(() => RoomLinksCanUse)" ErrorOpen="@(() => Shell.GeneralErrorOpen)"
+                Show="Shell.ShowLandingDialogAsync" Hide="Shell.CloseLandingDialogAsync" Freeze="Shell.FreezeLandingDialogAsync" ReportError="Shell.ReportRoomErrorAsync"
+                Closed="RoomLinksClosedAsync" Settled="Shell.DrainRoomRefreshAsync" />
+}
+
+@if (localModal is { } local)
+{
+    <div class="confirmation-backdrop v2-page-modal-backdrop" role="presentation" @onclick="CloseLocalModalAsync">
+    <section id="v3-room-local-dialog" @ref="localDialog" class="confirmation-modal v2-page-modal" role="dialog" aria-modal="true" aria-labelledby="v2-page-modal-title" tabindex="-1" @onclick:stopPropagation="true" @onkeydown="LocalModalKeyDownAsync">
+        @if (local.Action == RoomRowAction.Delete)
+        {
+            <h2 id="v2-page-modal-title">permanently delete?</h2><p id="v2-page-modal-description">Delete archived @ModalKind(local) <strong>@local.Name</strong> permanently? This cannot be undone.</p>
+        }
+        else
+        {
+            <h2 id="v2-page-modal-title">@(local.Action == RoomRowAction.Geometry ? "edit subroom rectangle" : "edit in-game data")</h2>
+            @if (local.Action == RoomRowAction.Geometry) { <p id="v2-page-modal-description">Scene rectangle for <strong>@local.Name</strong>.</p> }
+            else { <p id="v2-page-modal-description">@ModalKind(local) metadata</p> }
+            <div class="in-game-coordinate-grid @(local.Action == RoomRowAction.Metadata ? "v2-metadata-coordinate-grid" : null)">
+                @foreach (var name in local.Action == RoomRowAction.Geometry ? GeometryFields : MetadataFields)
+                {
+                    <label class="@(name == "game ID" ? MetadataGameClass : null)">@CoordinateLabel(local, name)<input data-room-coordinate="@name" aria-label="@CoordinateLabel(local, name)" autocomplete="off" type="@(name == "game ID" ? "text" : "number")" step="any" value="@coordinateInitial[name]" @oninput='args => { if (Shell.CanInteract) coordinateDraft[name] = args.Value?.ToString() ?? ""; }' /></label>
+                }
+            </div>
+        }
+        @if (localFeedback is not null) { <p class="danger" role="alert">@localFeedback</p> }
+        <div class="v2-modal-footer"><div>@if (local is { Action: RoomRowAction.Metadata, Row: RoomCheckRow }) { <button class="compact-control" type="button" @onclick="RevertCheckAnnotationAsync">revert annotation to game position</button> }</div><div><button class="compact-control" type="button" @onclick="CloseLocalModalAsync">Cancel</button><button class="compact-control @(local.Action == RoomRowAction.Delete ? "v2-modal-danger" : null)" type="button" @onclick="ApplyLocalModalAsync">@(local.Action == RoomRowAction.Delete ? "permanently delete" : "Apply")</button></div></div>
+    </section>
+    </div>
+}
+
+@if (workspace.IsAdmitted && imageDraft is { } image && !workspace.Queue.TrackingUnavailable && (workspace.Queue.Blocked is null || ImageCorrection))
+{
+    <div class="confirmation-backdrop v2-page-modal-backdrop" role="presentation" @onclick="CloseImageAsync">
+        <section id="v3-room-image-dialog" class="confirmation-modal v2-page-modal scene-image-capture-modal" data-v2-modal-stage="@(imageSubmitting ? "Committing" : "ProposalOpen")" role="dialog" aria-modal="true" aria-labelledby="v2-page-modal-title" tabindex="-1" @onclick:stopPropagation="true" @onkeydown="ImageKeyDownAsync">
+            @if (workspace.Queue.RecoveryRequired || workspace.Queue.ProjectionPending) { <button type="button" disabled="@(controlPending || draining || !Shell.CanUseRoom)" @onclick="RetryAsync">Retry</button> }
+            <RoomImageDialog @ref="imageContent" View="image" Markers="imageMarkers" InitialViewport="imageViewport" Disabled="ImageDisabled" CancelDisabled="ImageCancelDisabled" Preparing="imageBusy" Submitting="imageSubmitting" UploadUncertain="imageUploadUncertain" Correction="ImageCorrection" Feedback="@imageFeedback" CorrectionFocusVersion="imageCorrectionFocus"
+                DraftChanged="ImageDraftChanged" SourceChanged="SelectImageSourceAsync" Upload="UploadImageAsync" RecoverUpload="RecoverImageUploadAsync" Reset="ResetImageAsync" Clear="ClearImageAsync" Cancel="CloseImageAsync" Apply="ApplyImageAsync" ReportError="Shell.ReportRoomErrorAsync" />
+        </section>
+    </div>
+}
+@if (workspace.AdmittedQueue?.TrackingUnavailable == true || entryAdmissionUnavailable)
+{
+    <div class="confirmation-backdrop v2-page-modal-backdrop" role="presentation">
+    <section id="v3-room-review-dialog" @ref="reviewDialog" class="confirmation-modal v2-page-modal" role="dialog" aria-modal="true" aria-labelledby="room-review-title" tabindex="-1">
+        <h2 id="room-review-title">Room tracking is no longer available</h2>
+        <p>Some submitted work may already be saved. Refresh reloads durable data and discards pending local work; it cannot undo saved changes.</p>
+        <textarea readonly class="markdown-editor" aria-label="Copyable pending room work">@OperationAccount</textarea>
+        <div class="confirmation-actions"><button type="button" @onclick="RefreshDocument">Refresh</button></div>
+    </section>
+    </div>
+}
+else if (workspace.AdmittedQueue?.Blocked is { } blocked && !ImageCorrection)
+{
+    <div class="confirmation-backdrop v2-page-modal-backdrop" role="presentation" @onclick="DismissProposalAsync">
+    <section id="v3-room-review-dialog" @ref="reviewDialog" class="confirmation-modal v2-page-modal @(blocked.Disposition == RoomBlockedDisposition.ConflictAwaitingChoice ? "room-conflict-comparison" : null)" role="dialog" aria-modal="true" aria-labelledby="room-review-title" tabindex="-1" @onclick:stopPropagation="true" @onkeydown="ReviewKeyDownAsync">
+        @{ var ordinaryProposal = blocked.Disposition == RoomBlockedDisposition.ProposalAwaitingChoice && !workspace.Queue.RecoveryRequired; }
+        @if (ordinaryProposal && blocked.Evidence is RoomReferenceProposalEvidence referenceProposal)
+        {
+            <h2 id="room-review-title">update authored references?</h2><p id="v2-page-modal-description">@(referenceProposal.SourceKind == RoomReferenceSourceKind.Room ? "room" : "subroom") <strong>@referenceProposal.SourceFriendlyName</strong> would use <strong>@referenceProposal.NewReferenceId</strong>.</p>
+        }
+        else if (ordinaryProposal && blocked.Evidence is RoomInverseProposalEvidence inverseProposal)
+        {
+            <h2 id="room-review-title">set up inverse?</h2><p id="v2-page-modal-description"><strong>@inverseProposal.SourceFriendlyName</strong> proposes an inverse for <strong>@inverseProposal.TargetFriendlyName</strong>. @if (inverseProposal.FillDestinationRoomReferenceText || inverseProposal.FillDestinationTransitionAliasText) { <span>The blank target field@(inverseProposal.FillDestinationRoomReferenceText && inverseProposal.FillDestinationTransitionAliasText ? "s" : "") will receive @if (inverseProposal.FillDestinationRoomReferenceText) { <code>@inverseProposal.SourceRoomReferenceId</code> } @if (inverseProposal.FillDestinationRoomReferenceText && inverseProposal.FillDestinationTransitionAliasText) { <span> and </span> } @if (inverseProposal.FillDestinationTransitionAliasText) { <code>@inverseProposal.SourceAlias</code> }.</span> }</p>
+        }
+        else
+        {
+            <h2 id="room-review-title">@ReviewTitle(blocked)</h2>
+            <p>@blocked.Message</p>
+        }
+        @if (blocked.Evidence is RoomReloadRequiredEvidence)
+        {
+            <p>Pending intent and live drafts are retained below. Refresh reloads durable data; it does not recreate a reverted or deleted record.</p>
+            <textarea readonly class="markdown-editor" aria-label="Copyable pending room work">@OperationAccount</textarea>
+        }
+        @if (!ordinaryProposal && blocked.Evidence is RoomReferenceProposalEvidence reference)
+        {
+            <p>Change @reference.SourceFriendlyName to reference <code>@reference.NewReferenceId</code>?</p>
+            <ul>@foreach (var target in reference.Targets) { <li>@target.Field: <code>@target.ExpectedText</code></li> }</ul>
+        }
+        else if (!ordinaryProposal && blocked.Evidence is RoomInverseProposalEvidence inverse)
+        {
+            <p>@inverse.SourceFriendlyName → @inverse.TargetFriendlyName</p>
+            <p>Only the reviewed blank destination fields will be filled.</p>
+        }
+        else if (blocked.Disposition == RoomBlockedDisposition.ConflictAwaitingChoice && ConflictRows(blocked.Evidence) is { } fields)
+        {
+            <p>Compare the server version reviewed when this update paused with your captured update. Fields marked <strong>Choice needed</strong> have conflicting changes; your choice applies to those fields. Both choices still apply your original nonconflicting changes and preserve unrelated server fields; neither replaces the whole record.</p>
+            <div class="room-conflict-scroll" tabindex="0" role="region" aria-label="Side-by-side record comparison">
+                <div class="room-conflict-panels">
+                    @foreach (var serverPanel in new[] { true, false })
+                    {
+                        <section class="room-conflict-panel" aria-labelledby="@(serverPanel ? "room-conflict-server" : "room-conflict-update")">
+                            <h3 id="@(serverPanel ? "room-conflict-server" : "room-conflict-update")">@(serverPanel ? "Changed on server" : "Your update")</h3>
+                            <dl class="room-conflict-record">
+                                @foreach (var field in fields)
+                                {
+                                    <div class="room-conflict-field @(field.Different ? "room-conflict-different" : null)">
+                                        <dt>@field.Name @if (field.Divergent) { <span class="room-conflict-cue">Choice needed</span> } else if (field.Different) { <span class="room-conflict-cue">Different</span> }</dt>
+                                        <dd>@ConflictContentView(serverPanel ? field.Server : field.Submitted, field.Name)</dd>
+                                    </div>
+                                }
+                            </dl>
+                            @if (!workspace.Queue.RecoveryRequired)
+                            {
+                                <div class="confirmation-actions room-conflict-choice">
+                                    <button type="button" disabled="@(controlPending || draining)" @onclick="() => ResolveAsync(new ChooseRoomConflictValues(serverPanel ? RoomConflictChoice.KeepServer : RoomConflictChoice.KeepSubmitted))">@(serverPanel ? "Keep server version" : "Keep your update")</button>
+                                </div>
+                            }
+                        </section>
+                    }
+                </div>
+            </div>
+        }
+        @if (workspace.Queue.RecoveryRequired || blocked.Disposition != RoomBlockedDisposition.ConflictAwaitingChoice)
+        {
+        <div class="@(blocked.Disposition == RoomBlockedDisposition.ProposalAwaitingChoice ? "v2-modal-footer" : "confirmation-actions")">
+            @if (workspace.Queue.RecoveryRequired)
+            {
+                <button type="button" disabled="@(controlPending || draining)" @onclick="RetryAsync">Retry</button>
+            }
+            else if (blocked.Disposition == RoomBlockedDisposition.ProposalAwaitingChoice)
+            {
+                <div><button class="compact-control" type="button" disabled="@(controlPending || draining)" @onclick="DismissProposalAsync">revert change</button></div>
+                <div><button class="compact-control" type="button" disabled="@(controlPending || draining)" @onclick="() => ResolveAsync(new ChooseRoomProposal(RoomProposalChoice.SourceOnly))">@(blocked.Evidence is RoomInverseProposalEvidence ? "do not update inverse" : "do not update references")</button>
+                <button class="compact-control" type="button" disabled="@(controlPending || draining)" @onclick="() => ResolveAsync(new ChooseRoomProposal(RoomProposalChoice.UpdateCapturedTargets))">@(blocked.Evidence is RoomInverseProposalEvidence ? "update inverse" : "update references")</button></div>
+            }
+            else if (blocked.Disposition == RoomBlockedDisposition.ProposalStale)
+            {
+                <button type="button" disabled="@controlPending" @onclick="() => ResolveAsync(new PrepareRoomProposalAgain())">review again</button>
+            }
+            else
+            {
+                <button type="button" disabled="@controlPending" @onclick="RefreshDocument">Refresh</button>
+            }
+        </div>
+        }
+    </section>
+    </div>
+}
+</div>
+
+@code {
+    private Task<bool> AdmitSceneInteractionAsync() => Task.FromResult(Current);
+    private sealed record ConflictField(string Name, ConflictContent Server, ConflictContent Submitted, bool Divergent, bool Different);
+    private enum ConflictContentKind { Text, Number, Toggle, Verification }
+    private sealed record ConflictContent(ConflictContentKind Kind, string? Text = null, bool? Flag = null);
+    private RenderFragment ConflictContentView(ConflictContent value, string label) => @<text>
+        @if (value.Kind == ConflictContentKind.Toggle)
+        {
+            <label class="room-conflict-flag"><input type="checkbox" disabled checked="@(value.Flag == true)" /> @label</label>
+        }
+        else if (value.Kind == ConflictContentKind.Verification)
+        {
+            <select disabled aria-label="@label" value="@(value.Flag == true ? "true" : value.Flag == false ? "false" : "")">
+                <option value="false">not verified</option><option value="">unknown</option><option value="true">verified</option>
+            </select>
+        }
+        else if (value.Text is null)
+        {
+            <span class="room-conflict-empty">Not set</span>
+        }
+        else if (value.Text.Length == 0)
+        {
+            <span class="room-conflict-empty">Empty</span>
+        }
+        else
+        {
+            <div class="room-conflict-literal">@value.Text</div>
+        }
+    </text>;
+}

@@ -1,0 +1,192 @@
+@using System.Globalization
+@using Microsoft.JSInterop
+@using Silksong_Rando_Logic_Manager.Components.RoomEditorV2.Contracts
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+@inject ILogger<AuditScene> Logger
+
+<section class="audit-scene-panel" aria-label="Room scene" @ref="root" data-audit-owner="@Owner">
+    @if (cameraFailed) { <p role="alert">Scene interaction unavailable. Use the endpoint radios in the tables.</p> }
+    @if (Snapshot.Scene is not { } scene || !HasExtent(scene))
+    { <p>No positioned geometry. Select targets in the table.</p> }
+    else
+    {
+        <svg class="audit-scene" viewBox="@ViewBox(scene)" data-fit="@ViewBox(scene)" tabindex="0" role="group" aria-label="Room scene. Drag to pan; wheel to zoom. Left click or Enter selects origin; right click or Shift Enter selects destination. Connections inspect requirements only.">
+            <defs><marker id="@($"audit-arrow-{Owner}")" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="context-stroke" /></marker></defs>
+            @if (scene.HasValidBounds && scene.Image?.IsAvailable == true)
+            {
+                <image href="@($"/data/scenes/{Snapshot.RoomId:D}.webp?v={scene.Image.ImageVersion}")" x="@N(scene.SceneMinX)" y="@N(-scene.SceneMaxY!.Value)" width="@N(scene.SceneUnitWidth!.Value)" height="@N(scene.SceneUnitHeight!.Value)" preserveAspectRatio="none" />
+            }
+            @if (scene.HasValidBounds)
+            { <rect class="audit-scene-bounds" x="@N(scene.SceneMinX)" y="@N(-scene.SceneMaxY!.Value)" width="@N(scene.SceneUnitWidth!.Value)" height="@N(scene.SceneUnitHeight!.Value)" /> }
+            @foreach (var frame in scene.Frames)
+            {
+                var target = new AuditTarget("subroom", frame.EntityId);
+                var name = Evaluator.NodeName(frame.EntityId);
+                var status = Status(target);
+                <g data-audit-layer="subroom" data-audit-kind="subroom" data-audit-id="@frame.EntityId" tabindex="0" role="button" aria-label="@($"{name} — {status}")" class="@Decoration(target, status)">
+                    <title>@name — @status</title>
+                    <rect x="@N(frame.X)" y="@N(-frame.Y-frame.Height)" width="@N(frame.Width)" height="@N(frame.Height)" rx="1" />
+                    <text x="@N(frame.X+frame.Width/2)" y="@N(-frame.Y-frame.Height/2)" text-anchor="middle">@name</text>
+                </g>
+            }
+            @foreach (var marker in scene.Markers)
+            {
+                var rows = MarkerRows(marker).ToArray();
+                @foreach (var direction in rows)
+                {
+                var status = Status(new(direction.Kind, direction.Id));
+                var target = new AuditTarget(marker.Kind, direction.Id);
+                var name = $"{Evaluator.RowName(direction)} — {status}{ActivationState(direction)}";
+                var index = Array.IndexOf(rows, direction);
+                var height = 6.0 / rows.Length;
+                var y = -marker.Y - 3 + index * height;
+                <g data-audit-layer="@(marker.Kind == "check" ? "check" : "exit")" data-audit-kind="@marker.Kind" data-audit-id="@direction.Id" tabindex="0" role="button" aria-label="@name" class="@Decoration(target, status)">
+                    <title>@name</title>
+                    @if (marker.Kind == "check")
+                    { <circle cx="@N(marker.X)" cy="@N(-marker.Y)" r="1.8" /> }
+                    else
+                    {
+                        <g>
+                            <rect x="@N(marker.X - 5.25)" y="@N(y)" width="10.5" height="@N(height)" rx=".6" />
+                            <text class="audit-scene-alias" style="@(rows.Length > 1 ? $"font-size: {N(3.75 / rows.Length)}px" : null)" x="@N(marker.X)" y="@N(y + height / 2)" text-anchor="middle" dominant-baseline="central">@marker.Label@(rows.Length > 1 ? $"·{index + 1}" : "")</text>
+                        </g>
+                    }
+                </g>
+                }
+            }
+            <g data-audit-layer="exit" class="audit-route-lines" aria-label="Selected directed route">
+                @foreach (var connection in Snapshot.Rows.Where(x => x.Kind == "connection" && Route.Connections.Contains(x.Id)))
+                {
+                    var from = scene.Frames.FirstOrDefault(x => x.EntityId == connection.SourceId);
+                    var to = scene.Frames.FirstOrDefault(x => x.EntityId == connection.DestinationId);
+                    if (from is null || to is null) { continue; }
+                    var status = Status(new("connection", connection.Id));
+                    <line class="@($"{StatusClass(status)} {(Route.Step == connection.Id ? "audit-line-focus" : "")}")" x1="@N(from.X + from.Width / 2)" y1="@N(-from.Y - from.Height / 2)" x2="@N(to.X + to.Width / 2)" y2="@N(-to.Y - to.Height / 2)" marker-end="@($"url(#audit-arrow-{Owner})")"><title>@Evaluator.RowName(connection) — @status</title></line>
+                }
+            </g>
+        </svg>
+        <button type="button" class="audit-image-height-handle" data-audit-image-height role="separator" aria-label="Scene image height" aria-orientation="horizontal" aria-valuemin="120" aria-valuenow="330"></button>
+    }
+    <div class="audit-scene-chin">
+    <span class="audit-scene-hint">Points: left-click start · right-click goal</span>
+    <div class="audit-camera-controls" aria-label="Map controls">
+        <button type="button" disabled="@(!HasCamera)" data-camera="out" aria-label="Zoom out" title="Zoom out"><i class="fa-solid fa-minus" aria-hidden="true"></i></button>
+        <button type="button" disabled="@(!HasCamera)" data-camera="in" aria-label="Zoom in" title="Zoom in"><i class="fa-solid fa-plus" aria-hidden="true"></i></button>
+        <button type="button" disabled="@(!HasCamera)" data-camera="fit">Fit</button>
+        <div class="audit-layer-controls" role="group" aria-label="Annotation visibility">
+            <button type="button" disabled="@(!HasCamera)" data-audit-layer-toggle="all" aria-pressed="true" aria-label="Hide annotations" title="Hide annotations"><i class="fa-solid fa-layer-group" aria-hidden="true"></i></button>
+            <button type="button" disabled="@(!HasCamera)" data-audit-layer-toggle="subroom" aria-pressed="true" aria-label="Hide subrooms" title="Hide subrooms"><svg class="audit-layer-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M3 11h18M11 11v10M15 3v8" /></svg></button>
+            <button type="button" disabled="@(!HasCamera)" data-audit-layer-toggle="exit" aria-pressed="true" aria-label="Hide exits and connections" title="Hide exits and connections"><svg class="audit-layer-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16m-5-5 5 5-5 5M20 17H4m5-5-5 5 5 5" /></svg></button>
+            <button type="button" disabled="@(!HasCamera)" data-audit-layer-toggle="check" aria-pressed="true" aria-label="Hide check locations and enemies" title="Hide check locations and enemies"><svg class="audit-layer-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 10c0 6-8 12-8 12S4 16 4 10a8 8 0 1 1 16 0Z" /><circle cx="12" cy="10" r="2.5" /></svg></button>
+        </div>
+    </div>
+    </div>
+    <section class="audit-endpoint-summary" aria-label="Mode and endpoints"><span><strong>Mode:</strong> @Mode</span><span> · <strong>From:</strong> @OriginLabel / <strong>To:</strong> @DestinationLabel</span>@if (DestinationStatus is { } destinationStatus) { <span class="@AccessClass(destinationStatus)"> · @(destinationStatus == "Accessible" ? "✓" : destinationStatus is "Inaccessible" or "Disconnected" ? "✕" : "?") @destinationStatus</span> }</section>
+</section>
+
+@code {
+    [CascadingParameter] public AuditHost Host { get; set; } = null!;
+    [Parameter, EditorRequired] public RoomAuditSnapshot Snapshot { get; set; } = null!;
+    [Parameter, EditorRequired] public RoomAuditEvaluator Evaluator { get; set; } = null!;
+    [Parameter, EditorRequired] public AuditEvaluation Evaluation { get; set; } = null!;
+    [Parameter, EditorRequired] public AuditCurrentAccess Access { get; set; } = null!;
+    [Parameter] public AuditReverseAccess? Reverse { get; set; }
+    [Parameter, EditorRequired] public AuditScenario Scenario { get; set; } = null!;
+    [Parameter] public long Owner { get; set; }
+    [Parameter] public string Origin { get; set; } = "";
+    [Parameter] public string OriginLabel { get; set; } = "None";
+    [Parameter] public string DestinationLabel { get; set; } = "None";
+    [Parameter] public string Mode { get; set; } = "Accessibility";
+    [Parameter] public string? DestinationStatus { get; set; }
+    [Parameter] public AuditTarget? Hovered { get; set; }
+    [Parameter] public AuditTarget? Selected { get; set; }
+    [Parameter] public AuditRouteHighlight Route { get; set; } = new([], null);
+    [Parameter] public EventCallback<AuditSceneIntent> Intent { get; set; }
+    private ElementReference root;
+    private IJSObjectReference? module, camera;
+    private DotNetObjectReference<AuditScene>? callback;
+    private bool mounting, disposed, cameraFailed;
+    private long mountedOwner;
+    private bool HasCamera => !cameraFailed && Snapshot.Scene is { } scene && HasExtent(scene);
+    private IEnumerable<AuditRow> MarkerRows(SceneMarkerView marker)
+    {
+        var row = Snapshot.Rows.FirstOrDefault(x => x.Kind == marker.Kind && x.Id == marker.EntityId);
+        return row is null ? [] : marker.Kind != "connection" ? [row] : Snapshot.Rows.Where(x => x.Kind == "connection" && string.Equals(x.Alias?.Trim(), row.Alias?.Trim(), StringComparison.OrdinalIgnoreCase));
+    }
+    private string ActivationState(AuditRow row)
+    {
+        if (row.Kind != "check") return "";
+        var comparisons = Route.OriginKey is null ? AuditComparisons.For(Evaluator, Access) : [];
+        var referenced = Evaluator.Controls.Any(x => x.LocalCheckId == row.Id);
+        static string State(AuditRow row, AuditEvaluation evaluation) =>
+            $"State {(evaluation.Facts.Activated(row.Id) ? "On" : "Off")}{(evaluation.Facts.Collected.Contains(row.Id) ? " (automatically collected for this origin)" : "")}";
+        if (comparisons.Count > 0)
+            return referenced || comparisons.Any(x => x.Evaluation.Facts.Collected.Contains(row.Id))
+                ? " - " + string.Join("; ", comparisons.Select(x => $"From: {x.Label} — {State(row, x.Evaluation)}")) : "";
+        return referenced || Evaluation.Facts.Collected.Contains(row.Id) ? " - " + State(row, Evaluation) : "";
+    }
+    private static string AccessClass(string status) => status == "Accessible" ? "audit-legend-met" : status == "Inaccessible" ? "audit-legend-missing" : status == "Disconnected" ? "audit-state-neutral" : "audit-state-unknown";
+    private string Status(AuditTarget target) => Reverse is not null ? Reverse.Status(target) : Evaluator.TargetStatus(target, Evaluation);
+    private static string StatusClass(string status) => status.StartsWith("Unresolved", StringComparison.Ordinal) ? "audit-scene-unresolved" : status == "Accessible" ? "audit-scene-reached" : status is "—" or "Disconnected" ? "audit-scene-neutral" : "audit-scene-blocked";
+    private bool OnRoute(AuditTarget target) => target.Kind == "subroom" ? Route.Nodes?.Contains(target.Id) == true : target.Kind == "connection" ? Route.Connections.Contains(target.Id) : Route.OriginKey == $"{target.Kind}:{target.Id}";
+    private string Decoration(AuditTarget target, string status) =>
+        $"audit-scene-target {(Reverse is null && (Selected is not null || Route.OriginKey is not null) && !OnRoute(target) ? "audit-scene-neutral" : StatusClass(status))} {(Selected == target ? "audit-selected" : "")} {(Hovered == target ? "audit-table-preview" : "")} {(OnRoute(target) ? "audit-route-marker" : "")} {(target.Kind == "connection" && Route.Step == target.Id ? "audit-focused-marker" : "")} {(Origin == $"{target.Kind}:{target.Id}" ? "audit-origin" : "")}";
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (mounting || disposed || cameraFailed) return;
+        mounting = true; var owner = Owner; mountedOwner = owner;
+        try
+        {
+            if (camera is not null)
+            {
+                await camera.InvokeVoidAsync("reconcile");
+                return;
+            }
+            var imported = await ApplicationModules.ImportAsync(JS, "room-audit-scene.js", ApplicationCodeFailure);
+            if (disposed || Owner != owner) { await imported.DisposeAsync(); return; }
+            module = imported; callback = DotNetObjectReference.Create(this);
+            var mounted = await imported.InvokeAsync<IJSObjectReference>("mount", root, callback, owner, Host.ExternalModal);
+            if (disposed || Owner != owner) { await mounted.InvokeVoidAsync("dispose"); await mounted.DisposeAsync(); return; }
+            camera = mounted;
+        }
+        catch (Exception exception) when (exception is JSException or JSDisconnectedException)
+        {
+            Logger.LogError(exception, "Audit camera mount failed");
+            if (!disposed && Owner == owner) { cameraFailed = true; await InvokeAsync(StateHasChanged); }
+        }
+        finally { mounting = false; }
+    }
+    [CascadingParameter(Name = "ApplicationCodeFailure")] public Action? ApplicationCodeFailure { get; set; }
+    [JSInvokable] public async Task SelectAsync(AuditSceneIntent intent)
+    {
+        if (!Host.Blocked && !disposed && intent.Owner == Owner && mountedOwner == Owner) await Intent.InvokeAsync(intent);
+    }
+    [JSInvokable] public async Task CameraFailedAsync(long owner, string detail)
+    {
+        if (disposed || owner != Owner || mountedOwner != Owner) return;
+        Logger.LogError("Audit camera failed: {Detail}", detail); cameraFailed = true;
+        await InvokeAsync(StateHasChanged);
+    }
+    public async ValueTask DisposeAsync()
+    {
+        disposed = true;
+        if (camera is not null) try { await camera.InvokeVoidAsync("dispose"); await camera.DisposeAsync(); }
+            catch (JSDisconnectedException) { }
+            catch (JSException exception) { Logger.LogError(exception, "Audit camera disposal failed"); }
+        callback?.Dispose();
+        if (module is not null) try { await module.DisposeAsync(); } catch (JSDisconnectedException) { }
+    }
+    private static string N(double value) => value.ToString("G17", CultureInfo.InvariantCulture);
+    private static bool HasExtent(SceneLayoutView scene) => scene.HasValidBounds || scene.Frames.Count > 0 || scene.Markers.Count > 0;
+    private static string ViewBox(SceneLayoutView scene)
+    {
+        var points = new List<(double X, double Y)>();
+        if (scene.HasValidBounds) { points.Add((scene.SceneMinX, -scene.SceneMaxY!.Value)); points.Add((scene.SceneMaxX!.Value, -scene.SceneMinY)); }
+        foreach (var frame in scene.Frames) { points.Add((frame.X, -frame.Y-frame.Height)); points.Add((frame.X+frame.Width, -frame.Y)); }
+        foreach (var marker in scene.Markers) { points.Add((marker.X-5.25, -marker.Y-3)); points.Add((marker.X+5.25, -marker.Y+3)); }
+        var minX = points.Min(x => x.X); var minY = points.Min(x => x.Y);
+        var width = Math.Max(1, points.Max(x => x.X)-minX); var height = Math.Max(1, points.Max(x => x.Y)-minY);
+        return $"{N(minX-width*.1)} {N(minY-height*.1)} {N(width*1.2)} {N(height*1.2)}";
+    }
+}

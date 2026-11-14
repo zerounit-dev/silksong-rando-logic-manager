@@ -1,0 +1,31 @@
+@using Silksong_Rando_Logic_Manager.Authentication
+@inject LiveAccess Access
+@inject NavigationManager Navigation
+
+@if (actor is not null)
+{
+    <header class="tools-header">
+        <a class="tools-back" href="@ToolsNavigation.Back.Path" data-enhance-nav="false"><i class="@ToolsNavigation.Back.Icon" aria-hidden="true"></i><span>@ToolsNavigation.Back.Label</span></a>
+        <nav aria-label="Tools">
+            @foreach (var link in ToolsNavigation.For(actor, Navigation.ToAbsoluteUri(Navigation.Uri).AbsolutePath))
+            {
+                @if (link.Enabled)
+                {
+                    <a href="@link.Href" data-enhance-nav="false" aria-current="@(link.Current ? "page" : null)"><i class="@link.Entry.Icon" aria-hidden="true"></i><span>@link.Entry.Label</span></a>
+                }
+                else
+                {
+                    <span aria-disabled="true" aria-current="@(link.Current ? "page" : null)"><i class="@link.Entry.Icon" aria-hidden="true"></i><span>@link.Entry.Label</span></span>
+                }
+            }
+        </nav>
+    </header>
+}
+
+@code {
+    private ExecutionIdentity? actor;
+    protected override async Task OnParametersSetAsync()
+    {
+        actor = await Access.RequireAsync();
+    }
+}

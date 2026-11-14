@@ -6,7 +6,7 @@ namespace Silksong_Rando_Logic_Manager.Services;
 
 public sealed record RoomImageUpload(Guid Handle, uint Width, uint Height, string Hash);
 internal sealed class RoomImageOriginalUnavailableException() : InvalidOperationException("The uploaded original is missing or does not match its recorded identity. Replace it before rebuilding.");
-internal sealed record StagedRoomImage(string Path, RoomImageUpload View, string ContentType);
+internal sealed record StagedRoomImage(string Path, RoomImageUpload View, string ContentType, string Owner);
 internal sealed class RoomImageDeletionCleanupException(TimeSpan elapsed, IEnumerable<Exception> failures)
     : AggregateException("Room deleted; image cleanup failed.", failures)
 {
@@ -23,16 +23,12 @@ public sealed class SceneImageFileService
     private readonly ConcurrentDictionary<Guid, StagedRoomImage> staged = new();
     public const long UploadLimit = 256L * 1024 * 1024;
 
-    public SceneImageFileService(IHostEnvironment environment) : this(environment.ContentRootPath)
+    public SceneImageFileService(ApplicationStoragePaths paths)
     {
-    }
-
-    public SceneImageFileService(string contentRootPath)
-    {
-        scenesDirectory = Path.Combine(Path.GetFullPath(contentRootPath), "data", "scenes");
-        sourceDirectory = Path.Combine(Path.GetFullPath(contentRootPath), "data", "scene-source");
-        originalsDirectory = Path.Combine(Path.GetFullPath(contentRootPath), "data", "scene-originals");
-        stagingDirectory = Path.Combine(Path.GetFullPath(contentRootPath), "data", "scene-image-staging");
+        scenesDirectory = Path.Combine(paths.DataRoot, "scenes");
+        sourceDirectory = Path.Combine(paths.DataRoot, "scene-source");
+        originalsDirectory = Path.Combine(paths.DataRoot, "scene-originals");
+        stagingDirectory = Path.Combine(paths.DataRoot, "scene-image-staging");
     }
 
     public string GetRoomImagePath(Guid roomId) => Path.Combine(scenesDirectory, $"{roomId:D}.webp");
@@ -59,8 +55,9 @@ public sealed class SceneImageFileService
     internal static bool Matches(string path, string? expected) => expected is not null && File.Exists(path) && Hash(path) == expected;
     internal bool CropMatches(Guid roomId, string? expected) => Matches(GetRoomImagePath(roomId), expected);
 
-    public async Task<RoomImageUpload> StageAsync(Stream input, CancellationToken token = default)
+    public async Task<RoomImageUpload> StageAsync(Authentication.LiveAccess access, Stream input, CancellationToken token = default)
     {
+        var actor = await access.RequireAsync(Authentication.AccessPolicies.Author, token);
         var handle = Guid.NewGuid();
         Directory.CreateDirectory(stagingDirectory);
         var path = Path.Combine(stagingDirectory, $"{handle:N}.source");
@@ -86,7 +83,7 @@ public sealed class SceneImageFileService
             };
             var view = new RoomImageUpload(handle, image.Width, image.Height, Hash(path));
             token.ThrowIfCancellationRequested();
-            staged[handle] = new(path, view, contentType);
+            staged[handle] = new(path, view, contentType, actor.Owner);
             return view;
         }
         catch { if (File.Exists(path)) File.Delete(path); throw; }
@@ -94,6 +91,11 @@ public sealed class SceneImageFileService
 
     internal StagedRoomImage GetStaged(Guid handle) => staged.TryGetValue(handle, out var image)
         ? image : throw new InvalidOperationException("The draft upload is no longer available. Select the image again.");
+    internal void RequireStagedOwner(Guid handle, string owner)
+    {
+        if (!staged.TryGetValue(handle, out var image) || image.Owner != owner)
+            throw new Authentication.AccessDeniedException("not_found", 404, "This upload is not available to this account.");
+    }
     internal string PrepareOriginal(Guid handle, string? expected, SceneImagePreparedSize size, CancellationToken token)
     {
         var input = GetStaged(handle);
@@ -120,13 +122,26 @@ public sealed class SceneImageFileService
         }
         catch { if (File.Exists(path)) File.Delete(path); throw; }
     }
-    public async Task DiscardUploadAsync(Guid handle)
+    public async Task DiscardUploadAsync(Authentication.LiveAccess access, Guid handle)
     {
         using var admission = await AcquireLifecycleAsync();
+        var actor = await access.RequireAsync(Authentication.AccessPolicies.Author);
+        RequireStagedOwner(handle, actor.Owner);
+        DiscardUploadInternal(handle);
+    }
+    internal async Task DiscardUploadInternalAsync(Guid handle)
+    {
+        using var admission = await AcquireLifecycleAsync();
+        DiscardUploadInternal(handle);
+    }
+    private void DiscardUploadInternal(Guid handle)
+    {
         if (staged.TryRemove(handle, out var image) && File.Exists(image.Path)) File.Delete(image.Path);
     }
-    internal byte[]? OpenStagedPreview(Guid handle)
+    internal async Task<byte[]?> OpenStagedPreviewAsync(Authentication.LiveAccess access, Guid handle)
     {
+        var actor = await access.RequireAsync(Authentication.AccessPolicies.Author);
+        RequireStagedOwner(handle, actor.Owner);
         if (!staged.TryGetValue(handle, out var image)) return null;
         if (!Matches(image.Path, image.View.Hash)) return null;
         return PreviewBytes(image.Path);

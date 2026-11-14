@@ -1,18 +1,15 @@
-@rendermode InteractiveServer
 @using Microsoft.AspNetCore.Components.Forms
 @inject DistributedImportPackageParser Parser
 @inject DistributedImportApplicationService Importer
 @inject SceneImageCaptureService SceneImages
-@inject WorkspaceChangeNotifier WorkspaceChanges
 @inject DiagnosticState Diagnostics
 
-<InputFile @key="inputVersion" id="distributed-import-input" class="distributed-import-input" OnChange="ReadPackageAsync" accept="application/json,.json" multiple disabled="@(busy || view?.Started == true || view?.State?.HasStarted == true)" />
+<InputFile @key="inputVersion" id="distributed-import-input" class="distributed-import-input" OnChange="ReadPackageAsync" accept="application/json,.json" multiple disabled="@(!CanAuthor || !CanSelectFiles)" />
 
 @if (view is not null)
 {
-    <div class="confirmation-backdrop distributed-import-backdrop" @onclick="RequestClose">
-        <section class="confirmation-modal distributed-import-modal" role="dialog" aria-modal="true" aria-labelledby="distributed-import-title" @onclick:stopPropagation="true">
-            <h2 id="distributed-import-title">distributed import</h2>
+        <section class="distributed-import-body" aria-labelledby="distributed-import-title">
+            <h2 class="tool-section-title" id="distributed-import-title">import rooms</h2>
             @if (view.ParseErrors.Count > 0)
             {
                 <div class="distributed-import-summary danger"><strong>package validation failed</strong></div>
@@ -28,9 +25,9 @@
                         <div class="distributed-import-options">
                             @if (package.AreaMap is not null) { <label><input type="checkbox" disabled="@busy" @bind="view.ApplyAreaMap" /> apply area map</label> }
                             @if (package.RoomGroupings is not null && package.IsPartialRoomDump != true) { <label><input type="checkbox" disabled="@busy" @bind="view.ApplyGroups" /> apply room groups</label> }
-                            @if (package.RoomGroupings is not null && package.IsPartialRoomDump == true) { <span>room-group context is informational and will not be applied.</span> }
+                            @if (package.RoomGroupings is not null && package.IsPartialRoomDump == true) { <span>Room groups in this partial package will not be imported.</span> }
                         </div>
-                        <p class="warning">Starting commits selected map and group stages, accepted rooms, and any final sweep independently. They cannot be rolled back as one package. Copy the database first where appropriate; import creates no automatic backup.</p>
+                        <p class="warning">Changes are saved separately. Resetting the import will not undo saved changes. Import creates no backup; copy the database beforehand if you need one.</p>
                     }
                     @if (view.Failure is { } failure) { <p class="danger">@failure.Stage failed: @failure.Message</p> }
                     @if (view.State is { } state)
@@ -47,12 +44,12 @@
             }
             @if (HasVisibleNewOrChangedComparison && !view.CloseWarning)
             {
-                <div class="distributed-import-review-utility">
-                    <button type="button" disabled="@busy" @onclick="RequestClose">close</button>
+                <div class="distributed-import-review-utility tool-actions">
+                    <button type="button" disabled="@busy" @onclick="RequestClose">reset</button>
                 </div>
             }
             <footer class="distributed-import-footer">
-                <div>
+                <div class="tool-actions">
                     @if (view.Started && !view.Completed && !view.CloseWarning)
                     {
                         <button type="button" disabled="@(!CanGoPrevious)" @onclick="PreviousAsync">previous</button>
@@ -62,15 +59,15 @@
                         <button type="button" disabled="@(!CanKeepOmittedRooms)" @onclick="(() => DecideSweepAsync(false))">keep omitted rooms</button>
                     }
                 </div>
-                <div>
-                    @if (view.CloseWarning) { <span class="warning">Completed operations remain committed.</span><button type="button" disabled="@busy" @onclick="CloseConfirmed">close anyway</button> }
+                <div class="tool-actions">
+                    @if (view.CloseWarning) { <span class="warning">Resetting will not undo changes already saved.</span><button type="button" disabled="@busy" @onclick="CloseConfirmed">reset anyway</button> }
                     else if (view.Completed)
                     {
-                        <button type="button" disabled="@(!CanGenerateSceneImages)" @onclick="(() => GenerateSceneImagesAsync(SceneImageRebuildMode.MissingOrStale))">Generate missing or stale images</button>
-                        <button type="button" disabled="@(!CanGenerateSceneImages)" @onclick="(() => GenerateSceneImagesAsync(SceneImageRebuildMode.AllUploaded))">Regenerate all uploaded room images</button>
-                        <button type="button" disabled="@busy" @onclick="RequestClose">Close</button>
+                        <button type="button" disabled="@(!CanGenerateSceneImages)" @onclick="(() => GenerateSceneImagesAsync(SceneImageRebuildMode.MissingOrStale))">generate missing or stale images</button>
+                        <button type="button" disabled="@(!CanGenerateSceneImages)" @onclick="(() => GenerateSceneImagesAsync(SceneImageRebuildMode.AllUploaded))">regenerate all uploaded room images</button>
+                        <button type="button" disabled="@busy" @onclick="RequestClose">finish</button>
                     }
-                    else if (!HasVisibleNewOrChangedComparison) { <button type="button" disabled="@busy" @onclick="RequestClose">@(view.Started ? "close" : "cancel")</button> }
+                    else if (!HasVisibleNewOrChangedComparison) { <button type="button" disabled="@busy" @onclick="RequestClose">@(view.Started ? "reset" : "cancel")</button> }
                     @if (!view.Started && view.ParseErrors.Count == 0) { <button type="button" disabled="@busy" @onclick="StartAsync">start import</button> }
                     @if (view.Failure is not null) { <button type="button" disabled="@busy" @onclick="RetryAsync">retry</button> }
                     @if (view.Started && !view.Completed && !view.CloseWarning)
@@ -141,7 +138,6 @@
                         }
                         else
                         {
-                            <p>Open an imported room in a new tab to verify its state.</p>
                             <ul>
                                 @foreach (var room in view.AppliedRooms)
                                 {
@@ -158,10 +154,14 @@
                 }
             </div>
         </section>
-    </div>
 }
 
 @code {
+    [Parameter] public EventCallback OnReset { get; set; }
+    [Parameter] public EventCallback OnPickerStateChanged { get; set; }
+    public bool CanSelectFiles => !busy && view is null;
+    [CascadingParameter] public Silksong_Rando_Logic_Manager.Authentication.ExecutionIdentity? Identity { get; set; }
+    private bool CanAuthor => Identity?.CanAuthor == true;
     private WizardView? view;
     private bool busy;
     private int inputVersion;
@@ -169,19 +169,20 @@
 
     private async Task ReadPackageAsync(InputFileChangeEventArgs args)
     {
-        if (busy || args.FileCount == 0 || view?.Started == true || view?.State?.HasStarted == true) return;
+        if (!CanSelectFiles || args.FileCount == 0) return;
         busy = true;
         view = null;
         var files = args.GetMultipleFiles(args.FileCount);
         var names = files.Select(file => file.Name).ToArray();
         try
         {
+            await OnPickerStateChanged.InvokeAsync();
             long total = 0;
             foreach (var file in files)
             {
                 if (file.Size > MaxUploadBytes - total)
                 {
-                    view = new(names, null, null, [$"{string.Join(", ", names)}: total selected file size exceeds 128 MiB (134217728 bytes)."]);
+                    view = new(names, null, null, [$"{string.Join(", ", names)}: The selected files exceed the 128 MiB limit."]);
                     return;
                 }
                 total += file.Size;
@@ -201,7 +202,7 @@
                     {
                         if (count > MaxUploadBytes - bytesRead)
                         {
-                            view = new(names, null, null, [$"{string.Join(", ", names)}: total selected content exceeds 128 MiB (134217728 bytes)."]);
+                            view = new(names, null, null, [$"{string.Join(", ", names)}: The selected files exceed the 128 MiB limit."]);
                             return;
                         }
                         bytesRead += count;
@@ -212,7 +213,7 @@
                     else if (result is DistributedImportPackageRejected rejected) errors.AddRange(rejected.Errors.Select(error => $"{file.Name}: {error}"));
                     else throw new InvalidOperationException("Package parsing returned an unknown outcome.");
                 }
-                catch (IOException) { errors.Add($"{file.Name}: the selected file could not be read. Close and reselect the files to retry."); }
+                catch (IOException) { errors.Add($"{file.Name}: the selected file could not be read. Cancel the import, then select the files again."); }
             }
             if (errors.Count != 0) { view = new(names, null, null, errors); return; }
             var composed = Parser.ComposePartialSelection(parsed);
@@ -223,8 +224,8 @@
                 ? new(names, null, null, rejectedAdmission.Errors.Select(error => names.Length == 1 ? $"{names[0]}: {error}" : error).ToArray())
                 : new(names, combined.Package, combined.Summary, []);
         }
-        catch (Exception exception) { view = new(names, null, null, [$"{string.Join(", ", names)}: selection validation could not finish because of an unexpected error. Consult the diagnostic details and server logs, then close and reselect to retry."]); Diagnostics.Show(exception.ToString()); }
-        finally { busy = false; }
+        catch (Exception exception) { view = new(names, null, null, [$"{string.Join(", ", names)}: selection validation could not finish because of an unexpected error. See error details. Cancel the import, then select the files again."]); Diagnostics.Show(exception.ToString()); }
+        finally { busy = false; await OnPickerStateChanged.InvokeAsync(); }
     }
 
     private async Task StartAsync() { if (busy || view?.Package is null || view.Started || view.ParseErrors.Count != 0) return; await StartAttemptAsync(view.State); }
@@ -249,7 +250,7 @@
         {
             var current = view!;
             var outcome = await Importer.StartAsync(new(current.Package!, current.ApplyAreaMap, current.ApplyGroups), prior);
-            if (outcome is DistributedImportStarted started) { current.State = started.State; current.Started = true; current.Failure = null; WorkspaceChanges.NotifyChanged(); await LoadCurrentAsync(); }
+            if (outcome is DistributedImportStarted started) { current.State = started.State; current.Started = true; current.Failure = null; await LoadCurrentAsync(); }
             else if (outcome is DistributedImportFailed failed) { current.Failure = failed; current.State = failed.State; current.Failed++; }
             else if (outcome is DistributedImportRejected rejected) current.ParseErrors = rejected.Errors.ToList();
         }
@@ -326,7 +327,7 @@
                 view.CurrentComparison = fresh.Comparison;
                 view.Reviews[view.RoomIndex] = fresh.Comparison;
                 ResetChildPlan(fresh.Comparison);
-                view.RoomStatuses[fresh.Comparison.RoomId] = new("Room import was not applied.", "The room changed after this comparison was loaded. The comparison was refreshed: image settings and original choices are unresolved, child choices were reset to incoming defaults, and view mode was reset to diff.");
+                view.RoomStatuses[fresh.Comparison.RoomId] = new("The room changed during review, so it was not imported.", "Review the refreshed comparison: image settings and original choices need selecting again, child choices default to incoming, and the view has returned to diff.");
                 fullDetailRoomId = null;
                 return;
             }
@@ -371,7 +372,6 @@
             if (outcome is DistributedImportRoomApplied committed)
             {
                 if (committed.CleanupException is { } cleanup) Diagnostics.Show(cleanup.ToString());
-                WorkspaceChanges.NotifyChanged();
             }
             await LoadCurrentAsync();
         }
@@ -405,7 +405,6 @@
             {
                 if (completed.Archived) view.Applied++; else view.Skipped++;
                 view.Sweep = null; view.Completed = true; view.Failure = null; view.RetrySweepArchive = null;
-                if (completed.Archived) WorkspaceChanges.NotifyChanged();
             }
         }
         catch (Exception exception) { RecordUnexpectedFailure("final-sweep", exception); }
@@ -425,17 +424,17 @@
         catch (SceneImageRebuildInterruptedException exception)
         {
             view.SceneImageResult = exception.Result;
-            view.SceneImageError = "Image generation stopped unexpectedly. Earlier results remain committed; consult diagnostics and server logs.";
+            view.SceneImageError = "Image generation stopped unexpectedly. Earlier results remain committed. See error details.";
             ShowImageCleanupDiagnostics(exception.Result);
             Diagnostics.Show(exception.ToString());
         }
-        catch (Exception exception) { view.SceneImageError = "Image generation failed unexpectedly; consult diagnostics and server logs."; Diagnostics.Show(exception.ToString()); }
+        catch (Exception exception) { view.SceneImageError = "Image generation failed unexpectedly. See error details."; Diagnostics.Show(exception.ToString()); }
         finally { busy = false; }
     }
     private void ShowImageCleanupDiagnostics(SceneImageRebuildResult result)
     {
         if (result.CleanupExceptions.Count == 0) return;
-        const string message = "Images were committed, but postcommit cleanup failed; consult diagnostics and server logs.";
+        const string message = "Images were saved, but cleanup failed. See error details.";
         view!.SceneImageError = view.SceneImageError is { } previous ? $"{previous} {message}" : message;
         Diagnostics.Show(new AggregateException(result.CleanupExceptions).ToString());
     }
@@ -459,14 +458,25 @@
     {
         if (view is not null)
         {
-            view.Failure = new(stage, "An unexpected error has occurred. Consult the diagnostic details and server logs.", view.State);
+            view.Failure = new(stage, "An unexpected error has occurred. See error details.", view.State);
             view.Failed++;
         }
         Diagnostics.Show(exception.ToString());
     }
-    private void RequestClose() { if (busy) return; if (view is { Completed: false } current && (current.Started || current.State?.HasStarted == true)) { current.CloseWarning = true; } else ClearView(); }
-    private void CloseConfirmed() { if (!busy) ClearView(); }
-    private void ClearView() { view = null; fullDetailRoomId = null; inputVersion++; }
+    public async Task<bool> RequestResetAsync()
+    {
+        if (busy) return false;
+        if (view is { Completed: false } current && (current.Started || current.State?.HasStarted == true))
+        {
+            current.CloseWarning = true;
+            StateHasChanged();
+        }
+        else await ClearViewAsync();
+        return true;
+    }
+    private async Task RequestClose() => await RequestResetAsync();
+    private async Task CloseConfirmed() { if (!busy) await ClearViewAsync(); }
+    private async Task ClearViewAsync() { view = null; fullDetailRoomId = null; inputVersion++; await OnPickerStateChanged.InvokeAsync(); await OnReset.InvokeAsync(); }
     private bool HasCurrentUndecidedComparison => view?.CurrentComparison is { } comparison && view.State?.PendingRoomIds.Contains(comparison.RoomId) == true && !view.DecidedRoomIndexes.Contains(view.RoomIndex);
     private bool HasVisibleNewOrChangedComparison => view?.CurrentComparison?.Kind is DistributedRoomComparisonKind.New or DistributedRoomComparisonKind.Changed;
     private bool CanGoPrevious => view is not null && !busy && view.Failure is null && view.Started && !view.Completed && view.RoomIndex > 0;

@@ -10,7 +10,7 @@ public static class LocalRoomGraphDownloadEndpoints
     public static IEndpointRouteBuilder MapLocalRoomGraphDownloadEndpoints(this IEndpointRouteBuilder endpoints)
     {
         endpoints.MapGet(ExportPath, DownloadAsync)
-            .AllowAnonymous()
+            .RequireAuthorization(Authentication.AccessPolicies.Normal)
             .DisableAntiforgery();
         return endpoints;
     }

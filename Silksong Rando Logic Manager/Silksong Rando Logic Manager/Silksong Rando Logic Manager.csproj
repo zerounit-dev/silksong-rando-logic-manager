@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk.Web">
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -8,6 +8,8 @@
     <AssemblyName>$(AssemblyName.Replace(' ', '_'))</AssemblyName>
     <BlazorDisableThrowNavigationException>true</BlazorDisableThrowNavigationException>
     <OutputType>Exe</OutputType>
+    <DefaultItemExcludes>$(DefaultItemExcludes);data/Publishing/**;Data/Publishing/**;data/history/**;Data/history/**;data/logs/**;Data/logs/**;data/authentication/**;Data/authentication/**;data/accounts.db*;Data/accounts.db*;data/authentication.json;Data/authentication.json</DefaultItemExcludes>
+    <UserSecretsId>c28dbec3-6137-4768-8a3b-3d7efdf92a04</UserSecretsId>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
@@ -19,11 +21,44 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <None Remove="Data\scene-source\room-map-hd.png" />
+    <None Remove="Storage\scene-source\room-map-hd.png" />
+    <Compile Remove="Services\MapOverlayPlacementService.cs" />
+    <Compile Remove="Services\MapOverlayAssetCatalog.cs" />
   </ItemGroup>
 
   <ItemGroup>
+    <Content Remove="data\authentication.json;data\accounts.db*;data\authentication\**;Data\authentication.json;Data\accounts.db*;Data\authentication\**" />
+    <Compile Remove="data\authentication\**;Data\authentication\**" />
+    <EmbeddedResource Remove="data\authentication\**;Data\authentication\**" />
+    <RazorComponent Remove="data\authentication\**;Data\authentication\**" />
+    <Content Remove="data\scene-image-staging\**;Data\scene-image-staging\**" />
+    <None Remove="data\scene-image-staging\**;Data\scene-image-staging\**" />
+    <Compile Remove="data\scene-image-staging\**;Data\scene-image-staging\**" />
+    <EmbeddedResource Remove="data\scene-image-staging\**;Data\scene-image-staging\**" />
+    <RazorComponent Remove="data\scene-image-staging\**;Data\scene-image-staging\**" />
+    <Content Remove="data\logs\**;Data\logs\**" />
+    <None Remove="data\logs\**;Data\logs\**" />
+    <Compile Remove="data\logs\**;Data\logs\**" />
+    <EmbeddedResource Remove="data\logs\**;Data\logs\**" />
+    <RazorComponent Remove="data\logs\**;Data\logs\**" />
+    <Content Remove="data\history\**;Data\history\**" />
+    <None Remove="data\history\**;Data\history\**" />
+    <Compile Remove="data\history\**;Data\history\**" />
+    <EmbeddedResource Remove="data\history\**;Data\history\**" />
+    <RazorComponent Remove="data\history\**;Data\history\**" />
+    <Content Remove="data\Publishing\**;Data\Publishing\**" />
+    <None Remove="data\Publishing\**;Data\Publishing\**" />
+    <Compile Remove="data\Publishing\**;Data\Publishing\**" />
+    <EmbeddedResource Remove="data\Publishing\**;Data\Publishing\**" />
+    <RazorComponent Remove="data\Publishing\**;Data\Publishing\**" />
+    <None Remove="Assets\Publishing\**" />
+    <Content Include="Assets\Publishing\**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="LibGit2Sharp" Version="0.32.0" />
     <PackageReference Include="Magick.NET-Q8-AnyCPU" Version="14.16.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.Server" Version="10.0.14" />
     <PackageReference Include="Markdig" Version="1.3.2" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.10">
       <PrivateAssets>all</PrivateAssets>
@@ -35,6 +70,8 @@
 
   <ItemGroup>
     <Folder Include="wwwroot\lib\fontawesome\" />
+    <!-- Same tools baseline for the native response whose actor has just been revoked. -->
+    <EmbeddedResource Include="wwwroot/tools-body.css" LogicalName="ToolsBodyStyles" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(Configuration)' != 'Debug'">
@@ -46,10 +83,32 @@
     <RazorComponent Remove="Components\DebugDiagnosticControls.razor" />
     <Content Remove="Components\DebugDiagnosticControls.razor" />
     <None Include="Components\DebugDiagnosticControls.razor" />
+    <RazorComponent Remove="Components\Pages\DiagnosticsTool.razor" />
+    <Content Remove="Components\Pages\DiagnosticsTool.razor" />
+    <None Include="Components\Pages\DiagnosticsTool.razor" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\SilksongRandoLogicManager.Audit\SilksongRandoLogicManager.Audit.csproj" />
+    <ProjectReference Include="..\..\SilksongRandoLogicManager.Client\SilksongRandoLogicManager.Client.csproj" />
+    <ProjectReference Include="..\..\SilksongRandoLogicManager.Contracts\SilksongRandoLogicManager.Contracts.csproj" />
+    <ProjectReference Include="..\..\SilksongRandoLogicManager.SceneProcessing\SilksongRandoLogicManager.SceneProcessing.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="10.0.10" />
+    <None Remove="data\authentication.json;data\accounts.db*;data\authentication\**;Data\authentication.json;Data\accounts.db*;Data\authentication\**" />
   </ItemGroup>
 
   <Target Name="BackupLogicDatabase" AfterTargets="Build" Condition="'$(DesignTimeBuild)' != 'true'">
-    <Exec Command="dotnet run --project &quot;$(MSBuildProjectDirectory)\..\..\tools\DatabaseBackup\DatabaseBackup.csproj&quot; --configuration $(Configuration) -- &quot;$(MSBuildProjectDirectory)\data\silksong-rando-logic.db&quot; &quot;$(MSBuildProjectDirectory)\data\backups&quot;" />
+    <Exec Command="dotnet run --project &quot;$(MSBuildProjectDirectory)\..\..\tools\DatabaseBackup\DatabaseBackup.csproj&quot; --configuration $(Configuration) -- &quot;$(MSBuildProjectDirectory)\Storage\silksong-rando-logic.db&quot; &quot;$(MSBuildProjectDirectory)\Storage\backups&quot;" />
   </Target>
+
+  <ItemGroup>
+    <LogicApplicationInput Remove="$(MSBuildProjectDirectory)\Config\appsettings.Development.json" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <LogicApplicationInput Remove="$(MSBuildProjectDirectory)\Config\appsettings.json" />
+  </ItemGroup>
 
 </Project>

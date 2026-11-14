@@ -1,14 +1,31 @@
 using Microsoft.EntityFrameworkCore;
 using Silksong_Rando_Logic_Manager.Data;
+using Silksong_Rando_Logic_Manager.Authentication;
 
 namespace Silksong_Rando_Logic_Manager.Services;
 
-public sealed class SceneImportService(IDbContextFactory<LogicDbContext> dbContextFactory,
-    RequirementValidationService requirementValidation, SceneImageFileService? sceneImages = null)
+public sealed partial class SceneImportService
 {
-    private readonly RequirementValidationService requirementStatus = requirementValidation;
+    private readonly IDbContextFactory<LogicDbContext> dbContextFactory;
+    private readonly RequirementValidationService requirementStatus;
+    private readonly SharedPublicationCoordinator publications;
+    private readonly ILogger<SceneImportService> logger;
+    private readonly SceneImageFileService? sceneImages;
+    private readonly ICommandAdmission admission;
+    public SceneImportService(IDbContextFactory<LogicDbContext> dbContextFactory, RequirementValidationService requirementValidation,
+        SharedPublicationCoordinator publications, ILogger<SceneImportService> logger, LiveAccess access, SceneImageFileService? sceneImages = null)
+        : this(dbContextFactory, requirementValidation, publications, logger, new WebCommandAdmission(access), sceneImages) { }
+
+    private SceneImportService(IDbContextFactory<LogicDbContext> dbContextFactory, RequirementValidationService requirementValidation,
+        SharedPublicationCoordinator publications, ILogger<SceneImportService> logger, ICommandAdmission admission, SceneImageFileService? sceneImages)
+    { this.dbContextFactory = dbContextFactory; requirementStatus = requirementValidation; this.publications = publications; this.logger = logger; this.admission = admission; this.sceneImages = sceneImages; }
+
+    internal static SceneImportService CreateForStandaloneBulkImport(IDbContextFactory<LogicDbContext> contexts,
+        RequirementValidationService validation, SharedPublicationCoordinator publications, ILogger<SceneImportService> logger) =>
+        new(contexts, validation, publications, logger, new StandaloneBulkImportAdmission(), null);
     public async Task<SceneImportPreview> PreviewAsync(SceneDumpReview review, CancellationToken cancellationToken = default)
     {
+        await admission.AuthorAsync(cancellationToken);
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         var preview = await PreviewAsync(db, review, cancellationToken);
         return preview with { MatchingRooms = preview.MatchingRooms.Select(room => room with
@@ -75,8 +92,10 @@ public sealed class SceneImportService(IDbContextFactory<LogicDbContext> dbConte
         IReadOnlyList<SceneImportInstruction> instructions, SceneUnitSize? replacementDimensions,
         bool existingRoomEnemiesOnly, CancellationToken cancellationToken, SceneWorkbenchCommand? workbench = null)
     {
+        using var publication = await publications.AcquireAsync(cancellationToken);
+        var identity = await admission.AuthorAsync(cancellationToken);
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
-        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        await using var transaction = await LogicWriteScope.BeginAsync(db, publication, identity.Actor, cancellationToken);
         var rooms = await db.Rooms.Where(x => !x.IsArchived).ToListAsync(cancellationToken);
         var transitions = await db.RoomTransitions.Where(x => !x.IsArchived).ToListAsync(cancellationToken);
         var checks = await db.CheckLocations.Where(x => !x.IsArchived).ToListAsync(cancellationToken);
@@ -166,6 +185,7 @@ public sealed class SceneImportService(IDbContextFactory<LogicDbContext> dbConte
         }
 
         var importedTransitions = new List<RoomTransition>();
+        var appliedExits = new List<Guid>();
         var importedChecks = new List<CheckLocation>();
         if (instructions.Select(instruction => instruction.ObjectId).Distinct().Count() != instructions.Count) throw new InvalidOperationException("Each scene object may be imported once.");
         foreach (var instruction in instructions)
@@ -180,6 +200,7 @@ public sealed class SceneImportService(IDbContextFactory<LogicDbContext> dbConte
                     var transition = transitions.SingleOrDefault(item => item.Id == instruction.ExistingRecordId && item.RoomId == targetRoom.Id)
                         ?? throw new InvalidOperationException("The selected transition update target is not an active record in the target room.");
                     ApplyMetadata(transition, node, SceneDumpIdentity.GameId(node));
+                    appliedExits.Add(transition.Id);
                 }
                 else
                 {
@@ -226,6 +247,7 @@ public sealed class SceneImportService(IDbContextFactory<LogicDbContext> dbConte
                     SortOrder = await NextSortOrderAsync(db.RoomTransitions.Where(x => x.RoomId == targetRoom.Id && !x.IsArchived), cancellationToken) + importedTransitions.Count
                 };
                 importedTransitions.Add(transition);
+                appliedExits.Add(transition.Id);
                 transitions.Add(transition);
             }
             else if (node.Classification is SceneDumpClassification.Check or SceneDumpClassification.Enemy)
@@ -280,20 +302,18 @@ public sealed class SceneImportService(IDbContextFactory<LogicDbContext> dbConte
         {
             await db.SaveChangesAsync(cancellationToken);
         }
-        await transaction.CommitAsync(cancellationToken);
-        return new SceneImportResult(targetRoom.Id, importedTransitions.Select(x => x.Id).ToArray(), importedChecks.Select(x => x.Id).ToArray());
+        await transaction.FinalizeAsync(cancellationToken);
+        var prepared = publication.PrepareAdvance(transaction.FinalEffects.RoomFactsChanged, false);
+        await transaction.CommitAsync(() => publication.PublishCommitted(prepared), cancellationToken);
+        return new SceneImportResult(targetRoom.Id, importedTransitions.Select(x => x.Id).ToArray(), importedChecks.Select(x => x.Id).ToArray())
+        { AppliedExitIds = appliedExits.ToArray() };
 
         InvalidOperationException AdmissionFailure(string message) => workbench is null
             ? new InvalidOperationException(message) : new SceneWorkbenchValidationException(message);
     }
 
     public static SceneImportObjectMatch MatchObject(SceneDumpObject node, IEnumerable<SceneImportSelectableRecord> transitions, IEnumerable<SceneImportSelectableRecord> checks)
-    {
-        var gameId = SceneDumpIdentity.GameId(node);
-        var matches = transitions.Concat(checks).Where(record => Matches(record.InGameId, gameId))
-            .Select(record => new SceneImportRecordMatch(record.Id, record.RoomId, record.Classification)).ToArray();
-        return new(node.Id, node.Classification, gameId, matches);
-    }
+        => SceneImportMatching.MatchObject(node, transitions, checks);
     private static bool CompleteFinitePair(double? x, double? y) => x is double a && y is double b && double.IsFinite(a) && double.IsFinite(b);
 
     private static void ApplyMetadata(RoomTransition transition, SceneDumpObject node, string? gameId)
@@ -318,7 +338,7 @@ public sealed class SceneImportService(IDbContextFactory<LogicDbContext> dbConte
         check.LocalPositionZ = node.LocalPosition?.Z;
     }
 
-    private static IEnumerable<SceneDumpObject> Flatten(IEnumerable<SceneDumpObject> nodes) => nodes.SelectMany(node => new[] { node }.Concat(Flatten(node.Children)));
+    private static IEnumerable<SceneDumpObject> Flatten(IEnumerable<SceneDumpObject> nodes) => SceneTransport.Flatten(nodes);
     private static SceneDumpObject? FindNode(IEnumerable<SceneDumpObject> nodes, Guid id) => Flatten(nodes).SingleOrDefault(node => node.Id == id);
 
     private static bool Matches(string? left, string? right) => !string.IsNullOrWhiteSpace(left) && !string.IsNullOrWhiteSpace(right) && string.Equals(left.Trim(), right.Trim(), StringComparison.OrdinalIgnoreCase);
@@ -377,46 +397,3 @@ public sealed class SceneImportService(IDbContextFactory<LogicDbContext> dbConte
         room.SceneMaxX = maxX; room.SceneMaxY = maxY;
     }
 }
-
-public sealed record SceneImportRoom(Guid Id, string FriendlyName, string ReferenceId, string? InGameId, double? SceneMaxX, double? SceneMaxY)
-{
-    public double SceneMinX { get; init; }
-    public double SceneMinY { get; init; }
-    public double? ScaleX { get; init; }
-    public double? ScaleY { get; init; }
-    public double? OffsetX { get; init; }
-    public double? OffsetY { get; init; }
-    public bool UseSceneImage { get; init; }
-    public bool IsStale { get; init; }
-    public long ImageVersion { get; init; }
-    public string? ImageUrl { get; init; }
-    public bool ImageEligible => UseSceneImage && !IsStale && SceneBounds.TryGetSize(SceneMinX, SceneMinY, SceneMaxX, SceneMaxY, out _, out _) &&
-        SceneBounds.HasUsableScales(ScaleX, ScaleY) && SceneBounds.HasUsablePixelOffsets(OffsetX, OffsetY);
-}
-public sealed record SceneImportPreview(IReadOnlyList<SceneImportRoom> MatchingRooms, IReadOnlyList<SceneImportObjectMatch> ObjectMatches, IReadOnlyList<SceneImportSelectableRecord> Transitions, IReadOnlyList<SceneImportSelectableRecord> Checks, IReadOnlyList<SceneImportEnemyName> EnemyNames);
-public sealed record SceneImportEnemyName(Guid Id, string OutputValue, string Name);
-public sealed record SceneImportObjectMatch(Guid ObjectId, SceneDumpClassification Classification, string? GameId, IReadOnlyList<SceneImportRecordMatch> Matches);
-public sealed record SceneImportRecordMatch(Guid RecordId, Guid RoomId, SceneDumpClassification Classification);
-public sealed record SceneImportSelectableRecord(Guid Id, Guid RoomId, SceneDumpClassification Classification, string FriendlyName, string? InGameId)
-{
-    public double? X { get; init; }
-    public double? Y { get; init; }
-    public double? Z { get; init; }
-    public string? LocationType { get; init; }
-    public string Requirements { get; init; } = string.Empty;
-    public string Notes { get; init; } = string.Empty;
-    public SceneEnemyTargetEquivalence? EnemyEquivalence { get; init; }
-    public bool IsEnemy => CheckLocationTypeCatalogue.IsEnemy(LocationType);
-}
-// Modal matching facts only; never a persisted identity or bulk artifact contract.
-public sealed record SceneEnemyTargetEquivalence(bool? RequirementsParseSucceeded, bool IsTodo, bool? IsVerified,
-    bool EnableAnnotation, double? AnnotationX, double? AnnotationY, string? SubroomReferenceText,
-    Guid? ResolvedSubroomId, double? LocalX, double? LocalY, double? LocalZ);
-public sealed record SceneWorkbenchRow(SceneImportInstruction Instruction, bool Apply, bool Unresolved, string Requirements, string Notes);
-public sealed record SceneWorkbenchArchive(Guid RecordId, SceneDumpClassification Classification);
-public sealed record SceneWorkbenchCommand(Guid? TargetRoomId, IReadOnlyList<SceneWorkbenchRow> Rows,
-    IReadOnlyList<SceneWorkbenchArchive> Archives, bool ApplyBounds, SceneUnitSize? ReplacementDimensions);
-public sealed class SceneWorkbenchValidationException(string message) : InvalidOperationException(message) { }
-public sealed record SceneImportInstruction(Guid ObjectId, SceneImportMode Mode, Guid? ExistingRecordId, string FriendlyName);
-public enum SceneImportMode { Create, Update }
-public sealed record SceneImportResult(Guid RoomId, IReadOnlyList<Guid> TransitionIds, IReadOnlyList<Guid> CheckIds);

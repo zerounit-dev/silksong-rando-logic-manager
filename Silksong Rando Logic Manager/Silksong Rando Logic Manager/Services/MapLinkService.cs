@@ -4,31 +4,22 @@ using System.Text.RegularExpressions;
 
 namespace Silksong_Rando_Logic_Manager.Services;
 
-public sealed record MapLinkRow(Guid MapSceneId, string ZoneInGameId, string CacheKey, string ChunkIndexes, string? RoomReferenceText, ReferenceResolutionStatus? ResolutionStatus, string? LinkedRoomFriendlyName, Guid? ResolvedRoomId);
-public sealed record MapLinkEditorData(IReadOnlyList<MapLinkRow> Rows, IReadOnlyList<Room> ActiveRooms);
 public sealed record MapLinkDraft(Guid MapSceneId, string? RoomReferenceText);
+public sealed class MapLinkTargetMissingException : Exception { }
+public sealed record MapLinkWriteOutcome(int? MergedCount, SilksongRandoLogicManager.Contracts.SharedMutationSegment? Shared);
 
-public sealed class MapLinkService(IDbContextFactory<LogicDbContext> dbContextFactory)
+public sealed class MapLinkService(IDbContextFactory<LogicDbContext> dbContextFactory, SharedPublicationCoordinator publications,
+    SharedCatalogueService sharedCatalogue, ILogger<MapLinkService> logger, Authentication.LiveAccess access)
 {
-    public async Task<MapLinkEditorData> GetAsync(Guid? resolvedRoomId = null, Guid? mapSceneId = null, CancellationToken cancellationToken = default)
+    public async Task<MapLinkWriteOutcome> SaveAsync(IReadOnlyCollection<MapLinkDraft> drafts, CancellationToken cancellationToken = default)
     {
+        using var publication = await publications.AcquireAsync(cancellationToken);
+        var historyActor = HistoryActor.From(await access.RequireAsync(Authentication.AccessPolicies.Author, cancellationToken));
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
-        var scenes = await db.MapScenes.Include(x => x.MapZone).Include(x => x.Chunks).Include(x => x.ResolvedRoom).ToListAsync(cancellationToken);
-        scenes = resolvedRoomId is { } room ? scenes.Where(x => x.ResolvedRoomId == room).ToList() : mapSceneId is { } scene ? scenes.Where(x => x.Id == scene).ToList() : scenes;
-        var report = await new LogicReferenceResolver(db).GetResolutionReportAsync(cancellationToken);
-        var rows = scenes.OrderBy(x => x.MapZone!.InGameId).ThenBy(x => x.InGameId).Select(x => new MapLinkRow(x.Id, x.MapZone!.InGameId, x.InGameId, string.Join(", ", x.Chunks.OrderBy(c => c.CacheIndex).Select(c => c.CacheIndex)), x.RoomReferenceText,
-            report.References.SingleOrDefault(r => r.EntityType == nameof(MapScene) && r.EntityId == x.Id && r.FieldName == nameof(MapScene.RoomReferenceText))?.Status,
-            x.ResolvedRoom is { IsArchived: false } linked ? linked.FriendlyName : null, x.ResolvedRoomId)).ToList();
-        var rooms = await db.Rooms.AsNoTracking().Where(x => !x.IsArchived).OrderBy(x => x.ReferenceId).ToListAsync(cancellationToken);
-        return new(rows, rooms);
-    }
-
-    public async Task SaveAsync(IReadOnlyCollection<MapLinkDraft> drafts, CancellationToken cancellationToken = default)
-    {
-        await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
-        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        await using var transaction = await LogicWriteScope.BeginAsync(db, publication, historyActor, cancellationToken);
         var ids = drafts.Select(x => x.MapSceneId).ToList();
         var scenes = await db.MapScenes.Where(x => ids.Contains(x.Id)).ToListAsync(cancellationToken);
+        if (scenes.Count != ids.Distinct().Count()) throw new MapLinkTargetMissingException();
         var changed = new List<MapScene>();
         foreach (var draft in drafts)
         {
@@ -41,13 +32,21 @@ public sealed class MapLinkService(IDbContextFactory<LogicDbContext> dbContextFa
         await db.SaveChangesAsync(cancellationToken);
         await MapManifestService.AutoLinkBlankMapScenesAsync(db, changed, new MapManifestService.Counter(), cancellationToken);
         await new LogicReferenceResolver(db).ResolveAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+        await transaction.FinalizeAsync(cancellationToken);
+        var prepared = publication.PrepareAdvance(transaction.FinalEffects.RoomFactsChanged, false);
+        var outcome = new MapLinkWriteOutcome(null, null);
+        var plan = await SharedRoomCommitPlan.PrepareAsync(db, transaction, prepared, cancellationToken);
+        await transaction.CommitAsync(() => publication.PublishCommitted(prepared), cancellationToken);
+        publication.Dispose();
+        return await ProjectCommittedAsync(outcome, plan);
     }
 
-    public async Task<int> MergeBlankMapScenesIntoRoomsAsync(CancellationToken cancellationToken = default)
+    public async Task<MapLinkWriteOutcome> MergeBlankMapScenesIntoRoomsAsync(CancellationToken cancellationToken = default)
     {
+        using var publication = await publications.AcquireAsync(cancellationToken);
+        var historyActor = HistoryActor.From(await access.RequireAsync(Authentication.AccessPolicies.Author, cancellationToken));
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
-        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        await using var transaction = await LogicWriteScope.BeginAsync(db, publication, historyActor, cancellationToken);
         var scenes = await db.MapScenes.Where(scene => string.IsNullOrWhiteSpace(scene.RoomReferenceText)).ToListAsync(cancellationToken);
         var rooms = await db.Rooms.Where(room => !room.IsArchived && !string.IsNullOrWhiteSpace(room.InGameId)).ToListAsync(cancellationToken);
         var merged = 0;
@@ -69,8 +68,23 @@ public sealed class MapLinkService(IDbContextFactory<LogicDbContext> dbContextFa
 
         if (merged > 0) await db.SaveChangesAsync(cancellationToken);
         await new LogicReferenceResolver(db).ResolveAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
-        return merged;
+        await transaction.FinalizeAsync(cancellationToken);
+        var prepared = publication.PrepareAdvance(transaction.FinalEffects.RoomFactsChanged, false);
+        var outcome = new MapLinkWriteOutcome(merged, null);
+        var plan = await SharedRoomCommitPlan.PrepareAsync(db, transaction, prepared, cancellationToken);
+        await transaction.CommitAsync(() => publication.PublishCommitted(prepared), cancellationToken);
+        publication.Dispose();
+        return await ProjectCommittedAsync(outcome, plan);
+    }
+
+    private async Task<MapLinkWriteOutcome> ProjectCommittedAsync(MapLinkWriteOutcome receipt, SharedRoomCommitPlan plan)
+    {
+        try { return receipt with { Shared = await sharedCatalogue.ReadCommittedMutationAsync(plan) }; }
+        catch (Exception exception)
+        {
+            logger.LogError(exception, "Map links committed but affected shared facts could not be projected.");
+            return receipt;
+        }
     }
 
     private static bool CacheKeyMatchesRoom(string cacheKey, string roomInGameId)

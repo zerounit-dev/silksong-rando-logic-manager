@@ -1,28 +1,34 @@
 // Audit-local helpers, independent of the scene/camera owner.
 // Inline search exclusively owns its descendants and live editing/result state.
-export function bindHelpFocus(dialog, launcher, root, owner) {
+export function bindHelpFocus(dialog, launcher, root, owner, externalModal = null) {
     let disposed = false, opening = 0;
     const current = () => !disposed && root.isConnected && dialog.isConnected && launcher.isConnected &&
         Number(root.closest('.room-audit').dataset.auditPageOwner) === owner;
     const toggle = event => {
         const stamp = ++opening;
+        if (event.newState === 'open' && externalModal?.open === true) { event.preventDefault(); return; }
         if (event.newState !== 'closed') return;
         queueMicrotask(() => {
-            if (current() && stamp === opening && !dialog.open &&
+            if (current() && externalModal?.open !== true && stamp === opening && !dialog.open &&
                 !root.closest('.room-audit').querySelector('dialog[data-audit-modal][open]'))
                 launcher.focus({ preventScroll: true });
         });
     };
     dialog.addEventListener('beforetoggle', toggle);
-    return { dispose() { disposed = true; ++opening; dialog.removeEventListener('beforetoggle', toggle); } };
+    const external = new MutationObserver(records => {
+        if ((externalModal?.open === true || records.some(record => record.oldValue !== null)) && dialog.open) dialog.close();
+    });
+    if (externalModal instanceof HTMLDialogElement)
+        external.observe(externalModal, { attributes: true, attributeFilter: ['open'], attributeOldValue: true });
+    return { dispose() { disposed = true; ++opening; external.disconnect(); dialog.removeEventListener('beforetoggle', toggle); } };
 }
 
 // Only this dialog's native lifetime; no scene, document or window event owner.
-export function bindRequirements(dialog, root, dotnet, owner) {
+export function bindRequirements(dialog, root, dotnet, owner, externalModal = null) {
     let disposed = false, request = 0, retired = 0, opening = 0, launcher = null;
     const current = () => !disposed && root.isConnected && dialog.isConnected &&
         Number(root.dataset.auditPageOwner) === owner;
-    const otherModal = () => [...root.querySelectorAll('dialog[data-audit-modal][open]')].some(item => item !== dialog);
+    const otherModal = () => externalModal?.open === true || [...root.querySelectorAll('dialog[data-audit-modal][open]')].some(item => item !== dialog);
     const toggle = event => {
         if (event.newState !== 'closed' || !current()) return;
         const id = request, original = launcher, stamp = ++opening;
@@ -35,6 +41,11 @@ export function bindRequirements(dialog, root, dotnet, owner) {
         });
     };
     dialog.addEventListener('beforetoggle', toggle);
+    const external = new MutationObserver(records => {
+        if ((externalModal?.open === true || records.some(record => record.oldValue !== null)) && dialog.open) dialog.close();
+    });
+    if (externalModal instanceof HTMLDialogElement)
+        external.observe(externalModal, { attributes: true, attributeFilter: ['open'], attributeOldValue: true });
     return {
         reconcile(id, original) {
             if (!current()) return false;
@@ -53,17 +64,19 @@ export function bindRequirements(dialog, root, dotnet, owner) {
         },
         dispose() {
             disposed = true; request = 0; launcher = null; ++opening;
+            external.disconnect();
             dialog.removeEventListener('beforetoggle', toggle);
         }
     };
 }
 
-export function mountInline(host, dotnet, owner) {
+export function mountInline(host, dotnet, owner, externalModal = null) {
     const article = host.closest('.room-audit');
     const abort = new AbortController(), options = { signal: abort.signal };
     let disposed = false, request = 0, context = -1, currentRoom = null;
     let state = 'loading', index = [], rows = [], active = null, open = false, composing = false;
     const current = () => !disposed && host.isConnected && article?.isConnected && host.dataset.searchOwner === owner;
+    const blocked = () => externalModal?.open === true;
     const admitted = (key, id) => current() && key === owner && id === request;
     const element = (tag, attributes = {}, text = null) => {
         const node = document.createElement(tag);
@@ -153,24 +166,24 @@ export function mountInline(host, dotnet, owner) {
         else if (box.bottom > port.bottom) list.scrollTop += box.bottom - port.bottom;
     }
     function show() {
-        if (!current()) return;
+        if (!current() || blocked()) return;
         open = true; popup.hidden = false; input.setAttribute('aria-expanded', 'true'); syncActive();
     }
     function dismiss() {
         open = false; popup.hidden = true; input.setAttribute('aria-expanded', 'false'); syncActive();
     }
     function choose(id) {
-        if (!current() || !open || state !== 'ready' || !rows.some(room => room.id === id)) return;
+        if (!current() || blocked() || !open || state !== 'ready' || !rows.some(room => room.id === id)) return;
         dismiss();
         // Only a committed GUID (plus owner/request/context admission) crosses the circuit.
         if (id !== currentRoom) dotnet.invokeMethodAsync('ChooseAsync', owner, request, context, id).catch(() => {});
     }
     input.addEventListener('focus', show, options);
-    input.addEventListener('input', () => { if (current()) { filter(); show(); } }, options);
+    input.addEventListener('input', () => { if (current() && !blocked()) { filter(); show(); } }, options);
     input.addEventListener('compositionstart', () => composing = true, options);
     input.addEventListener('compositionend', () => composing = false, options);
     input.addEventListener('keydown', event => {
-        if (!current() || event.isComposing || composing || event.keyCode === 229 || event.altKey || event.ctrlKey || event.metaKey) return;
+        if (!current() || blocked() || event.isComposing || composing || event.keyCode === 229 || event.altKey || event.ctrlKey || event.metaKey) return;
         // Suppress the native search-field clear action even when already dismissed.
         if (event.key === 'Escape') { event.preventDefault(); dismiss(); return; }
         if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
@@ -200,10 +213,15 @@ export function mountInline(host, dotnet, owner) {
         if (!host.contains(event.target)) dismiss();
     }, options);
     retry.addEventListener('click', () => {
-        if (!current() || state !== 'failure') return;
+        if (!current() || blocked() || state !== 'failure') return;
         state = 'loading'; index = []; filter();
         dotnet.invokeMethodAsync('RetryAsync', owner, request).catch(() => {});
     }, options);
+    const external = new MutationObserver(records => {
+        if (blocked() || records.some(record => record.oldValue !== null)) { composing = false; dismiss(); }
+    });
+    if (externalModal instanceof HTMLDialogElement)
+        external.observe(externalModal, { attributes: true, attributeFilter: ['open'], attributeOldValue: true });
     return {
         setContext(key, revision, id) {
             if (!current() || key !== owner || revision < context) return;
@@ -227,6 +245,6 @@ export function mountInline(host, dotnet, owner) {
             if (!admitted(key, id)) return;
             state = 'failure'; index = []; filter();
         },
-        dispose() { disposed = true; ++request; abort.abort(); host.replaceChildren(); }
+        dispose() { disposed = true; ++request; external.disconnect(); abort.abort(); host.replaceChildren(); }
     };
 }

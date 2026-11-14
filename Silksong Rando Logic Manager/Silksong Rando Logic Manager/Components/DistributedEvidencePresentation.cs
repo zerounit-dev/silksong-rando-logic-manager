@@ -89,10 +89,10 @@ internal static class DistributedEvidencePresentation
                     value = $"{Format(field, raw)} (raw: {raw})";
                 return $"{field}: {value}";
             }));
-        var status = evidence switch { DistributedComparisonEvidence.Changed => "changed", DistributedComparisonEvidence.Neutral => "equal evidence", DistributedComparisonEvidence.Current => "current only", _ => "incoming only" };
+        var status = evidence switch { DistributedComparisonEvidence.Changed => "changed", DistributedComparisonEvidence.Neutral => "unchanged for comparison", DistributedComparisonEvidence.Current => "current only", _ => "incoming only" };
         // Both real sides, including tolerated values and neutral timestamps, are
         // available. Never invent an absent side for new/one-sided records.
-        return $"{Heading(name)} — {status}; displayed {(incoming ? "incoming" : "current")}.\n" +
+        return $"{Heading(name)} — {status}; showing {(incoming ? "incoming" : "current")}.\n" +
             (evidence == DistributedComparisonEvidence.Current ? Side(false) : evidence == DistributedComparisonEvidence.Incoming ? Side(true) : $"{Side(false)}\n{Side(true)}");
     }
 

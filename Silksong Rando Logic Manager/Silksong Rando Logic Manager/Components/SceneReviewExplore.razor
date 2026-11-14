@@ -1,3 +1,4 @@
+@using Silksong_Rando_Logic_Manager.Components
 @implements IDisposable
 @inject SceneReviewProjectionService ReviewProjection
 
@@ -53,12 +54,12 @@
                     <td class="scene-classification">
                         @if (MatchedClassification(node) is { } matched) { <i class="fa-solid fa-circle-check" title="Matches an existing @ClassificationText(matched) record" aria-hidden="true"></i> }
                         @if (HasCrossTypeMatches(node)) { <i class="fa-solid fa-circle-info" title="Matches existing transition and check records" aria-hidden="true"></i> }
-                        <select value="@node.Classification" @onchange="(args => ChangeClassification(node, args.Value?.ToString()))"><option value="@SceneDumpClassification.Exit">exit</option><option value="@SceneDumpClassification.Check">check</option><option value="@SceneDumpClassification.Enemy">enemy</option><option value="@SceneDumpClassification.Other">other</option></select>
+                        <select value="@node.Classification" disabled="@(!CanEditDraft)" @onchange="(args => ChangeClassification(node, args.Value?.ToString()))"><option value="@SceneDumpClassification.Exit">exit</option><option value="@SceneDumpClassification.Check">check</option><option value="@SceneDumpClassification.Enemy">enemy</option><option value="@SceneDumpClassification.Other">other</option></select>
                     </td>
                     @if (SceneDumpIdentity.IsImportable(node.Classification))
                     {
                         var draft = View.Drafts[node.Id];
-                        <td><div class="scene-target-choice"><select class="@(draft.ExistingRecordId is null ? "scene-target-unmatched" : null)" value="@TargetValue(draft)" @onchange="(args => ChangeDisposition(node, args.Value?.ToString()))"><option value="unresolved" disabled>Unresolved</option><option value="">Create new</option>@foreach (var record in View.Records[node.Classification]) { <option value="@record.Id" title="@record.InGameId">@record.FriendlyName (@MiddleId(record.InGameId, node.Classification == SceneDumpClassification.Enemy))</option> }</select><i class="fa-solid fa-circle-info" role="img" title="@MatchExplanation(draft)" aria-label="@MatchExplanation(draft)"></i></div>@if (DuplicateTarget(node)) { <span class="scene-decision-error" role="alert">Duplicate target</span> }</td>
+                        <td><div class="scene-target-choice"><select class="@(draft.ExistingRecordId is null ? "scene-target-unmatched" : null)" value="@TargetValue(draft)" disabled="@(!CanEditDraft)" @onchange="(args => ChangeDisposition(node, args.Value?.ToString()))"><option value="unresolved" disabled>Unresolved</option><option value="">Create new</option>@foreach (var record in View.Records[node.Classification]) { <option value="@record.Id" title="@record.InGameId">@record.FriendlyName (@MiddleId(record.InGameId, node.Classification == SceneDumpClassification.Enemy))</option> }</select><i class="fa-solid fa-circle-info" role="img" title="@MatchExplanation(draft)" aria-label="@MatchExplanation(draft)"></i></div>@if (DuplicateTarget(node)) { <span class="scene-decision-error" role="alert">Choose a different target for each row</span> }</td>
                     }
                     else
                     {
@@ -73,6 +74,7 @@
 @code {
     [Parameter, EditorRequired] public SceneReviewExploreView View { get; set; } = default!;
     [Parameter, EditorRequired] public Func<SceneDumpReview, bool> AcceptReview { get; set; } = default!;
+    [Parameter, EditorRequired] public Func<SceneDumpReview, bool> AcceptDraft { get; set; } = default!;
     [Parameter] public bool Hidden { get; set; }
     [Parameter] public string? Error { get; set; }
     [Parameter] public EventCallback<SceneReviewClassificationChange> ClassificationChanged { get; set; }
@@ -94,6 +96,7 @@
     private double PreviewPointRadius => Math.Max(spatialPreview.Bounds.Width, spatialPreview.Bounds.Height) * .008;
     private double PreviewHoverRadius => Math.Max(spatialPreview.Bounds.Width, spatialPreview.Bounds.Height) * .015;
     private bool CanInteract => !retired && preparedReview == View.Review && AcceptReview(View.Review);
+    private bool CanEditDraft => CanInteract && AcceptDraft(View.Review);
 
     public bool TryGetPreviewElement(SceneDumpReview currentReview, out ElementReference element)
     {
@@ -213,10 +216,10 @@
         _ => true
     };
 
-    private Task ChangeClassification(SceneDumpObject node, string? value) => CanInteract &&
+    private Task ChangeClassification(SceneDumpObject node, string? value) => CanEditDraft &&
         Enum.TryParse<SceneDumpClassification>(value, out var classification) && Enum.IsDefined(classification)
         ? ClassificationChanged.InvokeAsync(new(View.Review, node, classification)) : Task.CompletedTask;
-    private Task ChangeDisposition(SceneDumpObject node, string? value) => CanInteract
+    private Task ChangeDisposition(SceneDumpObject node, string? value) => CanEditDraft
         ? DispositionChanged.InvokeAsync(new(View.Review, node, Guid.TryParse(value, out var id) ? id : null)) : Task.CompletedTask;
 
     private SceneImportObjectMatch? Match(SceneDumpObject node) => View.Matches.FirstOrDefault(match => match.ObjectId == node.Id);
@@ -235,7 +238,7 @@
     private string OriginalEvidence(SceneDumpObject node) => string.Join("; ", new[] { OriginalLabel(node) }.Concat(node.CandidateReasons));
     private static string ClassificationText(SceneDumpClassification classification) => classification switch { SceneDumpClassification.Exit => "exit", SceneDumpClassification.Check => "check", SceneDumpClassification.Enemy => "enemy", _ => "other" };
     private static string TargetValue(SceneReviewImportDraft draft) => draft.Unresolved ? "unresolved" : draft.ExistingRecordId?.ToString() ?? string.Empty;
-    private static string MatchExplanation(SceneReviewImportDraft draft) => draft.MatchReason.Length > 0 ? draft.MatchReason : "No unique eligible match; Create new review default";
+    private static string MatchExplanation(SceneReviewImportDraft draft) => draft.MatchReason.Length > 0 ? draft.MatchReason : "No single eligible match was found, so Create new is selected.";
     private static string MiddleId(string? value, bool enemy) => value is null ? "-" : !enemy || value.Length <= 48 ? value : value[..23] + "…" + value[^23..];
     private static string Position(ScenePosition? position) => position is null ? "-" : $"{Value(position.X)}, {Value(position.Y)}" + (position.Z is { } raw && raw != 0 ? $", { (Math.Abs(raw) < .005 ? raw.ToString("G", System.Globalization.CultureInfo.InvariantCulture) : Value(raw))}" : string.Empty);
     private static string Value(double? value) => value?.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) ?? "-";

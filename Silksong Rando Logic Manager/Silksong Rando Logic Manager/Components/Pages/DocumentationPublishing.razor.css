@@ -1,0 +1,16 @@
+.publishing-context { overflow-wrap: anywhere; }
+.publishing-card { margin: 1rem 0; }
+.publishing-card h2 { margin-top: 0; }
+.publishing-setup > summary { cursor: pointer; }
+.publishing-setup > summary h2 { display: inline; }
+.publishing-card dl { display: grid; grid-template-columns: 7rem minmax(0, 1fr); gap: .4rem 1rem; }
+.publishing-card dd { margin: 0; overflow-wrap: anywhere; }
+.publishing-actions { display: flex; gap: .6rem; }
+.publishing-tool button i { margin-right: .18rem; }
+.publishing-error { color: var(--danger-color, #b42332); overflow-wrap: anywhere; }
+.publishing-review-group { margin: 1rem 0; }
+.publishing-review-group details { border-top: 1px solid var(--border-color, #c8c8c8); padding: .65rem 0; }
+.publishing-review-group summary { cursor: pointer; overflow-wrap: anywhere; }
+.publishing-review-group pre { max-height: 32rem; overflow: auto; white-space: pre; font-size: .85rem; }
+.publishing-review-group img { display: block; max-width: 100%; margin-top: .6rem; }
+.publishing-card textarea { display: block; width: 100%; box-sizing: border-box; margin: .4rem 0 .75rem; }

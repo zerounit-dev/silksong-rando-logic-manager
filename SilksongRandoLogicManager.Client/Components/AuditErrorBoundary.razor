@@ -1,0 +1,13 @@
+@inherits ErrorBoundaryBase
+@if (CurrentException is null) { @ChildContent }
+else
+{
+    <PageTitle>Room audit | Silksong Logic Manager</PageTitle>
+    <p role="alert">Room audit could not continue. Retry to read fresh data.</p>
+    <button type="button" disabled="@App.GeneralErrorOpen" @onclick="Retry">Retry</button>
+}
+@code {
+    [CascadingParameter] public App App { get; set; } = null!;
+    protected override Task OnErrorAsync(Exception exception) => App.ReportAuditErrorAsync(exception);
+    private void Retry() { if (!App.GeneralErrorOpen) Recover(); }
+}

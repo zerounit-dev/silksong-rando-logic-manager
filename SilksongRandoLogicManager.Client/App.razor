@@ -1,0 +1,315 @@
+@using SilksongRandoLogicManager.Contracts
+@implements IAsyncDisposable
+@inject HttpClient Http
+@inject IJSRuntime JS
+@inject NavigationManager Navigation
+@inject ConfirmedCatalogue Catalogue
+@inject SessionAccess Access
+@inject LogicBrowserCache Browser
+@inject ClientRuntime Runtime
+
+@code {
+    private RenderFragment InitialLoadingPresentation => @<div class="load-ui1 @(initialFailed && !Runtime.Retired ? "load-ui1-failed" : initialProgress.ActivityClass)">
+        <div class="load-ui1-stack">
+            <div class="load-ui1-graphic" aria-hidden="true">
+                <i class="load-ui1-server fa-solid fa-server"></i>
+                <span class="load-ui1-link load-ui1-to-cache"><span></span><span></span><span></span></span>
+                <i class="load-ui1-cache fa-solid fa-database"></i>
+                <span class="load-ui1-link load-ui1-to-app"><span></span><span></span><span></span></span>
+                <i class="load-ui1-window fa-solid fa-window-maximize"></i>
+            </div>
+            <p class="load-ui1-status" role="status" aria-live="polite" aria-atomic="true">@initialProgress.Stage</p>
+            <div class="load-ui1-below">
+                @if (initialFailed && !Runtime.Retired)
+                { <p class="load-ui1-failure danger" role="alert">Unable to start. Try refreshing.</p> }
+                <div class="load-ui1-build">
+                <span class="load-ui1-release">@LoadingRelease</span>
+                <small class="load-ui1-timestamp">@LoadingBuildTime</small>
+                </div>
+            </div>
+        </div>
+    </div>;
+}
+
+@if (Runtime.AutomaticUpdateInProgress)
+{
+    @InitialLoadingPresentation
+}
+else if (Runtime.Retired)
+{
+    var updateProgress = Runtime.Discarding;
+    <main class="client-update-host">
+    <section class="client-update" role="@(updateProgress ? "status" : "alertdialog")" aria-modal="@(!updateProgress ? "true" : null)" aria-labelledby="client-update-title" aria-describedby="client-update-copy" aria-busy="@updateProgress.ToString().ToLowerInvariant()">
+        <h1 id="client-update-title" tabindex="-1" @ref="updateHeading">@UpdateTitle</h1>
+        <div id="client-update-copy">
+            @if (updateProgress) { <p>Reloading this page to load the current application and prepare a fresh local copy.</p> }
+            else
+            {
+                <p>@UpdateExplanation</p>
+            }
+            @if (Runtime.WorkAtRetirement)
+            { <p>Local work may be unfinished. Reloading discards it. Previously submitted changes may have committed.</p> }
+        </div>
+        <div class="client-update-actions">
+            <button type="button" disabled="@updateProgress" @onclick="UpdateClientAsync">@UpdateAction</button>
+        </div>
+        <details class="client-update-details">
+            <summary>Technical details</summary>
+            <dl>
+                <dt>This tab's build</dt><dd>@ApplicationBuild.Version</dd>
+                <dt>Server build</dt><dd>@(Runtime.ServerVersion ?? "Unknown — not confirmed")</dd>
+            </dl>
+            @if (Runtime.RetryRequired)
+            { <p>If retrying still does not work and other application tabs are open, close those tabs and try again.</p> }
+        </details>
+    </section>
+    </main>
+}
+else
+{
+<dialog @ref="errorDialog" open="@(errorOpen && (module is null || errorNativeUnavailable))" class="confirmation-modal v3-dialog v3-error" aria-labelledby="v3-error-title" @oncancel="CloseError" @oncancel:preventDefault>
+    <h2 id="v3-error-title">An unexpected error occurred</h2>
+    <p>@errorMessage</p>
+    @if (errorTrace is not null) { <p>Log reference: @errorTrace</p> }
+    <div id="v3-diagnostic-label">Diagnostic details</div>
+    <pre class="v3-diagnostic-details" tabindex="0" role="textbox" aria-readonly="true" aria-labelledby="v3-diagnostic-label">@errorDetails</pre>
+    <div class="v3-diagnostic-feedback">
+        <p class="v3-diagnostic-feedback-size" aria-hidden="true">Copy unavailable; select the details to copy.</p>
+        <p role="status">@errorCopyFeedback</p>
+    </div>
+    <div class="confirmation-actions">
+        <button type="button" disabled="@errorCopyPending" @onclick="CopyErrorDetailsAsync">Copy diagnostic details</button>
+        <button type="button" @ref="errorClose" data-error-close autofocus @onclick="CloseError">Close</button>
+    </div>
+</dialog>
+@code {
+    private RenderFragment Icon(bool spin, string icon) => @<span class="v3-icon-slot" aria-hidden="true"><i class="fa-solid @(spin ? "fa-spinner fa-spin" : icon)"></i></span>;
+}
+<div style="display:contents">
+@if (!ready)
+{
+    @InitialLoadingPresentation
+}
+else
+{
+    // Presentation-only reuse for this synchronous render. Action guards stay fresh.
+    var renderLocked = Locked;
+    <div class="@(AuditRoute ? "v3-audit-layout" : "app-shell v3-shell")">
+        @if (!AuditRoute)
+        {
+        <aside class="sidebar">
+            <div class="sidebar-layout" @ref="sidebarRoot" data-sidebar-view="@view" data-sidebar-search="@Searching.ToString().ToLowerInvariant()" data-sidebar-busy="@renderLocked.ToString().ToLowerInvariant()" data-sidebar-authoring-allowed="@CanAuthor.ToString().ToLowerInvariant()">
+                <div class="nav-header">
+                    <div class="v3-title-row"><a class="nav-title" href="/" @onclick="Home" @onclick:preventDefault>Silksong Logic</a><button class="icon-button" type="button" title="Refresh sidebar" aria-label="Refresh sidebar" disabled="@(busy || refreshing)" @onclick="(() => RefreshAsync(false))">@Icon(refreshing, "fa-rotate-right")</button></div>
+                    <input class="search-entry" placeholder="search groups or rooms" aria-label="Search groups or rooms" @bind="NameTerm" @bind:event="oninput" autocomplete="off" />
+                    <button class="advanced-search-toggle" type="button" aria-expanded="@advanced.ToString().ToLowerInvariant()" aria-controls="v3-search" @onclick="ToggleSearchAsync">@Icon(false, advanced ? "fa-caret-down" : "fa-caret-right")<span>advanced search</span></button>
+                    @if (advanced)
+                    {
+                        <div class="advanced-search-fields" id="v3-search">
+                            <input class="search-entry" placeholder="location name" aria-label="Search location names" @bind="LocationTerm" @bind:event="oninput" autocomplete="off" />
+                            <input class="search-entry" placeholder="requirements" aria-label="Search requirements" @bind="RequirementTerm" @bind:event="oninput" autocomplete="off" />
+                        </div>
+                    }
+                </div>
+                <nav class="room-tree" aria-label="Room navigation">
+                    <div class="tree-top-row">
+                        <button class="tree-action" type="button" disabled="@(renderLocked || !CanAuthor)" @onclick="CreateGroupAsync">@Icon(pending == "create-group", "fa-folder-plus") group</button>
+                        <button class="archive-mode-button tree-action" type="button" aria-pressed="@archive.ToString().ToLowerInvariant()" @onclick="ToggleArchiveAsync">@Icon(false, archive ? "fa-eye-slash" : "fa-eye") @(archive ? "hide archive" : "show archive")</button>
+                    </div>
+                    @if (treeFeedback is not null) { <p class="danger v3-feedback" role="alert">@treeFeedback</p> }
+                    @foreach (var group in displayGroups)
+                    {
+                        var id = group.Index.Key.Id;
+                        var opened = id is null || Searching || expanded.Contains(id.Value);
+                        <SidebarGroup @key="group.Index.Key" Model="group" Opened="opened" Searching="Searching" Locked="@(renderLocked || !CanAuthor)"
+                            EditorLoading="@(id is not null && editorLoading == id)" Selected="@SelectionFor(group.Index.Key)" Pending="@PendingFor(group.Index.Key)"
+                            ToggleGroup="ToggleGroupAsync" OpenEditor="OpenEditorAsync" CreateRoom="CreateRoomAsync" AutoMatch="AutoMatchAsync" Select="SelectRoom" />
+                    }
+                    <div class="group-drop-line" aria-hidden="true" data-sidebar-group-index="@snapshot!.Groups.Count"></div>
+                </nav>
+                <footer class="sidebar-export-footer">
+                    @if (Access.Session is { SignedIn: true, Bypass: false } || Access.Session?.Bypass == false)
+                    {
+                        <div class="sidebar-account-row">
+                            @if (Access.Session is { SignedIn: true, Bypass: false } session) { <span class="sidebar-account-name">@session.Username</span> }
+                            @if (Access.Session?.Bypass == false) { <button class="tree-action sidebar-signout-control" type="button" disabled="@(renderLocked || errorOpen)" @onclick="LogoutAsync">sign out</button> }
+                        </div>
+                    }
+                    <archipelago-launcher><button class="tree-action sidebar-archipelago-control" type="button" data-archipelago-launcher aria-label="Archipelago" aria-controls="archipelago-modal" aria-haspopup="dialog"><i class="fa-solid fa-wifi" aria-hidden="true"></i> archipelago</button></archipelago-launcher>
+                    <a class="tree-action scene-picker scene-review-trigger" href="/scene-import" aria-disabled="@((!CanAuthor || renderLocked || errorOpen).ToString().ToLowerInvariant())" @onclick="OpenScenePage" @onclick:preventDefault>@Icon(false, "fa-file-import") upload scene dump</a>
+                    <a class="tree-action sidebar-requirements-control" href="/requirements/predicates" aria-disabled="@((renderLocked || errorOpen).ToString().ToLowerInvariant())" @onclick="Requirements" @onclick:preventDefault aria-label="Requirements" title="Requirements">@Icon(false, "fa-book") requirements</a>
+                    <div class="sidebar-utility-row">
+                        @if (renderLocked || errorOpen)
+                        {
+                            <button class="tree-action sidebar-tools-control" type="button" disabled aria-label="Tools (opens in a new tab)" title="Tools (opens in a new tab)">@Icon(false, "fa-screwdriver-wrench") tools</button>
+                        }
+                        else
+                        {
+                            <a class="tree-action sidebar-tools-control" href="/tools/room-exchange" target="_blank" rel="noopener noreferrer" data-enhance-nav="false" aria-label="Tools (opens in a new tab)" title="Tools (opens in a new tab)">@Icon(false, "fa-screwdriver-wrench") tools</a>
+                        }
+                        <button class="tree-action sidebar-utility-action" type="button" disabled="@(renderLocked || errorOpen)" @onclick="OpenCacheManagementAsync" aria-label="Cache management" title="Cache management"><span class="v3-icon-slot" aria-hidden="true"><i class="fa-solid fa-fw @(cacheReading ? "fa-spinner fa-spin" : "fa-database")"></i></span></button>
+                    </div>
+                </footer>
+            </div>
+        </aside>
+        }
+        <main class="@(AuditRoute ? "v3-audit-main" : "workspace")" aria-label="@(AuditRoute ? "Room audit workspace" : null)">
+            @if (departureFeedback is not null) { <p class="v3-feedback" role="status">@departureFeedback</p> }
+            @if (roomDeparture is { Confirmed: true } waiting)
+            {
+                <div class="v3-feedback" role="status">Waiting for room changes before opening @waiting.Identity.Target. New edits extend the wait.
+                    <button type="button" @onclick="() => CancelRoomDeparture(waiting.Identity.Id)">Cancel action</button>
+                </div>
+            }
+            @if (!AuditRoute && sceneCompletionFeedback is not null) { <p class="v3-feedback" role="status">@sceneCompletionFeedback</p> }
+            <CascadingValue Value="renderLocked" Name="NavigationBlocked">
+              <CascadingValue Value="this">
+              <CascadingValue Value="Catalogue">
+              <CascadingValue Value="RequiredCodeFailed" Name="ApplicationCodeFailure">
+                <Router AppAssembly="@typeof(App).Assembly" NotFoundPage="typeof(Pages.NotFound)">
+                    <Found Context="routeData"><RouteView RouteData="@routeData" /></Found>
+                </Router>
+              </CascadingValue>
+              </CascadingValue>
+              </CascadingValue>
+            </CascadingValue>
+        </main>
+    </div>
+}
+@if (ready)
+{
+<dialog @ref="departureDialog" class="confirmation-modal v3-dialog" aria-labelledby="v3-departure-title" @oncancel="() => CancelRoomDeparture()" @oncancel:preventDefault>
+    @if (roomDeparture is { } requested)
+    {
+        @if (replacementDeparture is { } replacement)
+        {
+            <h2 id="v3-departure-title">Replace requested action?</h2>
+            <p>Keep @requested.Identity.Target, or replace it with @replacement.Identity.Target?</p>
+            <div class="confirmation-actions">
+                <button type="button" @onclick="() => ChooseDepartureReplacement(requested.Identity.Id, replacement.Identity.Id, false)">Keep current action</button>
+                <button type="button" @onclick="() => ChooseDepartureReplacement(requested.Identity.Id, replacement.Identity.Id, true)">Replace action</button>
+                <button type="button" @onclick="() => CancelRoomDeparture(requested.Identity.Id)">Cancel action</button>
+            </div>
+        }
+        else
+        {
+            var unfinished = roomActionState?.Invoke().Unfinished == true;
+            <h2 id="v3-departure-title">@(requested.Identity.Mode == DepartureMode.Recovery ? "Discard pending local work and refresh?" : unfinished ? "Wait for room changes before leaving?" : "Continue requested action?")</h2>
+            @if (requested.Identity.Mode == DepartureMode.Recovery)
+            { <p>Refresh reloads durable data and discards pending local work. It cannot undo committed changes. Submitted writes may still commit.</p> }
+            else if (unfinished)
+            { <p>Room changes are unfinished. Confirm to wait for completion, then open @requested.Identity.Target. Editing remains available while waiting. Failure cancels this action.</p> }
+            else { <p>Room changes have completed. Continue to @requested.Identity.Target?</p> }
+            <div class="confirmation-actions">
+                <button type="button" @onclick="() => ConfirmRoomDeparture(requested.Identity.Id)">@(requested.Identity.Mode == DepartureMode.Recovery ? "Discard local work and refresh" : unfinished ? "Wait, then continue" : "Continue")</button>
+                <button type="button" @onclick="() => CancelRoomDeparture(requested.Identity.Id)">Cancel action</button>
+            </div>
+        }
+    }
+</dialog>
+<dialog @ref="groupDialog" class="confirmation-modal group-edit-modal v3-dialog" aria-labelledby="v3-group-title" @oncancel="CloseEditorAsync" @oncancel:preventDefault>
+    @if (editor is not null)
+    {
+        <h2 id="v3-group-title">edit room group</h2>
+        <fieldset disabled="@busy" class="v3-fields">
+            <label class="group-edit-field">friendly name<input @ref="nameInput" @bind:get="draftName" @bind:set="value => { if (CanAuthor) draftName = value ?? string.Empty; }" @bind:event="oninput" autocomplete="off" /></label>
+            <label class="group-edit-field">zone reference<input @bind:get="draftZone" @bind:set="value => { if (CanAuthor) draftZone = value; }" @bind:event="oninput" list="v3-zones" autocomplete="off" /></label>
+            <label class="group-edit-field group-edit-virtual"><input type="checkbox" @bind:get="draftVirtual" @bind:set="value => { if (CanAuthor) draftVirtual = value; }" /> virtual</label>
+            <datalist id="v3-zones">@foreach (var zone in editor.ZoneIds) { <option value="@zone"></option> }</datalist>
+            @if (editor.ZoneReferenceStatus is { } status) { <p class="@(status == "Resolved" ? "" : "danger")">zone reference: @status</p> }
+            @if (editorFeedback is not null) { <p class="danger" role="alert">@editorFeedback</p> }
+            <div class="confirmation-actions">
+                <button type="button" disabled="@editorMissing" @onclick="SaveGroupAsync">@Icon(pending == "save", "fa-check") save</button>
+                <button type="button" @onclick="CloseEditorAsync">cancel</button>
+                <button type="button" disabled="@editorMissing" @onclick="OpenDeleteAsync">delete group</button>
+            </div>
+        </fieldset>
+    }
+</dialog>
+<dialog @ref="sceneInverseDialog" class="confirmation-modal v3-dialog" aria-labelledby="scene-inverse-title" @oncancel="(() => ChooseSceneInverseAsync(false))" @oncancel:preventDefault>
+    <h2 id="scene-inverse-title">update inverse?</h2>
+    @if (sceneInverse is { } inverse)
+    {
+        <p>Import committed. Fill the still-blank inverse fields on <strong>@inverse.TargetName</strong> from @inverse.SourceName?</p>
+        <fieldset class="v3-fields" disabled="@sceneInverseBusy">
+            <div class="confirmation-actions">
+                <button type="button" @onclick="(() => ChooseSceneInverseAsync(true))">@Icon(sceneInverseBusy, "fa-check") update inverse</button>
+                <button type="button" @onclick="(() => ChooseSceneInverseAsync(false))">do not update inverse</button>
+                <button type="button" @onclick="(() => ChooseSceneInverseAsync(false))">revert change</button>
+            </div>
+        </fieldset>
+        <p>Revert change writes nothing here; it does not undo the committed import.</p>
+    }
+</dialog>
+<dialog @ref="deleteDialog" class="confirmation-modal v3-dialog" aria-labelledby="v3-delete-title" @oncancel="CloseDeleteAsync" @oncancel:preventDefault>
+    <h2 id="v3-delete-title">delete room group?</h2>
+    <p>Delete <strong>@editor?.Group.FriendlyName</strong>? Linked active and archived rooms will become ungrouped. This cannot be undone.</p>
+    @if (editorFeedback is not null) { <p class="danger" role="alert">@editorFeedback</p> }
+    <div class="confirmation-actions"><button type="button" disabled="@(busy || editorMissing)" @onclick="DeleteGroupAsync">@Icon(pending == "delete", "fa-trash") delete group</button><button type="button" disabled="@busy" @onclick="CloseDeleteAsync">cancel</button></div>
+</dialog>
+<dialog @ref="cacheDialog" class="confirmation-modal v3-dialog cache-modal" aria-labelledby="v3-cache-title" @oncancel="CloseCacheManagement" @oncancel:preventDefault>
+    <header class="cache-heading">
+        <h2 id="v3-cache-title">Cache management</h2>
+        <p>A copy of logic stored in this browser and shared by its tabs.</p>
+    </header>
+    <div class="cache-body">
+        @if (cacheReading) { <p class="cache-notice" role="status">Reading cache…</p> }
+        <dl class="cache-metrics">
+            <div><dt>Cached database size</dt><dd>@(cacheInspection is { State: not null } size ? CacheSize(size.LogicalBytes) : cacheReading ? "Loading…" : "Unavailable")<small>Database pages only</small></dd></div>
+            <div><dt>Cached records</dt><dd>@(cacheInspection is { State: not null } rows ? CacheNumber(rows.DomainRows) : cacheReading ? "Loading…" : "Unavailable")<small>Including archived records</small></dd></div>
+        </dl>
+        <dl class="cache-freshness">
+            <div><dt>Server changes included through <span>(UTC)</span></dt>
+                <dd>@(cacheInspection?.State is { } current ? CacheShortUtc(current.Checkpoint.ThroughUtc) : cacheReading ? "Loading…" : "Unavailable")</dd></div>
+            <div><dt>Last successful server sync <span>(this tab)</span></dt>
+                <dd>@(cacheSynchronization is { } check ? CacheShortUtc(check.ObservedUtc) : "No successful sync recorded in this tab")</dd></div>
+        </dl>
+        <p class="cache-note">Opening this dialog does not check for newer server changes. A past sync does not mean the cache is still current.</p>
+        @if (cacheFeedback is not null) { <p class="v3-feedback" role="status">@cacheFeedback</p> }
+        <section class="cache-recovery" aria-label="Cache recovery">
+            <p>Download a fresh copy of the logic, replace the shared cache, then reload this same page. Server data is unchanged; other tabs keep their drafts and pending work and are not reloaded.</p>
+            <p>Save or discard unfinished local work first.</p>
+        </section>
+        <details class="cache-technical">
+            <summary>Technical details &amp; row counts</summary>
+            <dl class="cache-facts">
+                <div><dt>Cache information read at (UTC)</dt><dd>@(cacheSnapshotUtc is { } observed ? CacheUtc(observed) : cacheReading ? "Loading…" : "Unavailable")</dd></div>
+                @if (cacheInspection is { State: { } state } inspected)
+                {
+                    <div><dt>Exact logical bytes</dt><dd>@CacheNumber(inspected.LogicalBytes) bytes</dd></div>
+                    <div><dt>Checkpoint coverage</dt><dd>@CacheUtc(state.Checkpoint.ThroughUtc)</dd></div>
+                    <div><dt>Checkpoint server run</dt><dd>@state.Checkpoint.RunId</dd></div>
+                    <div><dt>Server run started</dt><dd>@CacheUtc(state.Checkpoint.StartedUtc)</dd></div>
+                }
+                else { <div><dt>Usable cache checkpoint, size and counts</dt><dd>@(cacheReading ? "Loading…" : "Unavailable in this snapshot")</dd></div> }
+                @if (cacheSynchronization is { } synchronization)
+                {
+                    <div><dt>Successful check (this tab)</dt><dd>@CacheUtc(synchronization.ObservedUtc)</dd></div>
+                    <div><dt>Check checkpoint coverage</dt><dd>@CacheUtc(synchronization.Checkpoint.ThroughUtc)</dd></div>
+                    <div><dt>Check server run</dt><dd>@synchronization.Checkpoint.RunId</dd></div>
+                    <div><dt>Check server run started</dt><dd>@CacheUtc(synchronization.Checkpoint.StartedUtc)</dd></div>
+                }
+                else { <div><dt>Successful check (this tab)</dt><dd>No successful sync recorded in this tab</dd></div> }
+            </dl>
+            @if (cacheInspection is { State: not null } counted)
+            {
+                <h3>Cached records · including archived records</h3>
+                <dl class="cache-counts">
+                    @foreach (var count in counted.Tables ?? [])
+                    { <div><dt>@CacheTableName(count.Table)</dt><dd>@CacheNumber(count.Rows)</dd></div> }
+                </dl>
+            }
+            <p class="cache-note">Size covers SQLite database pages only, not total browser storage. Record counts exclude internal metadata and migration rows.</p>
+            <p class="cache-note">Sign-in, preferences, private history, images and HTTP caches are unchanged.</p>
+        </details>
+    </div>
+    <fieldset class="v3-fields cache-footer" disabled="@cacheReplacing">
+        <div class="confirmation-actions cache-actions">
+            <button type="button" autofocus @onclick="CloseCacheManagement">Close</button>
+            <button type="button" aria-busy="@cacheReplacing.ToString().ToLowerInvariant()" @onclick="ClearCacheAndReloadAsync">@Icon(cacheReplacing, "fa-database") Clear cache and reload</button>
+        </div>
+    </fieldset>
+</dialog>
+}
+</div>
+}

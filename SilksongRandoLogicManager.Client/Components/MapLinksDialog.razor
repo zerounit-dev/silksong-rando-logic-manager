@@ -1,0 +1,214 @@
+@using System.Net.Http.Json
+@using System.Text.Json
+@using SilksongRandoLogicManager.Contracts
+@using Silksong_Rando_Logic_Manager.Services
+@implements IAsyncDisposable
+@inject ConfirmedCatalogue Catalogue
+@inject HttpClient Http
+@inject SessionAccess Access
+@inject ClientRuntime Runtime
+
+@if (links is not null)
+{
+    <dialog @ref="dialog" class="confirmation-modal map-link-modal v3-dialog lp-dialog" aria-labelledby="map-link-title" @oncancel="CloseAsync" @oncancel:preventDefault>
+        <fieldset class="v3-fields" disabled="@pending">
+            <h2 id="map-link-title">map links</h2>
+            <input class="map-link-search" @bind="search" @bind:event="oninput" placeholder="search map links" autocomplete="off" aria-label="Search map links" />
+            <datalist id="map-link-room-references">@foreach (var reference in links.RoomReferences) { <option value="@reference"></option> }</datalist>
+            <div class="map-link-table-wrap"><table class="map-link-table"><thead><tr><th>zone</th><th>cache key</th><th>chunks</th><th>room reference</th><th>state</th></tr></thead><tbody>
+                <Virtualize TItem="LandingLinkRow" Items="FilteredRows" Context="row" ItemSize="28" SpacerElement="tr">
+                    <tr @key="row.MapSceneId"><td>@row.ZoneInGameId</td><td>@row.CacheKey</td><td>@row.ChunkIndexes</td><td><input list="map-link-room-references" value="@DraftFor(row)" readonly="@(!Access.CanAuthor)" @oninput="args => SetDraft(row.MapSceneId, args.Value?.ToString())" autocomplete="off" /></td><td class="@(row.ResolutionStatus is { } status && status != "Resolved" ? "danger" : "")">@(row.ResolutionStatus ?? "unlinked")</td></tr>
+                </Virtualize>
+            </tbody></table></div>
+            @if (mergeResult is not null) { <p class="map-link-merge-result">@mergeResult</p> }
+            @if (feedback is not null) { <p class="map-manifest-error" role="alert">@feedback</p> }
+            <div class="confirmation-actions"><button type="button" disabled="@(!Access.CanAuthor)" @onclick="MergeAsync">@PendingIcon("merge")merge map scenes into rooms</button><button type="button" disabled="@(!Access.CanAuthor)" @onclick="ApplyAsync">@PendingIcon("links")apply</button><button type="button" @onclick="CloseAsync">cancel</button></div>
+        </fieldset>
+    </dialog>
+}
+
+@code {
+    [Parameter, EditorRequired] public Func<bool> Owns { get; set; } = null!;
+    [Parameter, EditorRequired] public Func<bool> CanUse { get; set; } = null!;
+    [Parameter, EditorRequired] public Func<bool> ErrorOpen { get; set; } = null!;
+    [Parameter, EditorRequired] public Func<ElementReference, ValueTask<bool>> Show { get; set; } = null!;
+    [Parameter, EditorRequired] public Func<ElementReference, Task> Hide { get; set; } = null!;
+    [Parameter, EditorRequired] public Func<ElementReference, bool, Task> Freeze { get; set; } = null!;
+    [Parameter, EditorRequired] public Func<Exception, string, Task> ReportError { get; set; } = null!;
+    [Parameter] public EventCallback<bool> Closed { get; set; }
+    [Parameter] public EventCallback Settled { get; set; }
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { RespectRequiredConstructorParameters = true };
+    private readonly CancellationTokenSource lifetime = new();
+    private readonly Dictionary<Guid, string?> drafts = [];
+    private LandingLinks? links;
+    private Guid? roomFilter, sceneFilter;
+    private ElementReference dialog;
+    private string search = "", pendingAction = "";
+    private string? feedback, mergeResult;
+    private bool disposed, pending, durableMerge, showPending;
+    private long generation;
+    private string? observedMapState;
+    private bool ClientUpdateWorkAtRisk() => pending || links is not null && Access.CanAuthor;
+    protected override void OnInitialized()
+    {
+        Runtime.ObserveUpdateRisk += ClientUpdateWorkAtRisk;
+        Catalogue.Changed += LocalLinksChanged;
+    }
+    private void LocalLinksChanged()
+    {
+        if (!Current || links is null || pending || Catalogue.ConfirmedMapStateId is not { } state || state == observedMapState) return;
+        _ = AdoptLocalLinksAsync(generation);
+    }
+    private async Task AdoptLocalLinksAsync(long operation)
+    {
+        bool Owned() => Current && operation == generation && links is not null && !pending;
+        var targetState = Catalogue.ConfirmedMapStateId;
+        try
+        {
+            var rows = await Catalogue.LoadLinksAsync(roomFilter, sceneFilter, Owned, lifetime.Token);
+            if (Owned() && rows is not null)
+            {
+                var dirty = links!.Rows.Where(row => DraftFor(row) != row.RoomReferenceText).ToDictionary(row => row.MapSceneId, DraftFor);
+                Install(rows, dirty); observedMapState = targetState; StateHasChanged();
+            }
+        }
+        catch (OperationCanceledException) when (!Owned()) { }
+        catch (Exception error) { if (Owned()) await ReportError(error, "Map links could not be refreshed. The preceding diagnostics and drafts have been retained."); }
+    }
+    public bool IsOpen => links is not null;
+    private bool Current => !disposed && Owns();
+    public async Task<bool> OpenAsync(AreaMapSurface.MapLinkContextIntent intent)
+    {
+        if (!Current || pending || links is not null || !CanUse()) return false;
+        using var timing = OperationTiming.Start("map.links.combined-read-decode-preparation");
+        roomFilter = intent.ResolvedRoomId; sceneFilter = intent.MapSceneId;
+        var operation = ++generation;
+        var value = await Catalogue.LoadLinksAsync(roomFilter, sceneFilter, () => Current && operation == generation, lifetime.Token);
+        if (!Current || operation != generation || value is null) return false;
+        Install(value, new Dictionary<Guid, string?>()); search = ""; feedback = mergeResult = null; durableMerge = false; showPending = true;
+        await InvokeAsync(StateHasChanged); timing.End(Current ? TimingOutcome.Complete : TimingOutcome.Retired); return true;
+    }
+    private void Install(LandingLinks value, IReadOnlyDictionary<Guid, string?> dirty)
+    {
+        if (value.Rows is null || value.RoomReferences is null || value.Rows.Any(x => x is null || x.MapSceneId == Guid.Empty || x.ZoneInGameId is null || x.CacheKey is null || x.ChunkIndexes is null) || value.Rows.Select(x => x.MapSceneId).Distinct().Count() != value.Rows.Count || value.RoomReferences.Any(x => x is null)) throw new JsonException();
+        var next = value.Rows.ToDictionary(x => x.MapSceneId, x => dirty.TryGetValue(x.MapSceneId, out var text) ? text : x.RoomReferenceText);
+        links = value; drafts.Clear(); foreach (var item in next) drafts.Add(item.Key, item.Value);
+    }
+    private List<LandingLinkRow> FilteredRows => links?.Rows.Where(row => string.IsNullOrWhiteSpace(search) || $"{row.ZoneInGameId} {row.CacheKey} {row.ChunkIndexes} {row.RoomReferenceText} {row.ResolutionStatus} {row.LinkedRoomFriendlyName}".Contains(search.Trim(), StringComparison.OrdinalIgnoreCase)).ToList() ?? [];
+    private string? DraftFor(LandingLinkRow row) => drafts.GetValueOrDefault(row.MapSceneId, row.RoomReferenceText);
+    private void SetDraft(Guid id, string? value) { if (Access.CanAuthor && Current && !pending && !ErrorOpen() && links is not null && drafts.ContainsKey(id)) drafts[id] = value; }
+    private Task ApplyAsync() => RunAsync("links", "map-links/apply", new ApplyLandingLinks(drafts.Select(x => new LandingLinkDraft(x.Key, x.Value)).ToArray()));
+    private Task MergeAsync() => RunAsync("merge", "map-links/merge", new { });
+    private async Task RunAsync(string action, string path, object command)
+    {
+        if (!Access.CanAuthor || !Current || pending || !CanUse() || links is null) return;
+        using var timing = OperationTiming.Start(action == "merge" ? "map.links.merge" : "map.links.apply");
+        using var outcome = Runtime.ObserveMutation();
+        pending = true; pendingAction = action; feedback = null;
+        var operation = ++generation; var acknowledged = false;
+        StateHasChanged();
+        try
+        {
+            await Freeze(dialog, true);
+            using var admissionTiming = OperationTiming.Start("map.links.admission");
+            await Catalogue.MutateAsync(async admission =>
+            {
+                admissionTiming.End();
+                using var sendTiming = OperationTiming.Start("map.links.buffered-send", parent: timing.Id);
+                var source = admission.CaptureReadContext();
+                using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v3/" + path) { Content = JsonContent.Create(command, command.GetType(), options: Json) };
+                var cacheRequest = admission.BindCache(request);
+                outcome.Dispatched();
+                using var response = await Http.SendAsync(request, CancellationToken.None);
+                sendTiming.End();
+                using var decodeTiming = OperationTiming.Start("map.links.decode", parent: timing.Id);
+                if (!response.IsSuccessStatusCode)
+                {
+                    var error = await response.Content.ReadFromJsonAsync<ApiError>(Json);
+                    if ((int)response.StatusCode is 400 or 404 && error is { Code: "invalid" or "missing", Message.Length: > 0 })
+                    { outcome.OutcomeKnown(); if (Current && operation == generation) feedback = error.Message; decodeTiming.End(TimingOutcome.ResponseDecoded); timing.End(TimingOutcome.Rejected); return; }
+                    throw new InvalidOperationException("Map command outcome unconfirmed.");
+                }
+                var received = await LogicBrowserCache.DecodeAsync<LandingCommit>(response, cacheRequest);
+                var result = received.Result;
+                try
+                {
+                decodeTiming.End(TimingOutcome.ResponseDecoded);
+                if (!result.Committed || action == "merge" && result.MergedCount is not >= 0) throw new JsonException();
+                acknowledged = true;
+                outcome.OutcomeKnown();
+                if (!Current || operation != generation) return;
+                Exception? failure = null;
+                if (action == "merge")
+                {
+                    durableMerge = true;
+                    mergeResult = result.MergedCount == 1 ? "merged 1 map scene" : $"merged {result.MergedCount} map scenes";
+                }
+                else
+                {
+                    try { await Hide(dialog); }
+                    catch (Exception exception) { failure = exception; }
+                    finally { links = null; drafts.Clear(); durableMerge = false; }
+                    StateHasChanged();
+                }
+                bool Owned() => Current && operation == generation;
+                try { admission.Publish(result.Shared ?? throw new JsonException("Saved; affected shared facts are unavailable. Use explicit Refresh, not another write."), source); }
+                catch (Exception exception) { failure = failure is null ? exception : new AggregateException(failure, exception); }
+                if (failure is not null) throw failure;
+                timing.End(!Owned() ? TimingOutcome.Retired : TimingOutcome.CommittedFollowupReturned);
+                }
+                finally { admission.PublishCache(received); }
+            }, lifetime.Token);
+        }
+        catch (Exception exception)
+        {
+            timing.End(acknowledged ? TimingOutcome.KnownCommitFollowupFailed : TimingOutcome.Uncertain);
+            if (Current) await ReportError(exception, acknowledged ? "Saved; refresh failed. Do not repeat the saved command." : "The map command outcome could not be confirmed. Review current data before another action; no automatic retry was attempted.");
+        }
+        finally
+        {
+            pending = false; pendingAction = "";
+            if (Current)
+            {
+                try { if (links is not null) await Freeze(dialog, false); }
+                catch (Exception exception) { await ReportError(exception, "The map dialog could not be updated."); }
+                if (links is null) await Closed.InvokeAsync(false);
+                await Settled.InvokeAsync(); StateHasChanged();
+            }
+            LocalLinksChanged();
+        }
+    }
+    private async Task CloseAsync()
+    {
+        if (!Current || pending || ErrorOpen() || links is null) return;
+        var changed = durableMerge;
+        var operation = ++generation;
+        pending = true;
+        try
+        {
+            await Hide(dialog);
+            if (!Current || operation != generation) { pending = false; return; }
+            links = null; drafts.Clear(); durableMerge = false;
+        }
+        catch (Exception exception)
+        {
+            pending = false;
+            if (Current) await ReportError(exception, "The map links dialog could not be closed.");
+            return;
+        }
+        pending = false;
+        if (Current && operation == generation)
+        {
+            await Closed.InvokeAsync(changed);
+            await Settled.InvokeAsync(); StateHasChanged();
+        }
+    }
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!Current || !showPending || links is null || ErrorOpen()) return;
+        try { if (await Show(dialog)) showPending = false; }
+        catch (Exception exception) { if (Current) await ReportError(exception, "The map dialog could not be displayed."); }
+    }
+    private RenderFragment PendingIcon(string action) => @<span class="v3-icon-slot lp-pending" aria-hidden="true">@if (pendingAction == action) { <i class="fa-solid fa-spinner fa-spin"></i> }</span>;
+    public ValueTask DisposeAsync() { if (!disposed) { Runtime.ObserveUpdateRisk -= ClientUpdateWorkAtRisk; disposed = true; Catalogue.Changed -= LocalLinksChanged; generation++; lifetime.Cancel(); lifetime.Dispose(); } return ValueTask.CompletedTask; }
+}

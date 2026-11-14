@@ -4,14 +4,27 @@ using System.Globalization;
 
 namespace Silksong_Rando_Logic_Manager.Services;
 
-public sealed class RoomGeometryExportService(IDbContextFactory<LogicDbContext> contexts) : IRoomGeometryExportService
+public sealed class RoomGeometryExportService(IDbContextFactory<LogicDbContext> contexts,
+    SharedPublicationCoordinator publications, Authentication.LiveAccess access) : IRoomGeometryExportService
 {
     public async Task<RoomGeometryExportResult> GenerateAsync(CancellationToken cancellationToken = default)
+    {
+        using var publication = await publications.AcquireAsync(cancellationToken);
+        await access.RequireAsync(token: cancellationToken);
+        return await GenerateAsync(contexts, publication, cancellationToken);
+    }
+
+    internal static Task<RoomGeometryExportResult> GeneratePreparedAsync(Publishing.PublishingSnapshotFactory contexts,
+        CancellationToken cancellationToken = default) => GenerateAsync(contexts, null, cancellationToken);
+
+    private static async Task<RoomGeometryExportResult> GenerateAsync(IDbContextFactory<LogicDbContext> contexts,
+        SharedPublicationCoordinator.Admission? publication, CancellationToken cancellationToken)
     {
         await using var db = await contexts.CreateDbContextAsync(cancellationToken);
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         var snapshot = await RoomExportStructure.LoadSnapshotAsync(db, false, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        publication?.Dispose();
         var globalFailures = new List<RoomGraphExportFailure>();
         RoomExportStructure.BuildTypeLegend(globalFailures);
         var structure = RoomExportStructure.Project(snapshot, globalFailures);

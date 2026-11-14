@@ -5,11 +5,24 @@ using Silksong_Rando_Logic_Manager.Data;
 
 namespace Silksong_Rando_Logic_Manager.Services;
 
-public sealed class RequirementCatalogueExportService(IDbContextFactory<LogicDbContext> dbContextFactory, TimeProvider timeProvider)
+public sealed class RequirementCatalogueExportService(IDbContextFactory<LogicDbContext> dbContextFactory, TimeProvider timeProvider,
+    SharedPublicationCoordinator publications, Authentication.LiveAccess access)
 {
     private static readonly JsonSerializerOptions jsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
 
     public async Task<RequirementCatalogueExportResult> ExportAsync(CancellationToken cancellationToken = default)
+    {
+        using var publication = await publications.AcquireAsync(cancellationToken);
+        await access.RequireAsync(token: cancellationToken);
+        return await ExportAsync(dbContextFactory, timeProvider, publication, cancellationToken);
+    }
+
+    internal static Task<RequirementCatalogueExportResult> ExportPreparedAsync(Publishing.PublishingSnapshotFactory contexts,
+        TimeProvider timeProvider, CancellationToken cancellationToken = default) =>
+        ExportAsync(contexts, timeProvider, null, cancellationToken);
+
+    private static async Task<RequirementCatalogueExportResult> ExportAsync(IDbContextFactory<LogicDbContext> dbContextFactory,
+        TimeProvider timeProvider, SharedPublicationCoordinator.Admission? publication, CancellationToken cancellationToken)
     {
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
@@ -35,6 +48,10 @@ public sealed class RequirementCatalogueExportService(IDbContextFactory<LogicDbC
             .Select(x => new RequirementCatalogueExchangeItem(x.Id, x.Name, x.Category, x.OutputValue, x.Notes, x.SortOrder, x.Aliases))
             .ToListAsync(cancellationToken);
 
+        // All source DTOs are now frozen. End the original read-only snapshot
+        // before releasing admission and serializing; no database reads follow.
+        await transaction.DisposeAsync();
+        publication?.Dispose();
         var document = new RequirementCatalogueExchangeDocument(5, predicates, crests, methods, items, countables, souls);
         var timestamp = timeProvider.GetUtcNow().ToString("yyyyMMdd-HHmmss-fff", CultureInfo.InvariantCulture);
         return new($"silksong-requirement-catalogue-{timestamp}.json", JsonSerializer.SerializeToUtf8Bytes(document, jsonOptions));

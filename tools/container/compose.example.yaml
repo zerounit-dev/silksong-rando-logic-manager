@@ -1,0 +1,23 @@
+services:
+  logic-manager:
+    image: ${LOGIC_MANAGER_IMAGE:?Set a versioned GHCR image or immutable digest}
+    platform: linux/amd64
+    # Image default: app UID/GID 1654. Pre-provision bind paths/ACLs accordingly.
+    user: "1654:1654"
+    environment:
+      Authentication__Mode: required
+      LogicManager__ConfigDirectory: /config
+      Storage__DataRoot: /data
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - type: bind
+        source: ${LOGIC_MANAGER_CONFIG:?Set an existing private config directory}
+        target: /config
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${LOGIC_MANAGER_DATA:?Set an existing private data directory}
+        target: /data
+        bind:
+          create_host_path: false

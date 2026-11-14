@@ -6,6 +6,7 @@ using System.Collections.Immutable;
 using System.Globalization;
 using System.Runtime.ExceptionServices;
 using System.Text;
+using Silksong_Rando_Logic_Manager.Authentication;
 
 namespace Silksong_Rando_Logic_Manager.Services;
 
@@ -26,7 +27,10 @@ public sealed record RequirementValidationPreflightResult(
     IReadOnlyList<RequirementValidationRowResult> Rows,
     int Successful,
     int Failed,
-    int Unknown);
+    int Unknown)
+{
+    public SilksongRandoLogicManager.Contracts.SharedMutationSegment? Shared { get; init; }
+}
 
 public interface IRequirementValidationService
 {
@@ -38,14 +42,37 @@ public sealed class RequirementValidationOperationException(string message, Exce
 {
 }
 
-public sealed class RequirementValidationService(
-    IDbContextFactory<LogicDbContext> contexts,
-    ILogger<RequirementValidationService> logger) : IRequirementValidationService
+public sealed class RequirementValidationService : IRequirementValidationService
 {
-    public async Task<RequirementValidationPreflightResult> RecheckAllAsync(CancellationToken cancellationToken = default)
+    private readonly IDbContextFactory<LogicDbContext> contexts;
+    private readonly ILogger<RequirementValidationService> logger;
+    private readonly SharedPublicationCoordinator publications;
+    private readonly ICommandAdmission admission;
+
+    public RequirementValidationService(IDbContextFactory<LogicDbContext> contexts,
+        ILogger<RequirementValidationService> logger, SharedPublicationCoordinator publications, LiveAccess access)
+        : this(contexts, logger, publications, new WebCommandAdmission(access)) { }
+
+    private RequirementValidationService(
+    IDbContextFactory<LogicDbContext> contexts,
+    ILogger<RequirementValidationService> logger, SharedPublicationCoordinator publications, ICommandAdmission admission)
+    { this.contexts = contexts; this.logger = logger; this.publications = publications; this.admission = admission; }
+
+    internal static RequirementValidationService CreateForStandaloneBulkImport(IDbContextFactory<LogicDbContext> contexts,
+        ILogger<RequirementValidationService> logger, SharedPublicationCoordinator publications) =>
+        new(contexts, logger, publications, new StandaloneBulkImportAdmission());
+    public Task<RequirementValidationPreflightResult> RecheckAllAsync(CancellationToken cancellationToken = default) =>
+        RecheckAllCoreAsync(null, cancellationToken);
+
+    internal Task<RequirementValidationPreflightResult> RecheckAllForClientAsync(SharedCatalogueService catalogue, CancellationToken token) =>
+        RecheckAllCoreAsync(catalogue, token);
+
+    private async Task<RequirementValidationPreflightResult> RecheckAllCoreAsync(SharedCatalogueService? catalogue, CancellationToken cancellationToken)
     {
+        using var publication = await publications.AcquireAsync(cancellationToken);
+        var identity = await admission.AuthorAsync(cancellationToken);
         await using var db = await contexts.CreateDbContextAsync(cancellationToken);
-        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        await using var transaction = await LogicWriteScope.BeginAsync(db, publication, identity.Actor, cancellationToken);
         try
         {
             var predicates = await LoadPredicatesAsync(db, cancellationToken);
@@ -72,8 +99,21 @@ public sealed class RequirementValidationService(
                 Apply(row, RequirementBearingRowKind.Check, ValidateSafely(context, row.RoomId, row.Id, RequirementBearingRowKind.Check, row.Requirements), results);
 
             using (db.SuppressAuditMetadata()) await db.SaveChangesAsync(cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
-            return CreateResult(results);
+            await transaction.FinalizeAsync(cancellationToken);
+            var prepared = publication.PrepareAdvance(transaction.FinalEffects.RoomFactsChanged, false);
+            var plan = catalogue is null ? null : await SharedRoomCommitPlan.PrepareAsync(db, transaction, prepared, cancellationToken);
+            await transaction.CommitAsync(() => publication.PublishCommitted(prepared), cancellationToken);
+            var result = CreateResult(results);
+            if (catalogue is null) return result;
+            // Release the write scope before the common lifecycle-first projection.
+            // A later independent write makes coverage unavailable, not a rollback.
+            publication.Dispose();
+            try { return result with { Shared = await catalogue.ReadCommittedMutationAsync(plan!) }; }
+            catch (Exception failure)
+            {
+                logger.LogError(failure, "Global requirement validation committed but its affected room projection is unavailable.");
+                return result;
+            }
         }
         catch (Exception exception) when (ClassifySqlite(exception) is not null)
         {
@@ -115,15 +155,18 @@ public sealed class RequirementValidationService(
 
     public async Task<RequirementValidationPreflightResult> RecheckRoomAsync(Guid roomId, CancellationToken cancellationToken = default)
     {
+        using var publication = await publications.AcquireAsync(cancellationToken);
+        var identity = await admission.AuthorAsync(cancellationToken);
         await using var db = await contexts.CreateDbContextAsync(cancellationToken);
-        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        await using var transaction = await LogicWriteScope.BeginAsync(db, publication, identity.Actor, cancellationToken);
         try
         {
             var activeRoom = await db.Rooms.AsNoTracking().Where(row => row.Id == roomId && !row.IsArchived)
                 .Select(row => new RequirementValidationRoom(row.Id, row.ReferenceId)).SingleOrDefaultAsync(cancellationToken);
             if (activeRoom is null)
             {
-                await transaction.CommitAsync(cancellationToken);
+                await transaction.FinalizeAsync(cancellationToken);
+                await transaction.CommitAsync(token: cancellationToken);
                 return CreateResult([]);
             }
 
@@ -141,7 +184,9 @@ public sealed class RequirementValidationService(
                 Apply(row, RequirementBearingRowKind.Check, ValidateSafely(context, row.RoomId, row.Id, RequirementBearingRowKind.Check, row.Requirements), results);
 
             using (db.SuppressAuditMetadata()) await db.SaveChangesAsync(cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
+            await transaction.FinalizeAsync(cancellationToken);
+            var prepared = publication.PrepareAdvance(transaction.FinalEffects.RoomFactsChanged, false);
+            await transaction.CommitAsync(() => publication.PublishCommitted(prepared), cancellationToken);
             return CreateResult(results);
         }
         catch (Exception exception) when (ClassifySqlite(exception) is not null)

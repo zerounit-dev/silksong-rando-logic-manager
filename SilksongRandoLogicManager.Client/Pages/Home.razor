@@ -1,0 +1,68 @@
+@page "/"
+@using SilksongRandoLogicManager.Client.Components
+@using Silksong_Rando_Logic_Manager.Services
+@implements IAsyncDisposable
+@inject ConfirmedCatalogue Catalogue
+@inject HttpClient Http
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+
+<PageTitle>Silksong Logic Manager</PageTitle>
+<article class="content">
+<section class="map-wireframe-workspace v3-landing">
+    <header class="map-wireframe-header"><h1>Silksong Logic</h1></header>
+    @if (landing is null)
+    {
+        @if (loading) { <div class="lp-loading" role="status" aria-label="Loading map"><i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i></div> }
+    }
+    else if (landing.Surface is { } map)
+    {
+        <AreaMapSurface View="map" KeyboardActivation="true" LinkedRoomActivated="NavigateRoom" MapLinkRequested="OpenLinksAsync">
+            <LeadingControls>@MapTools</LeadingControls>
+            <TrailingControls>@RefreshControl</TrailingControls>
+        </AreaMapSurface>
+    }
+    else
+    {
+        <p class="map-empty">@(landing.State == LandingAreaMapState.NoImportedMap ? "No imported map frames yet." : "The imported map has no available chunk geometry.")</p>
+        <div class="map-manifest-upload"><div class="map-controls-start">@MapTools</div>@RefreshControl</div>
+    }
+</section>
+</article>
+
+<MapLinksDialog @ref="mapLinks" Owns="@(() => Current)" CanUse="@(() => Shell.CanUseLanding(this))" ErrorOpen="@(() => Shell.GeneralErrorOpen)"
+                Show="Shell.ShowLandingDialogAsync" Hide="Shell.CloseLandingDialogAsync" Freeze="Shell.FreezeLandingDialogAsync" ReportError="Shell.ReportLandingErrorAsync"
+                                 Closed="LinksClosedAsync" Settled="Shell.DrainLandingAsync" />
+@if (overlayDraft is not null && landing?.Surface is { } calibrationMap && calibrationMap.Decoration.Overlay is { } calibrationOverlay)
+{
+    <dialog @ref="overlayDialog" class="confirmation-modal overlay-calibration-modal v3-dialog lp-dialog" aria-labelledby="overlay-calibration-title" @oncancel="CloseOverlayAsync" @oncancel:preventDefault>
+        <fieldset class="v3-fields" disabled="@pending">
+            <h2 id="overlay-calibration-title">calibrate image</h2>
+            <svg @ref="calibrationSvg" id="map-overlay-calibration" class="map-overlay-calibration" viewBox="@ViewBox" data-base-viewbox="@ViewBox" data-calibration-disabled="@((pending || Shell.GeneralErrorOpen).ToString().ToLowerInvariant())" role="img" aria-label="Area map calibration">
+                @if (DraftPlacement is { } placement) { <image class="map-overlay-image" href="@calibrationOverlay.ImageUrl" x="@Number(placement.X)" y="@Number(placement.Y)" width="@Number(placement.Width)" height="@Number(placement.Height)" preserveAspectRatio="none" /> }
+                <g transform="@MapTransform">@foreach (var owner in calibrationMap.Geometry.Owners) { <path class="chunk-frame @(owner.ActiveResolvedRoomId is not null ? "linked-owner" : "unlinked")" d="@owner.SvgPathData" /> }</g>
+            </svg>
+            <p class="overlay-calibration-legend">wheel: zoom | drag: pan | Ctrl+wheel: uniform scale | Ctrl+drag: align | Ctrl+Shift+drag: scale X/Y</p>
+            <div class="overlay-calibration-fields"><label>scale X <input id="overlay-scale-x-percent" type="number" step="any" @bind:get="overlayDraft.ScaleXPercent" @bind:set="value => { if (Shell.CanAuthor) overlayDraft.ScaleXPercent = value; }" @bind:event="oninput" /></label><label>scale Y <input id="overlay-scale-y-percent" type="number" step="any" @bind:get="overlayDraft.ScaleYPercent" @bind:set="value => { if (Shell.CanAuthor) overlayDraft.ScaleYPercent = value; }" @bind:event="oninput" /></label><label>left <input id="overlay-left-offset-percent" type="number" step="any" @bind:get="overlayDraft.LeftOffsetPercent" @bind:set="value => { if (Shell.CanAuthor) overlayDraft.LeftOffsetPercent = value; }" @bind:event="oninput" /></label><label>bottom <input id="overlay-bottom-offset-percent" type="number" step="any" @bind:get="overlayDraft.BottomOffsetPercent" @bind:set="value => { if (Shell.CanAuthor) overlayDraft.BottomOffsetPercent = value; }" @bind:event="oninput" /></label></div>
+            @if (feedback is not null) { <p class="map-manifest-error" role="alert">@feedback</p> }
+            <div class="confirmation-actions"><button type="button" @onclick="ApplyOverlayAsync">@PendingIcon("overlay")apply</button><button type="button" @onclick="CloseOverlayAsync">cancel</button></div>
+        </fieldset>
+    </dialog>
+}
+
+@code {
+    private RenderFragment MapTools => @<text>
+        @if (Shell.NavigationBlocked || Shell.GeneralErrorOpen)
+        {
+            <button type="button" class="map-manifest-picker disabled" disabled aria-label="Map manifest (opens in a new tab)"><i class="fa-solid fa-file-arrow-up" aria-hidden="true"></i> map manifest</button>
+        }
+        else
+        {
+            <a class="map-manifest-picker lp-manifest" href="/tools/map-manifest" target="_blank" rel="noopener noreferrer" data-enhance-nav="false" aria-label="Map manifest (opens in a new tab)" title="Map manifest (opens in a new tab)"><i class="fa-solid fa-file-arrow-up" aria-hidden="true"></i> map manifest</a>
+        }
+        <button type="button" class="map-manifest-picker" disabled="@ToolsBlocked" @onclick="() => OpenLinksAsync(new(null, null))"><span class="v3-icon-slot"><i class="fa-solid @(openingLinks ? "fa-spinner fa-spin" : "fa-link")" aria-hidden="true"></i></span> edit map links</button>
+        @if (landing?.Surface?.Decoration.Overlay is not null) { <button type="button" class="map-manifest-picker" disabled="@(!Shell.CanAuthor || ToolsBlocked)" @onclick="OpenOverlayAsync"><i class="fa-solid fa-sliders" aria-hidden="true"></i> calibrate image</button> }
+    </text>;
+    private RenderFragment RefreshControl => @<button type="button" class="map-manifest-picker lp-refresh" disabled="@(ToolsBlocked || loading)" @onclick="() => RefreshMapAsync(true)" title="Refresh map" aria-label="Refresh map"><span class="v3-icon-slot"><i class="fa-solid @(loading ? "fa-spinner fa-spin" : "fa-arrows-rotate")" aria-hidden="true"></i></span></button>;
+    private RenderFragment PendingIcon(string action) => @<span class="v3-icon-slot lp-pending" aria-hidden="true">@if (pendingAction == action) { <i class="fa-solid fa-spinner fa-spin"></i> }</span>;
+}

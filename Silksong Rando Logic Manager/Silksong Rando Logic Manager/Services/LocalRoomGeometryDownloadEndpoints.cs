@@ -8,7 +8,7 @@ public static class LocalRoomGeometryDownloadEndpoints
 
     public static IEndpointRouteBuilder MapLocalRoomGeometryDownloadEndpoints(this IEndpointRouteBuilder endpoints)
     {
-        endpoints.MapGet(ExportPath, DownloadAsync).AllowAnonymous().DisableAntiforgery();
+        endpoints.MapGet(ExportPath, DownloadAsync).RequireAuthorization(Authentication.AccessPolicies.Normal).DisableAntiforgery();
         return endpoints;
     }
 

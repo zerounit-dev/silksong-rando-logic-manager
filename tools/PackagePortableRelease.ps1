@@ -1,14 +1,15 @@
 [CmdletBinding()]
 param(
     [ValidateSet('all', 'win-x64', 'linux-x64', 'osx-arm64')]
-    [string] $RuntimeIdentifier = 'all'
+    [string] $RuntimeIdentifier = 'all',
+    [string[]] $PrivateRoots = @()
 )
 
 $ErrorActionPreference = 'Stop'
 
 if ($RuntimeIdentifier -eq 'all') {
     foreach ($target in @('win-x64', 'linux-x64', 'osx-arm64')) {
-        & $PSCommandPath -RuntimeIdentifier $target
+        & $PSCommandPath -RuntimeIdentifier $target -PrivateRoots $PrivateRoots
         if ($LASTEXITCODE -ne 0) {
             throw "Portable release build failed for $target with exit code $LASTEXITCODE."
         }
@@ -22,11 +23,45 @@ $projectDirectory = Join-Path (Join-Path $repositoryRoot 'Silksong Rando Logic M
 $projectFile = Join-Path $projectDirectory 'Silksong Rando Logic Manager.csproj'
 $backupProject = Join-Path (Join-Path (Join-Path $repositoryRoot 'tools') 'DatabaseBackup') 'DatabaseBackup.csproj'
 $tarballBuilderProject = Join-Path (Join-Path (Join-Path $repositoryRoot 'tools') 'LinuxTarballBuilder') 'LinuxTarballBuilder.csproj'
-$sourceData = Join-Path $projectDirectory 'Data'
+$sourceData = Join-Path $projectDirectory 'Storage'
 $sourceDatabase = Join-Path $sourceData 'silksong-rando-logic.db'
 $sourceScenes = Join-Path $sourceData 'scenes'
 $sourceSceneSource = Join-Path $sourceData 'scene-source'
 $sourceSceneOriginals = Join-Path $sourceData 'scene-originals'
+$safePortableConfig = '{"Authentication":{"Mode":"bypass"},"Storage":{"DataRoot":"Storage"},"DocumentationPublishing":{"Enabled":false},"HttpHosting":{"ForwardingEnabled":false}}'
+$resolvedPrivateRoots = @(
+    foreach ($root in @((Join-Path $projectDirectory 'Config'), (Join-Path $projectDirectory 'Storage')) + $PrivateRoots) {
+        if ([string]::IsNullOrWhiteSpace($root) -or $root.IndexOfAny([char[]]'*?;') -ge 0) {
+            throw 'PrivateRoots requires literal directory paths, not empty entries, globs or semicolon lists.'
+        }
+        $candidate = if ([IO.Path]::IsPathRooted($root)) { $root } else { Join-Path $repositoryRoot $root }
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) { throw 'PrivateRoots entries must be directories, not files.' }
+        [IO.Path]::GetFullPath($candidate).TrimEnd('\', '/')
+    }
+)
+# Default Storage exclusion has explicit public seed/image reconstruction below.
+# Operator-declared roots must never be reintroduced through that exception.
+foreach ($declaredRoot in $PrivateRoots) {
+    $root = [IO.Path]::GetFullPath($(if ([IO.Path]::IsPathRooted($declaredRoot)) { $declaredRoot } else { Join-Path $repositoryRoot $declaredRoot })).TrimEnd('\', '/')
+    foreach ($seed in @($sourceDatabase, $sourceScenes, $sourceSceneSource, $sourceSceneOriginals)) {
+        $seed = [IO.Path]::GetFullPath($seed).TrimEnd('\', '/')
+        if ($root.Equals($seed, [StringComparison]::OrdinalIgnoreCase) -or
+            $seed.StartsWith($root + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -or
+            $root.StartsWith($seed + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'PrivateRoots overlaps deliberately public Storage seed inputs. Choose an uncontaminated public seed before packaging; runtime settings are not changed.'
+        }
+    }
+}
+$privatePublishPaths = @(
+    $projectRoots = @($repositoryRoot, $projectDirectory) + @(Get-ChildItem -LiteralPath $repositoryRoot -Directory -Filter 'SilksongRandoLogicManager.*' | ForEach-Object FullName)
+    foreach ($root in $resolvedPrivateRoots) {
+        foreach ($projectRoot in $projectRoots) {
+            if ($root.StartsWith($projectRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+                $root.Substring($projectRoot.Length + 1)
+            }
+        }
+    }
+)
 $sourceReadmeDirectory = Join-Path $repositoryRoot 'readme'
 $sourceReadme = Join-Path $sourceReadmeDirectory 'README.md'
 $sourceLogicGuide = Join-Path $sourceReadmeDirectory 'LOGIC.md'
@@ -64,6 +99,18 @@ function Assert-StagedPortableOutputSafe {
         [string[]] $BuilderPathMarkers
     )
 
+    $expectedAuthenticationConfig = Join-Path $StagedRoot 'Silksong Rando Logic Manager/Config/appsettings.json'
+    $configFiles = @(Get-ChildItem -LiteralPath (Split-Path $expectedAuthenticationConfig) -Recurse -File -Force)
+    if ($configFiles.Count -ne 1 -or $configFiles[0].FullName -ine $expectedAuthenticationConfig -or
+        [System.IO.File]::ReadAllText($configFiles[0].FullName) -cne $safePortableConfig) {
+        throw 'Portable output must contain only the generated safe bypass configuration.'
+    }
+    foreach ($entry in Get-ChildItem -LiteralPath $StagedRoot -Recurse -Force) {
+        if ($entry.Name -ieq 'authentication.json' -or $entry.Name -ilike 'accounts.db*' -or
+            ($entry.PSIsContainer -and $entry.Name -in @('authentication', 'history', 'logs', 'backups', 'scene-image-staging'))) {
+            throw "Private authentication state must never enter a portable artifact: $($entry.FullName)"
+        }
+    }
     $pdbFiles = @(
         Get-ChildItem -LiteralPath $StagedRoot -Recurse -File -Force |
             Where-Object { $_.Extension.Equals('.pdb', [System.StringComparison]::OrdinalIgnoreCase) }
@@ -123,9 +170,16 @@ try {
     }
 
     New-Item -ItemType Directory -Path $packageRoot -Force | Out-Null
-    & dotnet publish $projectFile --configuration Release --runtime $RuntimeIdentifier --self-contained true --output $applicationRoot
+    # Escape the MSBuild property-list separator for the dotnet command-line parser.
+    $privateRootsProperty = $resolvedPrivateRoots -join '%3B'
+    & dotnet publish $projectFile --configuration Release --runtime $RuntimeIdentifier --self-contained true --output $applicationRoot "-p:LogicManagerPrivateRoots=$privateRootsProperty" '-p:LogicManagerSanitizedPortable=true'
     if ($LASTEXITCODE -ne 0) {
         throw "dotnet publish failed with exit code $LASTEXITCODE."
+    }
+    foreach ($relative in $privatePublishPaths) {
+        if (Test-Path -LiteralPath (Join-Path $applicationRoot $relative)) {
+            throw "Declared private directory entered published output: $relative"
+        }
     }
 
     New-Item -ItemType Directory -Path $temporarySnapshotDirectory -Force | Out-Null
@@ -141,25 +195,42 @@ try {
 
     $snapshot = $snapshots[0]
 
-    $packageData = Join-Path $applicationRoot 'data'
+    # Discard any legacy seed copied by SDK items, then insert only the selected
+    # consistent public seed/assets. Never copy Config or the whole Storage root.
+    $legacyData = Join-Path $applicationRoot 'data'
+    if (Test-Path -LiteralPath $legacyData) { Remove-Item -LiteralPath $legacyData -Recurse -Force }
+    $packageData = Join-Path $applicationRoot 'Storage'
     if (Test-Path -LiteralPath $packageData) {
         Remove-Item -LiteralPath $packageData -Recurse -Force
     }
 
     New-Item -ItemType Directory -Path $packageData -Force | Out-Null
+    $packageConfig = Join-Path $applicationRoot 'Config'
+    New-Item -ItemType Directory -Path $packageConfig -Force | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $packageConfig 'appsettings.json'), $safePortableConfig, [System.Text.UTF8Encoding]::new($false))
     Copy-Item -LiteralPath $snapshot.FullName -Destination (Join-Path $packageData 'silksong-rando-logic.db')
-    Copy-Item -LiteralPath $sourceScenes -Destination (Join-Path $packageData 'scenes') -Recurse
-    if (Test-Path -LiteralPath $sourceSceneOriginals) {
-        Copy-Item -LiteralPath $sourceSceneOriginals -Destination (Join-Path $packageData 'scene-originals') -Recurse
+    foreach ($directory in @('scenes', 'scene-originals', 'scene-source/tiles')) {
+        New-Item -ItemType Directory -Path (Join-Path $packageData $directory) -Force | Out-Null
     }
-    $packageSceneSource = Join-Path $packageData 'scene-source'
-    New-Item -ItemType Directory -Path $packageSceneSource -Force | Out-Null
-    Get-ChildItem -LiteralPath $sourceSceneSource -Force |
-        Where-Object Name -ne 'room-map-hd.png' |
-        Copy-Item -Destination $packageSceneSource -Recurse
+    # The existing public image stores, not arbitrary runtime files or the source master.
+    $publicAssetRoots = @($sourceScenes, $sourceSceneSource) + @($sourceSceneOriginals | Where-Object { Test-Path -LiteralPath $_ -PathType Container })
+    foreach ($file in Get-ChildItem -LiteralPath $publicAssetRoots -File -Recurse -Force -ErrorAction Stop) {
+        $relative = $file.FullName.Substring($sourceData.Length + 1).Replace('\', '/')
+        if ($relative -notmatch '^(?:scenes/[0-9a-f-]{36}\.webp|scene-originals/[0-9a-f-]{36}\.image|scene-source/(?:preview\.webp|build\.json|tiles/(?:[0-9]+-[0-9]+\.webp|ATTRIBUTION\.md)))$') { continue }
+        if (($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Public portable asset must not be a reparse point.' }
+        Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $packageData $relative)
+    }
     New-Item -ItemType File -Path (Join-Path $applicationRoot 'portable-release.marker') -Force | Out-Null
 
+    if (Test-Path -LiteralPath (Join-Path $packageData 'Publishing')) {
+        throw 'Private publishing workspace/configuration must never enter a portable artifact.'
+    }
+    if (Test-Path -LiteralPath (Join-Path $packageData 'history')) {
+        throw 'Private record history must never enter a portable artifact.'
+    }
+
     Copy-Item -LiteralPath $sourceReadme -Destination (Join-Path $packageRoot 'README.md')
+    Copy-Item -LiteralPath (Join-Path (Split-Path $sourceReadme) 'AUTHENTICATION.md') -Destination (Join-Path $packageRoot 'AUTHENTICATION.md')
     Copy-Item -LiteralPath $sourceLogicGuide -Destination (Join-Path $packageRoot 'LOGIC.md')
     Copy-Item -LiteralPath $sourceLicense -Destination (Join-Path $packageRoot 'LICENSE')
 

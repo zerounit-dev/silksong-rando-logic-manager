@@ -1,0 +1,358 @@
+@page "/scene-import"
+@using System.Text.Json
+@using Silksong_Rando_Logic_Manager.Services
+@using SilksongRandoLogicManager.Client.Components
+@using SilksongRandoLogicManager.Contracts
+@implements IAsyncDisposable
+@inject HttpClient Http
+@inject IJSRuntime JS
+@inject NavigationManager Navigation
+@inject ClientRuntime Runtime
+
+<PageTitle>Scene import | Silksong Logic Manager</PageTitle>
+<div class="scene-import-page" @ref="pageElement">
+    <h1 tabindex="-1">upload scene dump</h1>
+    <div class="scene-import-picker">
+        <label for="v3-scene-picker">Choose a scene dump JSON file or drop it here (up to 256 MiB).</label>
+        <InputFile id="v3-scene-picker" OnChange="ReadSceneAsync" accept="application/json,.json" disabled="@(preparing || applying || !App.CanAuthor || !App.CanUseScene(this))" />
+    </div>
+    @if (feedback is not null) { <p class="scene-upload-error" role="alert">@feedback</p> }
+    @if (preparing)
+    {
+        <div class="scene-page-preparation"><span class="scene-parsing-state" role="status">@stage</span><button class="scene-cancel-button" @onclick="CancelPreparationAsync">cancel</button></div>
+        <p>Scene processing runs in this browser and may temporarily block the page. Cancel can only be handled when the page responds.</p>
+    }
+    @if (review is not null && evidence is not null)
+    {
+        @if (uncertain)
+        {
+            <p role="alert">The Apply outcome is unconfirmed. Check the existing room before any explicit resubmission. Do not assume rollback.</p>
+            <button type="button" disabled="@(!App.CanUseScene(this))" @onclick="AcknowledgeUncertainAsync">I checked the existing room; enable an explicit resubmission</button>
+        }
+        <button class="scene-cancel-button" disabled="@(applying || !App.CanUseScene(this))" @onclick="RestartEvidenceAsync">Restart current-record review</button>
+        <SceneWorkbench @key="reviewKey" Review="review" Preview="evidence.Preview" ForeignMatches="evidence.ForeignMatches" Busy="applying" ApplyUnavailable="uncertain" CanInteract="CanInteract" CanEditDraft="CanEditDraft" Apply="ApplyAsync" Cancelled="CancelReviewAsync" Failed="FailAsync" />
+    }
+    else if (review is not null && !preparing)
+    {
+        <p>The extracted capture is retained; current records could not be loaded.</p>
+        <button type="button" disabled="@(!App.CanUseScene(this))" @onclick="RestartEvidenceAsync">Load current records</button>
+        <button type="button" @onclick="CancelReviewAsync">discard capture</button>
+    }
+</div>
+
+@code {
+    [CascadingParameter] public App App { get; set; } = default!;
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { RespectRequiredConstructorParameters = true };
+    private SceneDumpReview? review;
+    private SceneReviewEvidence? evidence;
+    private ElementReference pageElement;
+    private IJSObjectReference? module, reader;
+    private IDisposable? navigationRegistration;
+    private readonly CancellationTokenSource lifetime = new();
+    private CancellationTokenSource? evidenceRead;
+    private int generation, reviewKey;
+    private int canceledSelectionGeneration = -1;
+    private bool preparing, applying, disposed, uncertain, committedNavigation;
+    private string stage = "Reading scene file";
+    private string? feedback;
+    private bool CanInteract() => !preparing && App.CanInspectScene(this);
+    private bool CanEditDraft() => !preparing && App.CanUseScene(this);
+    protected override void OnInitialized() => App.RegisterClientUpdateRisk(this,
+        () => preparing || applying || uncertain || review is not null);
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || disposed) return;
+        navigationRegistration = Navigation.RegisterLocationChangingHandler(DepartAsync);
+        try
+        {
+            module = await ApplicationModuleLoader.ImportAsync(JS, Runtime, "scene-import-page.js");
+            if (disposed || Runtime.Retired) { await module.DisposeAsync(); module = null; return; }
+            reader = await module.InvokeAsync<IJSObjectReference>("create", pageElement, "v3-scene-picker");
+            if (disposed || Runtime.Retired) { await reader.InvokeVoidAsync("dispose"); await reader.DisposeAsync(); reader = null; return; }
+            // Only this new, still-idle page instance requests the native chooser.
+            // Browser activation policy may decline it; manual selection stays available.
+            if (generation == 0 && !preparing && !applying && review is null && App.CanAuthor && App.CanUseScene(this))
+                await reader.InvokeVoidAsync("requestInitialPicker");
+        }
+        catch (Exception exception) { if (!disposed) await FailAsync(exception); }
+    }
+
+    private async Task ReadSceneAsync(InputFileChangeEventArgs args)
+    {
+        if (disposed || applying || preparing || !App.CanAuthor || !App.CanUseScene(this)) return;
+        if (review is not null && !await JS.InvokeAsync<bool>("confirm", "Discard this scene review and its unsaved choices and select another file?")) return;
+        if (disposed || applying || preparing || !App.LockScene(this)) return;
+        evidenceRead?.Cancel();
+        review = null; evidence = null; uncertain = false; feedback = null;
+        preparing = true; stage = "Reading scene file";
+        var id = ++generation;
+        using var read = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
+        evidenceRead = read;
+        try
+        {
+            await InvokeAsync(StateHasChanged);
+            var parsed = await AcquireAndProcessAsync(args.File, id, read.Token);
+            if (parsed is null || !Current(id)) return;
+            review = parsed;
+            stage = "Loading current records"; StateHasChanged();
+            var current = await ReadEvidenceAsync(parsed, read.Token);
+            if (!Current(id)) return;
+            review = parsed; evidence = current; ++reviewKey;
+        }
+        catch (OperationCanceledException) when (!Current(id)) { }
+        catch (Exception exception) when (exception is SceneDumpParseException or SceneDumpTooLargeException or IOException)
+        { if (Current(id)) feedback = $"Could not read scene dump: {exception.Message}"; }
+        catch (SceneApiException exception) { if (Current(id)) feedback = exception.Message; }
+        catch (Exception exception) { if (Current(id)) await FailAsync(exception); }
+        finally
+        {
+            // Acquisition has unwound (including browser-stream disposal) before
+            // clearing the native value. Keep extracted captures for evidence retry.
+            var resetFailedSelection = Current(id) && review is null;
+            var resetCanceledSelection = !disposed && canceledSelectionGeneration == id && generation == id + 1;
+            if ((resetFailedSelection || resetCanceledSelection) && reader is not null)
+            {
+                try { await reader.InvokeVoidAsync("resetSelection"); }
+                catch (Exception exception)
+                {
+                    if (Current(id) || (!disposed && canceledSelectionGeneration == id && generation == id + 1))
+                        await FailAsync(exception);
+                }
+            }
+            if (Current(id)) { evidenceRead = null; EndPreparation(); StateHasChanged(); }
+        }
+    }
+    private bool Current(int id) => !disposed && preparing && id == generation;
+    private async Task<SceneDumpReview?> AcquireAndProcessAsync(IBrowserFile file, int id, CancellationToken token)
+    {
+        if (!App.CanAuthor) return null;
+        using var timing = OperationTiming.Start("scene.acquire-process");
+        using var acquisition = OperationTiming.Start("scene.file-acquisition");
+        if (file.Size > SceneDumpParser.MaximumBytes) throw new SceneDumpTooLargeException(SceneDumpParser.MaximumBytes);
+        using var bytes = new MemoryStream();
+        await using (var input = file.OpenReadStream(SceneDumpParser.MaximumBytes, token))
+        {
+            var chunk = new byte[64 * 1024];
+            while (true)
+            {
+                var count = await input.ReadAsync(chunk.AsMemory(), token);
+                if (!Current(id) || !App.CanAuthor) return null;
+                if (count == 0) break;
+                if (count > SceneDumpParser.MaximumBytes - bytes.Length)
+                    throw new SceneDumpTooLargeException(SceneDumpParser.MaximumBytes);
+                bytes.Write(chunk, 0, count);
+            }
+        }
+        acquisition.End(Current(id) ? TimingOutcome.Complete : TimingOutcome.Retired);
+        token.ThrowIfCancellationRequested();
+        if (!Current(id) || !App.CanAuthor) return null;
+        bytes.Position = 0;
+        stage = "Parsing and classifying scene dump (page may pause)";
+        await InvokeAsync(StateHasChanged);
+        if (module is not null) await module.InvokeVoidAsync("allowPreparationPaint");
+        token.ThrowIfCancellationRequested();
+        if (!Current(id) || !App.CanAuthor) return null;
+        // Intentionally synchronous on the browser main thread. Do not use the
+        // server Task.Run/sync-over-async adapter with an asynchronous browser stream.
+        SceneDumpReview parsed;
+        using (var parseTiming = OperationTiming.Start("scene.parse"))
+        { parsed = new SceneDumpParser().Parse(bytes); parseTiming.End(); }
+        using (var classifyTiming = OperationTiming.Start("scene.classify"))
+        { new SceneClassificationService().Apply(parsed); classifyTiming.End(); }
+        using (var policyTiming = OperationTiming.Start("scene.review-policy"))
+        { SceneWorkbenchReviewPolicy.ApplyAdmission(parsed); SceneFillerVisibility.Apply(parsed); policyTiming.End(); }
+        timing.End(Current(id) ? TimingOutcome.Complete : TimingOutcome.Retired);
+        return parsed; // Dispose the raw buffer before the caller loads DB evidence.
+    }
+    private void EndPreparation() { preparing = false; App.ReleaseScene(this); }
+    private async Task<SceneReviewEvidence> ReadEvidenceAsync(SceneDumpReview parsed, CancellationToken token)
+    {
+        using var timing = OperationTiming.Start("scene.evidence.prepare-read-match");
+        var diagnosticGeneration = generation;
+        var keys = SceneTransport.Flatten(parsed.RootObjects).SelectMany(n => new[] { n.Name, n.EnemyIdentityPath }
+            .Concat(n.Components.Select(c => c.ItemDataId))).Where(k => !string.IsNullOrWhiteSpace(k)).Cast<string>().Distinct(StringComparer.Ordinal).ToArray();
+        var destinations = SceneTransport.Flatten(parsed.RootObjects).SelectMany(n => n.Components.Where(c => c.Type == "TransitionPoint").Select(c => c.TargetScene))
+            .Where(k => !string.IsNullOrWhiteSpace(k)).Cast<string>().Distinct(StringComparer.Ordinal).ToArray();
+        var data = await PostAsync<SceneReviewEvidence>("preview", new ScenePreviewRequest(parsed.SceneName, keys, destinations), token);
+        using var matching = OperationTiming.Start("scene.evidence.match");
+        var matches = SceneTransport.Flatten(parsed.RootObjects).Select(n => Match(n, data)).ToArray();
+        matching.End();
+        timing.End(disposed || generation != diagnosticGeneration || token.IsCancellationRequested ? TimingOutcome.Retired : TimingOutcome.Complete);
+        return data with { Preview = data.Preview with { ObjectMatches = matches } };
+    }
+    private static SceneImportObjectMatch Match(SceneDumpObject node, SceneReviewEvidence data)
+    {
+        var match = SceneImportMatching.MatchObject(node, data.Preview.Transitions, data.Preview.Checks);
+        return match with { Matches = match.Matches.Concat(data.ForeignMatches.Where(f =>
+            !string.IsNullOrWhiteSpace(match.GameId) && string.Equals(f.IdentityKey.Trim(), match.GameId.Trim(), StringComparison.OrdinalIgnoreCase))
+            .Select(f => new SceneImportRecordMatch(f.RecordId, f.RoomId, f.Family))).Distinct().ToArray() };
+    }
+    private async Task ApplyAsync(SceneWorkbenchCommand command)
+    {
+        if (disposed || applying || preparing || uncertain || review is null || evidence is null || !App.LockScene(this)) return;
+        using var timing = OperationTiming.Start("scene.apply");
+        using var outcome = Runtime.ObserveMutation();
+        var diagnosticCommitted = false;
+        applying = true; feedback = null;
+        try
+        {
+            SceneApplyRequest request;
+            using (var prepareTiming = OperationTiming.Start("scene.mutation-preparation"))
+            { request = SceneMutationPreparation.Prepare(review, evidence, command); prepareTiming.End(); }
+            SceneAppliedReceipt? receipt = null;
+            Exception? publicationFailure = null;
+            using var admissionTiming = OperationTiming.Start("scene.apply.admission");
+            await App.RunCatalogueMutationAsync(async admission =>
+            {
+                admissionTiming.End();
+                var source = admission.CaptureReadContext();
+                CacheRequest? cacheRequest = null;
+                var envelope = await PostAsync<CacheResult<SceneApplyResult>>("apply", request, CancellationToken.None,
+                    message => cacheRequest = admission.BindCache(message), outcome);
+                var received = new ReceivedCacheResult<SceneApplyResult>(envelope.Result, envelope.Cache,
+                    cacheRequest ?? throw new InvalidOperationException("Missing scene cache request witness."));
+                var result = received.Result;
+                try
+                {
+                receipt = result.Receipt;
+                if (receipt is null || receipt.RoomId == Guid.Empty || receipt.CreatedTransitionIds is null || receipt.CreatedCheckIds is null || receipt.AppliedExitIds is null ||
+                    receipt.CreatedTransitionIds.Concat(receipt.CreatedCheckIds).Concat(receipt.AppliedExitIds).Any(id => id == Guid.Empty))
+                    throw new InvalidOperationException("Incomplete scene commit receipt.");
+                // Retire inside admission, BEFORE fallible publication or navigation.
+                diagnosticCommitted = true;
+                outcome.OutcomeKnown();
+                review = null; evidence = null; uncertain = false; committedNavigation = true;
+                try
+                {
+                    if (result.Patch is null) throw new InvalidOperationException("Committed affected facts are unavailable.");
+                    admission.Publish(result.Patch, source);
+                }
+                catch (Exception exception) { publicationFailure = exception; }
+                }
+                finally { admission.PublishCache(received); }
+            }, CancellationToken.None);
+            if (receipt is null) throw new InvalidOperationException("Missing scene commit receipt.");
+            if (!disposed) await App.CompleteSceneAsync(this, receipt, publicationFailure);
+            timing.End(disposed ? TimingOutcome.Retired : publicationFailure is not null ? TimingOutcome.KnownCommitFollowupFailed : TimingOutcome.Complete);
+        }
+        catch (SceneWorkbenchValidationException exception) { timing.End(TimingOutcome.Rejected); if (!disposed) feedback = exception.Message; }
+        catch (SceneApiException exception)
+        {
+            timing.End(exception.Corrective ? TimingOutcome.Rejected : diagnosticCommitted ? TimingOutcome.KnownCommitFollowupFailed : TimingOutcome.Uncertain);
+            if (!disposed)
+            {
+                feedback = exception.Message;
+                if (!exception.Corrective) { uncertain = true; await FailAsync(exception); }
+            }
+        }
+        catch (Exception exception)
+        {
+            timing.End(diagnosticCommitted ? TimingOutcome.KnownCommitFollowupFailed : TimingOutcome.Uncertain);
+            if (!disposed)
+            {
+                if (review is not null) { uncertain = true; feedback = "Apply outcome unconfirmed. Check the existing room before resubmitting."; }
+                await FailAsync(exception);
+            }
+        }
+        finally { applying = false; App.ReleaseScene(this); if (!disposed) StateHasChanged(); }
+    }
+    private async Task AcknowledgeUncertainAsync()
+    {
+        if (!uncertain || !App.CanUseScene(this) || applying) return;
+        if (await JS.InvokeAsync<bool>("confirm", "Have you checked the existing room to determine whether the import committed? Enabling resubmission does not establish rollback.") && App.CanUseScene(this)) uncertain = false;
+    }
+    private async Task RestartEvidenceAsync()
+    {
+        if (review is null || applying || !App.CanUseScene(this)) return;
+        if (evidence is not null && !await JS.InvokeAsync<bool>("confirm", "Restart current-record review? This discards room-dependent choices and authored drafts. Cancel keeps them unchanged.")) return;
+        if (disposed || applying || review is null) return;
+        if (!App.LockScene(this)) return;
+        preparing = true; stage = "Loading current records"; var current = ++generation;
+        using var read = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token); evidenceRead = read;
+        try
+        {
+            var next = await ReadEvidenceAsync(review, read.Token);
+            if (!Current(current)) return;
+            evidence = next; feedback = null;
+        }
+        catch (OperationCanceledException) when (!Current(current)) { }
+        catch (SceneApiException exception) { if (Current(current)) feedback = exception.Message; }
+        catch (Exception exception) { if (Current(current)) await FailAsync(exception); }
+        finally { if (Current(current)) { evidenceRead = null; EndPreparation(); } }
+    }
+    private async Task CancelReviewAsync()
+    {
+        if (applying || disposed || !App.CanInteract) return;
+        review = null; evidence = null; feedback = null; uncertain = false;
+        await InvokeAsync(StateHasChanged);
+        if (reader is not null) await reader.InvokeVoidAsync("focusPicker");
+    }
+    private async Task CancelPreparationAsync()
+    {
+        if (!App.CanInteract) return;
+        canceledSelectionGeneration = generation;
+        ++generation; evidenceRead?.Cancel(); evidenceRead = null;
+        if (evidence is null) review = null;
+        EndPreparation(); if (!disposed) await InvokeAsync(StateHasChanged);
+        if (!disposed && reader is not null)
+        {
+            // Focus may return now, but ReadSceneAsync clears the value only once
+            // its browser stream is disposed. Do not invalidate a pending read.
+            try { await reader.InvokeVoidAsync("focusPicker", false); }
+            catch (Exception exception) { await FailAsync(exception); }
+        }
+    }
+    private async ValueTask DepartAsync(LocationChangingContext context)
+    {
+        if (!App.CanInteract) { context.PreventNavigation(); return; }
+        if (disposed || committedNavigation) return;
+        if (applying) { context.PreventNavigation(); return; }
+        if (review is not null && !await JS.InvokeAsync<bool>("confirm", "Discard this scene review and its unsaved choices?"))
+        { context.PreventNavigation(); return; }
+        if (preparing) await CancelPreparationAsync();
+    }
+    private Task FailAsync(Exception exception) => App.ReportSceneErrorAsync(exception,
+        committedNavigation ? "Import committed; completion failed. Do not repeat the import."
+        : review is null ? "Scene preparation failed. No raw file was uploaded." : "An unexpected scene operation failed. Check the current room if an Apply outcome is unconfirmed.",
+        (exception as SceneApiException)?.Trace);
+
+    private async Task<T> PostAsync<T>(string route, object request, CancellationToken token, Action<HttpRequestMessage>? bind = null, ClientRuntime.MutationObservation? outcome = null)
+    {
+        using var timing = OperationTiming.Start(route == "preview" ? "scene.evidence.buffered-send" : "scene.apply.buffered-send");
+        using var message = new HttpRequestMessage(HttpMethod.Post, "/api/v3/scene-import/" + route)
+            { Content = JsonContent.Create(request, request.GetType(), options: Json) };
+        bind?.Invoke(message);
+        outcome?.Dispatched();
+        using var response = await Http.SendAsync(message, token);
+        timing.End();
+        using var decodeTiming = OperationTiming.Start("scene.response-decode", parent: timing.Id);
+        if (!response.IsSuccessStatusCode)
+        {
+            var error = await response.Content.ReadFromJsonAsync<SilksongRandoLogicManager.Contracts.ApiError>(Json, token);
+            if (error is not null && (int)response.StatusCode is 400 or 403 or 409 or 413 or 415 or 422) outcome?.OutcomeKnown();
+            throw new SceneApiException(error?.Message ?? "Scene request failed.", (int)response.StatusCode is 400 or 403 or 409 or 413 or 415 or 422, error?.TraceId);
+        }
+        var result = await response.Content.ReadFromJsonAsync<T>(Json, token) ?? throw new InvalidOperationException("Missing scene response.");
+        decodeTiming.End(TimingOutcome.ResponseDecoded);
+        return result;
+    }
+    private sealed class SceneApiException(string message, bool corrective, string? trace) : Exception(message)
+    { public bool Corrective => corrective; public string? Trace => trace; }
+    public async ValueTask DisposeAsync()
+    {
+        App.ReleaseClientUpdateRisk(this);
+        disposed = true; ++generation; lifetime.Cancel(); evidenceRead?.Cancel(); navigationRegistration?.Dispose();
+        App.ReleaseScene(this);
+        if (reader is not null)
+        {
+            try { await reader.InvokeVoidAsync("dispose"); } catch (Exception exception) { Console.Error.WriteLine(exception); }
+            try { await reader.DisposeAsync(); } catch (Exception exception) { Console.Error.WriteLine(exception); }
+        }
+        if (module is not null)
+        {
+            try { await module.DisposeAsync(); } catch (Exception exception) { Console.Error.WriteLine(exception); }
+        }
+        lifetime.Dispose();
+    }
+}

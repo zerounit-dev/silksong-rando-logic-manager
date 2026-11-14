@@ -1,0 +1,155 @@
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+@inject ILogger<AuditRoomSearch> Logger
+@using Microsoft.JSInterop
+
+@* Permanent empty boundary: only the browser creates or changes descendants. Never key by room. *@
+<div @ref="host" class="audit-room-search" data-search-owner="@owner"></div>
+@if (transferFailed)
+{
+    <span role="status">Rooms could not load. <button type="button" disabled="@Host.Blocked" @onclick="RetryTransferAsync">Retry</button></span>
+}
+
+@code {
+    [CascadingParameter] public AuditHost Host { get; set; } = null!;
+    [Parameter] public Guid RoomId { get; set; }
+    [Parameter] public EventCallback<Guid> Selected { get; set; }
+    private readonly string owner = Guid.NewGuid().ToString("N");
+    private ElementReference host;
+    private IJSObjectReference? module, control;
+    private DotNetObjectReference<AuditRoomSearch>? callback;
+    private CancellationTokenSource? cancellation;
+    private AuditRoomCatalogue? catalogue;
+    private AuditRoomCatalogue? pinnedCatalogue;
+    private bool transferFailed;
+    [CascadingParameter(Name = "ApplicationCodeFailure")] public Action? ApplicationCodeFailure { get; set; }
+    private long request, context;
+    private Guid? contextRoom;
+    private long transferredContext = -1;
+    private bool disposed, mounting, failed;
+
+    protected override void OnParametersSet()
+    {
+        if (contextRoom == RoomId) return;
+        contextRoom = RoomId;
+        context++;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (disposed || mounting || transferFailed) return;
+        mounting = true;
+        IJSObjectReference? mounted = null;
+        try
+        {
+            if (control is null)
+            {
+            var imported = await ApplicationModules.ImportAsync(JS, "room-audit-switcher.js", ApplicationCodeFailure);
+                if (disposed) { await imported.DisposeAsync(); return; }
+                module = imported;
+                callback = DotNetObjectReference.Create(this);
+                mounted = await module.InvokeAsync<IJSObjectReference>("mountInline", host, callback, owner, Host.ExternalModal);
+                if (disposed) return;
+                control = mounted; mounted = null;
+                await TransferContextAsync();
+                await LoadAsync();
+            }
+            await TransferContextAsync();
+        }
+        catch (JSException exception)
+        {
+            Logger.LogDebug(exception, "Room audit dialog interaction unavailable");
+            transferFailed = true;
+            await InvokeAsync(StateHasChanged);
+        }
+        finally
+        {
+            if (mounted is not null) await DisposeControlAsync(mounted);
+            mounting = false;
+            // A route may change during import/load. Publish only the newest context, never query state.
+            if (!disposed && control is not null && transferredContext != context) await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task TransferContextAsync()
+    {
+        if (disposed || control is null || transferredContext == context) return;
+        var revision = context;
+        await control.InvokeVoidAsync("setContext", owner, revision, RoomId);
+        if (!disposed) transferredContext = revision;
+    }
+
+    private bool Current(long id) => !disposed && id == request && control is not null;
+    private async Task LoadAsync()
+    {
+        if (disposed || control is null) return;
+        cancellation?.Cancel(); cancellation?.Dispose(); cancellation = new();
+        var token = cancellation.Token;
+        var id = ++request;
+        catalogue = null; failed = false;
+        await control.InvokeVoidAsync("loading", owner, id);
+        if (!Current(id)) return;
+        AuditRoomCatalogue loaded;
+        try { loaded = pinnedCatalogue ??= await Host.LoadCatalogueAsync(token); }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { return; }
+        catch (Exception exception)
+        {
+            if (!Current(id) || token.IsCancellationRequested) return;
+            Logger.LogError(exception, "Room audit catalogue load failed for {RoomId}", RoomId);
+            failed = true;
+            await control!.InvokeVoidAsync("failure", owner, id);
+            return;
+        }
+        if (!Current(id) || token.IsCancellationRequested) return;
+        // Membership only on the server; all matching, ordering tiers and active/query state are browser-owned.
+        catalogue = loaded;
+        await control!.InvokeVoidAsync("loaded", owner, id, loaded.Rooms);
+    }
+
+    [JSInvokable] public async Task RetryAsync(string currentOwner, long currentRequest)
+    {
+        if (Host.Blocked || currentOwner != owner || !Current(currentRequest) || !failed) return;
+        try { await LoadAsync(); }
+        catch (JSException exception)
+        {
+            Logger.LogDebug(exception, "Room audit dialog interaction unavailable");
+            if (!disposed) { transferFailed = true; await InvokeAsync(StateHasChanged); }
+        }
+    }
+
+    private async Task RetryTransferAsync()
+    {
+        if (Host.Blocked || disposed) return;
+        ++request;
+        cancellation?.Cancel();
+        if (control is not null) await DisposeControlAsync(control);
+        control = null;
+        callback?.Dispose(); callback = null;
+        if (module is not null) await module.DisposeAsync();
+        module = null; transferredContext = -1;
+        transferFailed = false;
+    }
+
+    [JSInvokable] public async Task ChooseAsync(string currentOwner, long currentRequest, long currentContext, Guid id)
+    {
+        if (Host.Blocked || currentOwner != owner || !Current(currentRequest) || currentContext != context ||
+            catalogue is null || !catalogue.Rooms.Any(room => room.Id == id) || id == RoomId) return;
+        await Selected.InvokeAsync(id);
+    }
+
+    private async Task DisposeControlAsync(IJSObjectReference handle)
+    {
+        try { await handle.InvokeVoidAsync("dispose"); await handle.DisposeAsync(); }
+        catch (JSDisconnectedException) { }
+        catch (JSException exception) { Logger.LogDebug(exception, "Room audit dialog disposal unavailable"); }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        disposed = true; ++request; cancellation?.Cancel(); cancellation?.Dispose();
+        catalogue = null;
+        if (control is not null) await DisposeControlAsync(control);
+        callback?.Dispose();
+        if (module is not null) try { await module.DisposeAsync(); } catch (JSDisconnectedException) { }
+    }
+}

@@ -26,6 +26,7 @@ public sealed record SceneImageCaptureBaseline(double MinX, double MinY, double?
 }
 internal sealed class SceneImageCaptureConflictException(SceneImageCaptureBaseline baseline) : InvalidOperationException("The room scene state changed elsewhere. The draft is retained against the fresh baseline; review it before retrying.")
 { public SceneImageCaptureBaseline Baseline { get; } = baseline; }
+internal sealed class RoomImageTargetUnavailableException() : InvalidOperationException("The room is no longer active.") { }
 public sealed record SceneImageCaptureDraftResult(SceneImageCaptureDraft Draft, string? Information = null);
 public enum SceneImageRebuildMode { MissingOrStale, AllUploaded }
 public sealed record SceneImageRebuildRequest(IReadOnlyList<Guid> PackageRoomIds, SceneImageRebuildMode Mode);
@@ -47,14 +48,15 @@ internal sealed class SceneImageRebuildInterruptedException(SceneImageRebuildRes
 { public SceneImageRebuildResult Result { get; } = result; }
 
 public sealed class SceneImageCaptureService(IDbContextFactory<LogicDbContext> dbContextFactory,
-    MapOverlayAssetCatalog overlayAssets, MapOverlayPlacementService overlayPlacement, SceneImageFileService files,
-    ILogger<SceneImageCaptureService>? logger = null)
+    MapOverlayAssetCatalog overlayAssets, MapOverlayPlacementService overlayPlacement, SceneImageFileService files, SharedPublicationCoordinator publications,
+    Authentication.LiveAccess access, ILogger<SceneImageCaptureService>? logger = null)
 {
-    public const double SourceWidth = 20500, SourceHeight = 15000, RecommendedScale = 6.35;
+    public const double SourceWidth = 20500, SourceHeight = 15000, RecommendedScale = SceneLayoutMapper.RecommendedScale;
     public const string EstimateUnavailableInformation = "Map alignment is unavailable; recommendation uses the source center.";
 
     public async Task<SceneImageCaptureDraftResult> GetDraftAsync(Guid roomId, CancellationToken cancellationToken = default)
     {
+        await access.RequireAsync(Authentication.AccessPolicies.Author, cancellationToken);
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         var room = await db.Rooms.AsNoTracking().SingleOrDefaultAsync(x => x.Id == roomId && !x.IsArchived, cancellationToken)
             ?? throw new InvalidOperationException("The room is no longer active.");
@@ -63,6 +65,7 @@ public sealed class SceneImageCaptureService(IDbContextFactory<LogicDbContext> d
         if (draft.UseUploadedSceneImage && draft.UseSceneImage)
         {
             using var admission = await files.AcquireLifecycleAsync(cancellationToken);
+            await access.RequireAsync(Authentication.AccessPolicies.Author, cancellationToken);
             try { draft = WithUploadedSource(roomId, draft); }
             catch (InvalidOperationException ex) { return new(draft with { SourcePixelWidth = 0, SourcePixelHeight = 0, PreviewUrl = null }, ex.Message); }
         }
@@ -81,24 +84,47 @@ public sealed class SceneImageCaptureService(IDbContextFactory<LogicDbContext> d
         return preview is not null && File.Exists(Path.Combine(files.SourceDirectory, "build.json"));
     }
 
-    public async Task ClearBoundsAsync(Guid roomId, SceneImageCaptureBaseline baseline, CancellationToken token = default)
+    public Task ClearBoundsAsync(Guid roomId, SceneImageCaptureBaseline baseline, CancellationToken token = default) =>
+        ClearBoundsCoreAsync(roomId, baseline, null, token);
+
+    internal Task ClearTrackedBoundsAsync(Guid roomId, SceneImageCaptureBaseline baseline, RoomImageCommitAdmission admission) =>
+        ClearBoundsCoreAsync(roomId, baseline, admission, CancellationToken.None);
+
+    private async Task ClearBoundsCoreAsync(Guid roomId, SceneImageCaptureBaseline baseline, RoomImageCommitAdmission? tracked, CancellationToken token)
     {
         using var admission = await files.AcquireLifecycleAsync(token);
+        using var publication = await publications.AcquireAsync(token);
+        var historyActor = HistoryActor.From(await access.RequireAsync(Authentication.AccessPolicies.Author, token));
         await using var db = await dbContextFactory.CreateDbContextAsync(token);
+        await using var transaction = await LogicWriteScope.BeginAsync(db, publication, historyActor, token);
         var room = await db.Rooms.SingleOrDefaultAsync(x => x.Id == roomId && !x.IsArchived, token)
-            ?? throw new InvalidOperationException("The room is no longer active.");
+            ?? throw InactiveTarget(tracked);
         if (Baseline(room) != baseline) throw new SceneImageCaptureConflictException(Baseline(room));
         var stale = files.Exists(roomId) || room.IsSceneImageStale;
         var updated = DateTime.UtcNow <= room.UpdatedUtc ? room.UpdatedUtc.AddTicks(1) : DateTime.UtcNow;
-        var affected = await MatchingBaseline(db, roomId, baseline).ExecuteUpdateAsync(set => set
+        Task<int> WriteAsync() => MatchingBaseline(db, roomId, baseline).ExecuteUpdateAsync(set => set
             .SetProperty(x => x.SceneMinX, 0d).SetProperty(x => x.SceneMinY, 0d)
             .SetProperty(x => x.SceneMaxX, (double?)null).SetProperty(x => x.SceneMaxY, (double?)null)
-            .SetProperty(x => x.IsSceneImageStale, stale).SetProperty(x => x.UpdatedUtc, updated), token);
-        if (affected != 1) { await db.Entry(room).ReloadAsync(token); throw new SceneImageCaptureConflictException(Baseline(room)); }
+             .SetProperty(x => x.IsSceneImageStale, stale).SetProperty(x => x.UpdatedUtc, updated), token);
+        var boundsChanged = room.SceneMinX != 0 || room.SceneMinY != 0 || room.SceneMaxX is not null || room.SceneMaxY is not null;
+        var affected = tracked is null ? await WriteAsync() : await tracked.ExecuteConditionalAsync(WriteAsync);
+        if (affected != 1)
+        {
+            await db.Entry(room).ReloadAsync(token);
+            if (tracked is not null && (db.Entry(room).State == EntityState.Detached || room.IsArchived)) throw InactiveTarget(tracked);
+            throw new SceneImageCaptureConflictException(Baseline(room));
+        }
+        await transaction.FinalizeAsync(token);
+        var prepared = publication.PrepareAdvance(transaction.FinalEffects.RoomFactsChanged, false);
+        var plan = tracked is null ? null : await SharedRoomCommitPlan.PrepareAsync(db, transaction, prepared, token, [roomId]);
+        if (tracked is null) await transaction.CommitAsync(() => publication.PublishCommitted(prepared), token);
+        else await tracked.CommitAsync(transaction, boundsChanged, publication, plan!);
+        if (tracked is not null) tracked.SharedPlan = plan;
     }
 
     public async Task<SceneImageCaptureDraftResult> GetEstimateAsync(Guid roomId, SceneImageCaptureDraft draft, CancellationToken cancellationToken = default)
     {
+        await access.RequireAsync(Authentication.AccessPolicies.Author, cancellationToken);
         if (!draft.UseSceneImage) return new(draft);
         if (draft.UseUploadedSceneImage)
         {
@@ -113,6 +139,8 @@ public sealed class SceneImageCaptureService(IDbContextFactory<LogicDbContext> d
     public async Task<SceneImageCaptureDraftResult> SelectUploadAsync(Guid roomId, SceneImageCaptureDraft draft, RoomImageUpload upload, CancellationToken token = default)
     {
         using var admission = await files.AcquireLifecycleAsync(token);
+        var actor = await access.RequireAsync(Authentication.AccessPolicies.Author, token);
+        files.RequireStagedOwner(upload.Handle, actor.Owner);
         var staged = files.GetStaged(upload.Handle);
         draft = draft with { UseSceneImage = true, UseUploadedSceneImage = true, OriginalHash = staged.View.Hash,
             UploadHandle = staged.View.Handle, SourcePixelWidth = staged.View.Width, SourcePixelHeight = staged.View.Height,
@@ -131,11 +159,14 @@ public sealed class SceneImageCaptureService(IDbContextFactory<LogicDbContext> d
 
     public async Task<SceneImageCaptureDraftResult> SelectSourceAsync(Guid roomId, SceneImageCaptureDraft draft, bool? uploaded, RoomImageUpload? upload)
     {
+        await access.RequireAsync(Authentication.AccessPolicies.Author);
         if (upload is not null) return await SelectUploadAsync(roomId, draft, upload);
         if (uploaded is null) return new(draft with { UseSceneImage = false });
         draft = draft with { UseSceneImage = true, UseUploadedSceneImage = uploaded.Value };
         if (!uploaded.Value) return new(draft with { SourcePixelWidth = SourceWidth, SourcePixelHeight = SourceHeight, PreviewUrl = "/data/scene-source/preview.webp" });
         using var admission = await files.AcquireLifecycleAsync();
+        var actor = await access.RequireAsync(Authentication.AccessPolicies.Author);
+        if (draft.UploadHandle is { } handle) files.RequireStagedOwner(handle, actor.Owner);
         try { return new(WithUploadedSource(roomId, draft)); }
         catch (InvalidOperationException ex) { return new(draft with { SourcePixelWidth = 0, SourcePixelHeight = 0, PreviewUrl = null }, ex.Message); }
     }
@@ -143,26 +174,41 @@ public sealed class SceneImageCaptureService(IDbContextFactory<LogicDbContext> d
     public Task<SceneImagePublicationResult> ApplyAsync(Guid roomId, SceneImageCaptureDraft draft, CancellationToken cancellationToken = default) =>
         GenerateAndPublishAsync(roomId, draft, false, cancellationToken);
 
+    internal Task<SceneImagePublicationResult> ApplyTrackedAsync(Guid roomId, SceneImageCaptureDraft draft, RoomImageCommitAdmission admission) =>
+        GenerateAndPublishAsync(roomId, draft, false, CancellationToken.None, admission);
+
     private async Task<SceneImagePublicationResult> GenerateAndPublishAsync(Guid roomId, SceneImageCaptureDraft draft,
-        bool retainFreshOutput, CancellationToken cancellationToken)
+        bool retainFreshOutput, CancellationToken cancellationToken, RoomImageCommitAdmission? tracked = null)
     {
         using var admission = await files.AcquireLifecycleAsync(cancellationToken);
+        var actor = await access.RequireAsync(Authentication.AccessPolicies.Author, cancellationToken);
+        if (draft.UploadHandle is { } uploadHandle) files.RequireStagedOwner(uploadHandle, actor.Owner);
         if (!draft.UseSceneImage)
         {
+            using var publication = await publications.AcquireAsync(cancellationToken);
+            var historyActor = HistoryActor.From(await access.RequireAsync(Authentication.AccessPolicies.Author, cancellationToken));
             // None is only an authored opt-out, not a save of any hidden draft fields.
             await using var noneDb = await dbContextFactory.CreateDbContextAsync(cancellationToken);
+            await using var transaction = await LogicWriteScope.BeginAsync(noneDb, publication, historyActor, cancellationToken);
             var saved = await noneDb.Rooms.AsNoTracking().SingleOrDefaultAsync(x => x.Id == roomId && !x.IsArchived, cancellationToken)
-                ?? throw new InvalidOperationException("The room is no longer active.");
+                ?? throw InactiveTarget(tracked);
             if (Baseline(saved) != draft.Baseline) throw new SceneImageCaptureConflictException(Baseline(saved));
             var updated = saved.UseSceneImage ? (DateTime.UtcNow <= saved.UpdatedUtc ? saved.UpdatedUtc.AddTicks(1) : DateTime.UtcNow) : saved.UpdatedUtc;
-            var affected = await MatchingBaseline(noneDb, roomId, draft.Baseline).ExecuteUpdateAsync(set => set
+            Task<int> WriteAsync() => MatchingBaseline(noneDb, roomId, draft.Baseline).ExecuteUpdateAsync(set => set
                 .SetProperty(x => x.UseSceneImage, false).SetProperty(x => x.UpdatedUtc, updated), cancellationToken);
+            var affected = tracked is null ? await WriteAsync() : await tracked.ExecuteConditionalAsync(WriteAsync);
             if (affected != 1)
             {
                 var fresh = await noneDb.Rooms.AsNoTracking().SingleOrDefaultAsync(x => x.Id == roomId, cancellationToken);
-                if (fresh is null || fresh.IsArchived) throw new InvalidOperationException("The room is no longer active.");
+                if (fresh is null || fresh.IsArchived) throw InactiveTarget(tracked);
                 throw new SceneImageCaptureConflictException(Baseline(fresh));
             }
+            await transaction.FinalizeAsync(cancellationToken);
+            var prepared = publication.PrepareAdvance(transaction.FinalEffects.RoomFactsChanged, false);
+            var plan = tracked is null ? null : await SharedRoomCommitPlan.PrepareAsync(noneDb, transaction, prepared, cancellationToken, [roomId]);
+            if (tracked is null) await transaction.CommitAsync(() => publication.PublishCommitted(prepared), cancellationToken);
+            else await tracked.CommitAsync(transaction, false, publication, plan!, saved.UseSceneImage);
+            if (tracked is not null) tracked.SharedPlan = plan;
             return new(true);
         }
         // Replacements publish only when Upload is the final selected source.
@@ -188,7 +234,7 @@ public sealed class SceneImageCaptureService(IDbContextFactory<LogicDbContext> d
                     PixelOffsetX = draft.PixelOffsetX * size.RatioX, PixelOffsetY = draft.PixelOffsetY * size.RatioY,
                     OriginalHash = SceneImageFileService.Hash(preparedPath) };
             }
-            result = await PublishPreparedAsync(roomId, draft, preparedPath, retainFreshOutput, cancellationToken);
+            result = await PublishPreparedAsync(roomId, draft, preparedPath, retainFreshOutput, cancellationToken, tracked);
         }
         finally
         {
@@ -203,11 +249,13 @@ public sealed class SceneImageCaptureService(IDbContextFactory<LogicDbContext> d
     }
 
     private async Task<SceneImagePublicationResult> PublishPreparedAsync(Guid roomId, SceneImageCaptureDraft draft, string? preparedPath,
-        bool retainFreshOutput, CancellationToken cancellationToken)
+        bool retainFreshOutput, CancellationToken cancellationToken, RoomImageCommitAdmission? tracked)
     {
+        using var publication = await publications.AcquireAsync(cancellationToken);
+        var historyActor = HistoryActor.From(await access.RequireAsync(Authentication.AccessPolicies.Author, cancellationToken));
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         var room = await db.Rooms.SingleOrDefaultAsync(x => x.Id == roomId && !x.IsArchived, cancellationToken)
-            ?? throw new InvalidOperationException("The room is no longer active.");
+            ?? throw InactiveTarget(tracked);
         if (Baseline(room) != draft.Baseline) throw new SceneImageCaptureConflictException(Baseline(room));
         if (preparedPath is null && draft.OriginalHash != room.SceneImageOriginalHash)
             throw new SceneImageCaptureConflictException(Baseline(room));
@@ -229,12 +277,12 @@ public sealed class SceneImageCaptureService(IDbContextFactory<LogicDbContext> d
             logger?.LogError(exception, "Postcommit scene image cleanup failed for room {RoomId}; image remains committed", roomId);
             cleanupException = cleanupException is null ? exception : new AggregateException(cleanupException, exception);
         }
-        Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction? transaction = null;
+        LogicWriteScope? transaction = null;
         try
         {
-            transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+            transaction = await LogicWriteScope.BeginAsync(db, publication, historyActor, cancellationToken);
             await db.Entry(room).ReloadAsync(cancellationToken);
-            if (room.IsArchived) throw new InvalidOperationException("The room is no longer active.");
+            if (room.IsArchived || tracked is not null && db.Entry(room).State == EntityState.Detached) throw InactiveTarget(tracked);
             if (Baseline(room) != draft.Baseline) throw new SceneImageCaptureConflictException(Baseline(room));
             cancellationToken.ThrowIfCancellationRequested();
             var updated = CaptureSettingsChanged(draft)
@@ -250,7 +298,12 @@ public sealed class SceneImageCaptureService(IDbContextFactory<LogicDbContext> d
                 .SetProperty(x => x.SceneImageOriginalHash, draft.UploadHandle != null ? draft.OriginalHash : room.SceneImageOriginalHash)
                 .SetProperty(x => x.SceneImageCropHash, cropHash)
                 .SetProperty(x => x.UpdatedUtc, updated), cancellationToken);
-            if (affected != 1) { await db.Entry(room).ReloadAsync(cancellationToken); throw new SceneImageCaptureConflictException(Baseline(room)); }
+            if (affected != 1)
+            {
+                await db.Entry(room).ReloadAsync(cancellationToken);
+                if (tracked is not null && (db.Entry(room).State == EntityState.Detached || room.IsArchived)) throw InactiveTarget(tracked);
+                throw new SceneImageCaptureConflictException(Baseline(room));
+            }
             // The admitted conditional write holds SQLite's writer lock until
             // commit, so another Apply cannot replace a file this rollback owns.
             cancellationToken.ThrowIfCancellationRequested();
@@ -265,8 +318,26 @@ public sealed class SceneImageCaptureService(IDbContextFactory<LogicDbContext> d
             if (File.Exists(outputPath)) File.Move(outputPath, backupPath);
             File.Move(temporaryPath, outputPath);
             outputReplaced = true;
-            await transaction.CommitAsync(CancellationToken.None);
-            committed = true;
+            await transaction.FinalizeAsync(CancellationToken.None);
+            var prepared = publication.PrepareAdvance(transaction.FinalEffects.RoomFactsChanged, false);
+            var sharedPlan = tracked is null ? null : await SharedRoomCommitPlan.PrepareAsync(db, transaction, prepared, CancellationToken.None, [roomId]);
+            if (tracked is null)
+            {
+                await transaction.CommitAsync(() => { committed = true; publication.PublishCommitted(prepared); });
+            }
+            else await tracked.CommitAsync(transaction,
+                room.SceneMinX != draft.MinX || room.SceneMinY != draft.MinY || room.SceneMaxX != draft.MaxX || room.SceneMaxY != draft.MaxY,
+                publication, sharedPlan!, durable: () => committed = true);
+            if (tracked is not null) tracked.SharedPlan = sharedPlan;
+        }
+        catch (Exception failure) when (committed)
+        {
+            // A receipt/history/cleanup fault after durable commit is not permission
+            // to restore files from the old database state or replay the command.
+            // Preserve the original failure/tracker recovery boundary, rather than
+            // turning a failed receipt/history publication into an ordinary success.
+            logger?.LogError(failure, "Scene image committed but completion publication failed for room {RoomId}; rollback files retained", roomId);
+            throw;
         }
         catch (Exception failure)
         {
@@ -302,6 +373,8 @@ public sealed class SceneImageCaptureService(IDbContextFactory<LogicDbContext> d
         catch (Exception exception) { RecordCleanup(exception); }
         return new(true, cleanupException);
     }
+    private static InvalidOperationException InactiveTarget(RoomImageCommitAdmission? tracked) => tracked is null
+        ? new InvalidOperationException("The room is no longer active.") : new RoomImageTargetUnavailableException();
 
     public async Task<SceneImageRebuildResult> RebuildPackageRoomsAsync(SceneImageRebuildRequest request, CancellationToken cancellationToken = default, IProgress<SceneImageRebuildProgress>? progress = null)
     {
@@ -319,6 +392,8 @@ public sealed class SceneImageCaptureService(IDbContextFactory<LogicDbContext> d
                 SceneImageCaptureDraft draft;
                 {
                     using var admission = await files.AcquireLifecycleAsync(cancellationToken);
+                    using var sharedPublication = await publications.AcquireAsync(cancellationToken);
+                    var historyActor = HistoryActor.From(await access.RequireAsync(Authentication.AccessPolicies.Author, cancellationToken));
                     await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
                     var room = await db.Rooms.AsNoTracking().SingleOrDefaultAsync(x => x.Id == roomId, cancellationToken);
                     if (room is null || room.IsArchived) { items.Add(new(roomId, SceneImageRebuildItemStatus.Skipped, "room is absent or archived")); continue; }
@@ -326,8 +401,12 @@ public sealed class SceneImageCaptureService(IDbContextFactory<LogicDbContext> d
                     var recognized = files.CropMatches(roomId, room.SceneImageCropHash);
                     if (!recognized && files.Exists(roomId) && !room.IsSceneImageStale)
                     {
+                        await using var transaction = await LogicWriteScope.BeginAsync(db, sharedPublication, historyActor, cancellationToken);
                         var marked = await MatchingBaseline(db, roomId, Baseline(room)).ExecuteUpdateAsync(set => set.SetProperty(x => x.IsSceneImageStale, true), cancellationToken);
                         if (marked != 1) throw new InvalidOperationException("The room scene state changed during image checking. Review its saved settings before retrying.");
+                        await transaction.FinalizeAsync(cancellationToken);
+                        var prepared = sharedPublication.PrepareAdvance(true, false);
+                        await transaction.CommitAsync(() => sharedPublication.PublishCommitted(prepared), cancellationToken);
                         room.IsSceneImageStale = true;
                     }
                     if (request.Mode == SceneImageRebuildMode.MissingOrStale && !room.IsSceneImageStale && recognized)
@@ -446,7 +525,7 @@ public sealed class SceneImageCaptureService(IDbContextFactory<LogicDbContext> d
     private static bool HasBounds(SceneImageCaptureDraft draft) => SceneBounds.TryGetSize(draft.MinX, draft.MinY, draft.MaxX, draft.MaxY, out _, out _);
     private static bool UsableMapping(SceneImageCaptureDraft draft) => SceneBounds.HasUsableScales(draft.PixelsPerUnitX, draft.PixelsPerUnitY) &&
         (!draft.UseSceneImage || SceneBounds.HasUsablePixelOffsets(draft.PixelOffsetX, draft.PixelOffsetY));
-    private static void ValidateGeneration(SceneImageCaptureDraft draft)
+    internal static void ValidateGeneration(SceneImageCaptureDraft draft)
     {
         if (!draft.UseSceneImage || !HasBounds(draft) || !UsableMapping(draft) || !SceneBounds.FiniteOrNull(draft.PixelOffsetX) || !SceneBounds.FiniteOrNull(draft.PixelOffsetY))
             throw new InvalidOperationException("Enter finite ordered bounds and positive scales; the scene image also needs complete finite pixel offsets.");

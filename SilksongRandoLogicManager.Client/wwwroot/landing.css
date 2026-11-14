@@ -1,0 +1,12 @@
+.lp-loading { min-height: 12rem; display: grid; place-items: center; }
+.v3-landing .lp-manifest { text-decoration: none; font: inherit; align-content: center; }
+.v3-landing .lp-refresh { margin-left: auto; }
+.lp-dialog:not([open]) { display: none; }
+.lp-dialog.map-link-modal[open] { display: flex; flex-direction: column; height: calc(100vh - 4rem); height: calc(100dvh - 4rem); max-height: calc(100dvh - 4rem); }
+.lp-dialog.map-link-modal > fieldset { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; overflow: hidden; }
+.lp-dialog.map-link-modal > fieldset > :not(.map-link-table-wrap) { flex: 0 0 auto; }
+.lp-dialog.overlay-calibration-modal[open] { display: flex; flex-direction: column; }
+.lp-dialog.overlay-calibration-modal > fieldset { display: grid; flex: 1 1 auto; grid-template-rows: auto minmax(0, 1fr) auto auto; min-height: 0; }
+.v3-landing .map-manifest-picker > .v3-icon-slot { margin-right: .18rem; }
+.v3-landing .map-manifest-picker > .v3-icon-slot > i { margin-right: 0; }
+.lp-dialog .lp-pending { margin-right: .18rem; }

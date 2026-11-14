@@ -153,15 +153,6 @@ window.requirementCatalogueDrag = (() => {
     document.addEventListener("keydown", async event => {
         const modal = event.target.closest("[data-requirement-definition]");
         if (modal && event.key === "Escape") { event.preventDefault(); await closeDefinition(modal); return; }
-        const graphFailureDialog = event.target.closest("[data-room-graph-failure-dialog]");
-        if (graphFailureDialog && event.key === "Tab") {
-            event.preventDefault();
-            const controls = [...graphFailureDialog.querySelectorAll("a[href], button:not(:disabled)")];
-            const index = controls.indexOf(document.activeElement);
-            const next = index < 0 ? (event.shiftKey ? controls.length - 1 : 0)
-                : (index + (event.shiftKey ? -1 : 1) + controls.length) % controls.length;
-            (controls[next] ?? graphFailureDialog).focus();
-        }
     });
     document.addEventListener("pointerdown", event => { definitionBackdropPointer = event.target.matches("[data-requirement-definition-backdrop]") ? { element: event.target, pointerId: event.pointerId } : null; });
     document.addEventListener("pointerup", async event => { const gesture = definitionBackdropPointer; definitionBackdropPointer = null; if (!gesture || gesture.element !== event.target || gesture.pointerId !== event.pointerId) return; const modal = document.querySelector("[data-requirement-definition]"); if (modal) await closeDefinition(modal); });

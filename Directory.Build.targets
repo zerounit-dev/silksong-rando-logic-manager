@@ -1,0 +1,40 @@
+<Project>
+  <ItemGroup Condition="'$(LogicApplicationProject)' == 'true'">
+    <Content Remove="appsettings.json;appsettings.*.json" />
+    <None Remove="appsettings.json;appsettings.*.json" />
+    <Compile Remove="$(_LogicManagerPrivateGlobs)" />
+    <Content Remove="$(_LogicManagerPrivateGlobs)" />
+    <None Remove="$(_LogicManagerPrivateGlobs)" />
+    <EmbeddedResource Remove="$(_LogicManagerPrivateGlobs)" />
+    <RazorComponent Remove="$(_LogicManagerPrivateGlobs)" />
+  </ItemGroup>
+  <!-- IDE visibility is independent of distribution. Restore only the public
+       Storage families allowed by project/.gitignore after private-root removal.
+       Never enumerate private runtime state or copy these items to build/publish. -->
+  <ItemGroup Condition="'$(MSBuildProjectName)' == 'Silksong Rando Logic Manager'">
+    <Folder Include="Storage\" />
+    <None Include="Storage/.gitkeep;Storage/silksong-rando-logic.db;Storage/scenes/*.webp;Storage/scene-originals/*.image;Storage/scene-source/preview.webp;Storage/scene-source/build.json;Storage/scene-source/tiles/*.webp;Storage/scene-source/tiles/ATTRIBUTION.md" CopyToOutputDirectory="Never" CopyToPublishDirectory="Never" />
+  </ItemGroup>
+  <!-- Only these vetted nonsecret defaults are application content. Never glob
+       Config/Storage; private-root removal above still protects every other file.
+       Portable publication suppresses even these and generates its own settings. -->
+  <ItemGroup Condition="'$(MSBuildProjectName)' == 'Silksong Rando Logic Manager' And '$(LogicManagerSanitizedPortable)' != 'true'">
+    <Content Include="Config/appsettings.json;Config/appsettings.Development.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+  <Target Name="ValidateLogicManagerPrivateRoots" BeforeTargets="PrepareForBuild" Condition="'$(LogicApplicationProject)' == 'true'">
+    <Error Condition="$([System.Text.RegularExpressions.Regex]::IsMatch('$(LogicManagerPrivateRoots)', '[*?]'))" Text="LogicManagerPrivateRoots requires literal directory paths, not globs." />
+    <ItemGroup>
+      <_LogicManagerPrivateRoot Update="@(_LogicManagerPrivateRoot)">
+        <Pattern>$([System.Text.RegularExpressions.Regex]::Escape('%(Root)'))</Pattern>
+      </_LogicManagerPrivateRoot>
+      <!-- Guard existing application inputs, not arbitrary private store contents.
+           Private declarations must not silently erase required code or assets. -->
+      <_LogicManagerRequiredInput Include="$(LogicManagerSourceRoot)Directory.Build.*;$(LogicManagerSourceRoot)build/*;$(LogicManagerSourceRoot)Silksong Rando Logic Manager/Silksong Rando Logic Manager/Program.cs;$(LogicManagerSourceRoot)Silksong Rando Logic Manager/Silksong Rando Logic Manager/*.csproj;$(LogicManagerSourceRoot)Silksong Rando Logic Manager/Silksong Rando Logic Manager/Services/**/*.cs;$(LogicManagerSourceRoot)Silksong Rando Logic Manager/Silksong Rando Logic Manager/Authentication/**/*.cs;$(LogicManagerSourceRoot)Silksong Rando Logic Manager/Silksong Rando Logic Manager/Data/**/*.cs;$(LogicManagerSourceRoot)Silksong Rando Logic Manager/Silksong Rando Logic Manager/Components/**/*.razor;$(LogicManagerSourceRoot)Silksong Rando Logic Manager/Silksong Rando Logic Manager/wwwroot/**;$(LogicManagerSourceRoot)Silksong Rando Logic Manager/Silksong Rando Logic Manager/Assets/**;$(LogicManagerSourceRoot)SilksongRandoLogicManager.*/*.cs;$(LogicManagerSourceRoot)SilksongRandoLogicManager.*/*.csproj;$(LogicManagerSourceRoot)SilksongRandoLogicManager.*/Components/**;$(LogicManagerSourceRoot)SilksongRandoLogicManager.*/Pages/**;$(LogicManagerSourceRoot)SilksongRandoLogicManager.*/wwwroot/**" Exclude="$(LogicManagerSourceRoot)**/bin/**;$(LogicManagerSourceRoot)**/obj/**" />
+    </ItemGroup>
+    <PropertyGroup>
+      <_LogicManagerPrivatePattern>^(?i:@(_LogicManagerPrivateRoot->'%(Pattern)', '|'))</_LogicManagerPrivatePattern>
+    </PropertyGroup>
+    <Error Condition="$([System.Text.RegularExpressions.Regex]::IsMatch('%(_LogicManagerRequiredInput.FullPath)', '$(_LogicManagerPrivatePattern)'))" Text="LogicManagerPrivateRoots excludes a required application source/asset: %(_LogicManagerRequiredInput.Identity). Correct the tooling declaration; runtime settings are not changed." />
+  </Target>
+  <Import Project="build\LogicApplication.targets" Condition="'$(LogicApplicationProject)' == 'true'" />
+</Project>

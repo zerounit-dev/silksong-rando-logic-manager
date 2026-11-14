@@ -5,10 +5,11 @@ namespace Silksong_Rando_Logic_Manager.Services;
 
 // Read-only persistence boundary for later comparison preparation. It projects
 // scalars directly and returns no entity or DbContext to callers.
-public sealed class DistributedImportProjectionLoader(IDbContextFactory<LogicDbContext> dbContextFactory)
+public sealed class DistributedImportProjectionLoader(IDbContextFactory<LogicDbContext> dbContextFactory, Authentication.LiveAccess access)
 {
     public async Task<DistributedImportRoomProjection?> LoadRoomAsync(Guid roomId, CancellationToken cancellationToken = default)
     {
+        await access.RequireAsync(Authentication.AccessPolicies.Author, cancellationToken);
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         return await LoadRoomAsync(db, roomId, cancellationToken);
     }

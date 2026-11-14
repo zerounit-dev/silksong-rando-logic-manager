@@ -1,0 +1,17 @@
+@page "/tools/room-images"
+@layout ToolsLayout
+@rendermode InteractiveServer
+
+<PageTitle>Room images | Silksong Logic Manager</PageTitle>
+<DiagnosticErrorBoundary>
+    <ChildContent>
+        <main class="room-import-tool tools-body">
+            <h1 class="tool-title">room images</h1>
+            <RoomImageOperations />
+        </main>
+    </ChildContent>
+    <ErrorContent>
+        <div class="diagnostic-boundary-fallback" role="alert">Room images could not be displayed.<pre>@context.ToString()</pre></div>
+    </ErrorContent>
+</DiagnosticErrorBoundary>
+<DiagnosticModal />

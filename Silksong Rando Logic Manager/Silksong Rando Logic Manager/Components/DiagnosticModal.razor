@@ -11,7 +11,7 @@
                 <h2 id="diagnostic-title">Application error</h2>
                 <button class="diagnostic-close icon-button" type="button" title="Close diagnostic details" @onclick="Close" aria-label="Close diagnostic details"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
             </header>
-            <p>An unexpected error has occurred. Full diagnostic details are shown below; consult the debug/server logs when contacting the developer.</p>
+            <p>Copy the error details below when reporting this problem. Include server logs if available.</p>
             <pre id="diagnostic-details" class="diagnostic-details">@errorDetails</pre>
             <footer class="diagnostic-actions">
                 <button class="diagnostic-button" type="button" @onclick="CopyDetailsAsync"><i class="fa-solid fa-copy" aria-hidden="true"></i> Copy details</button>

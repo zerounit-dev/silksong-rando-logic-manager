@@ -1,6 +1,9 @@
 <Solution>
   <Project Path="Silksong Rando Logic Manager/Silksong Rando Logic Manager/Silksong Rando Logic Manager.csproj" />
-  <Project Path="tests/Silksong Rando Logic Manager.Tests/Silksong Rando Logic Manager.Tests.csproj" />
+  <Project Path="SilksongRandoLogicManager.Audit/SilksongRandoLogicManager.Audit.csproj" />
+  <Project Path="SilksongRandoLogicManager.Client/SilksongRandoLogicManager.Client.csproj" Id="64ca9fa2-cc99-456c-84af-d47668eeb0ce" />
+  <Project Path="SilksongRandoLogicManager.Contracts/SilksongRandoLogicManager.Contracts.csproj" />
+  <Project Path="SilksongRandoLogicManager.SceneProcessing/SilksongRandoLogicManager.SceneProcessing.csproj" />
   <Project Path="tools/DatabaseBackup/DatabaseBackup.csproj" />
   <Project Path="tools/SceneImageBuilder/SceneImageBuilder.csproj" />
 </Solution>

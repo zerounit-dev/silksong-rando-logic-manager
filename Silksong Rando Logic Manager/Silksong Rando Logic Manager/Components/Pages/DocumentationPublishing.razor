@@ -1,0 +1,384 @@
+@page "/tools/publishing"
+@layout ToolsLayout
+@rendermode @(new InteractiveServerRenderMode(prerender: false))
+@using Silksong_Rando_Logic_Manager.Services.Publishing
+@implements IAsyncDisposable
+@inject DocumentationPublishingService Publishing
+@inject Silksong_Rando_Logic_Manager.Authentication.LiveAccess Access
+@inject DiagnosticState Diagnostics
+@inject ILogger<DocumentationPublishing> Logger
+@inject IJSRuntime JS
+
+<PageTitle>Documentation publishing | Silksong Logic Manager</PageTitle>
+<main class="publishing-tool tools-body">
+    <h1 class="tool-title">documentation publishing</h1>
+    @if (view is null && Diagnostics.ErrorDetails is { } initialError)
+    {
+        <div class="diagnostic-boundary-fallback" role="alert"><pre>@initialError</pre></div>
+    }
+    @if (view is not null)
+    {
+        <p class="publishing-context tool-metadata">@view.Repository · @view.Branch</p>
+        <section class="publishing-card" aria-label="Preparation">
+            <h2 class="tool-section-title">prepare</h2>
+            <div class="publishing-actions" aria-busy="@EffectiveBusy.ToString().ToLowerInvariant()">
+                <button class="tool-action" type="button" disabled="@(!view.Enabled || EffectiveBusy || view.CandidateId is not null)" @onclick="Prepare"><i class="@CommandIcon(PublishingCommand.Prepare, "fa-file-export")" aria-hidden="true"></i> prepare</button>
+                <button class="tool-action" type="button" disabled="@(EffectiveBusy || view.Phase is not ("Prepared" or "Interrupted" or "Failed"))" @onclick="Discard"><i class="@CommandIcon(PublishingCommand.Discard, "fa-trash")" aria-hidden="true"></i> discard prepared changes</button>
+            </div>
+            <p class="tool-progress" role="status" aria-live="polite">
+                @if (EffectiveBusy)
+                {
+                    <span><i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i> @(view.Busy ? "Publishing operation in progress." : AdmissionStatus)</span><br />
+                }
+                @if (view.Progress is { } progress)
+                {
+                    <span>@progress.Operation · @(view.Busy ? "Step" : "Stopped at step") @progress.Step of @progress.Steps</span><br />
+                    <span>@progress.Task</span>
+                    @if (progress.RoomsCompleted is { } completed && progress.RoomsTotal is { } total)
+                    {
+                        <br /><span>Rooms completed: @completed of @total</span>
+                    }
+                    @if (progress.CurrentRoom is { } room) { <br /><span>Current room: @room</span> }
+                    @if (progress.Detail is { } detail) { <br /><span>@detail</span> }
+                }
+                else { @view.Stage }
+            </p>
+            @if (view.Phase == "Prepared")
+            {
+                @if (view.Changes.Count == 0) { <p>No changes to publish.</p> }
+                <p>@view.Changes.Count changed files · @view.Changes.Count(x => x.Kind == "Image") images · @view.Changes.Count(x => x.Change == "Removed") removals</p>
+            }
+            @if (view.Error is not null) { <p class="publishing-error" role="alert">@view.Error</p> }
+            @if (view.Validation.Count > 0) { <ul class="publishing-error">@foreach (var issue in view.Validation) { <li>@issue</li> }</ul> }
+            @if (view.PublishedUrl is not null) { <p><a class="tool-action" href="@view.PublishedUrl" target="_blank" rel="noopener noreferrer">view confirmed publication on GitHub</a></p> }
+        </section>
+        @if (view.Commit is not null)
+        {
+            <section class="publishing-card">
+                <h2 class="tool-section-title">pending push</h2><p>Exact commit: <code>@view.Commit</code>. Retry pushes this existing commit.</p>
+                <button class="tool-action" type="button" disabled="@EffectiveBusy" aria-busy="@((ActiveCommand == PublishingCommand.Retry).ToString().ToLowerInvariant())" @onclick="Retry"><i class="@CommandIcon(PublishingCommand.Retry, "fa-rotate-right")" aria-hidden="true"></i> retry push</button>
+            </section>
+        }
+        @if (previewError is not null) { <p class="publishing-error" role="alert">@previewError</p> }
+        @if (view.Phase == "Prepared")
+        {
+            <section class="publishing-card" aria-label="Candidate review">
+                <h2 class="tool-section-title">review</h2>
+                <label class="tool-label" for="publishing-message">Commit message</label>
+                <textarea class="tool-control" id="publishing-message" @bind="message" disabled="@EffectiveBusy" rows="3"></textarea>
+                <button class="tool-action" type="button" disabled="@(EffectiveBusy || view.Changes.Count == 0 || !view.CredentialsReady || string.IsNullOrWhiteSpace(message))" aria-busy="@((ActiveCommand == PublishingCommand.Commit).ToString().ToLowerInvariant())" @onclick="Commit"><i class="@CommandIcon(PublishingCommand.Commit, "fa-upload")" aria-hidden="true"></i> commit and push</button>
+                @foreach (var group in view.Changes.GroupBy(x => x.Group))
+                {
+                    <section class="publishing-review-group">
+                        <h3>@group.Key</h3>
+                        @foreach (var change in group)
+                        {
+                            <details @key="change.Path">
+                                <summary>@change.Change · @change.Path · @change.BeforeBytes → @change.AfterBytes bytes</summary>
+                                @if (change.Kind == "Image" && change.Change != "Removed")
+                                {
+                                    <button class="tool-action" type="button" disabled="@EffectiveBusy" @onclick="() => Image(change.Path)">preview candidate image</button>
+                                    @if (previews.TryGetValue(change.Path, out var preview)) { <img src="@preview" alt="Candidate @change.Path" /> }
+                                }
+                                else if (change.Path.EndsWith(".md") || change.Path.EndsWith(".json"))
+                                {
+                                    <button class="tool-action" type="button" disabled="@EffectiveBusy" @onclick="() => Diff(change.Path)">show text diff</button>
+                                    @if (diffs.TryGetValue(change.Path, out var diff)) { <pre>@diff</pre> }
+                                }
+                            </details>
+                        }
+                    </section>
+                }
+            </section>
+        }
+    }
+</main>
+<DiagnosticModal />
+
+@code {
+    private PublishingView? view;
+    private string message = "";
+    private string? previewError;
+    private readonly Dictionary<string, string> previews = [];
+    private readonly Dictionary<string, string> diffs = [];
+    private IDisposable? subscription;
+    private volatile bool disposed;
+    private bool refreshing, refreshPending;
+    private TaskCompletionSource? refreshCompletion;
+    private enum PublishingCommand { Prepare, Commit, Retry, Discard }
+    private PublishingCommand? pendingCommand, serviceCommand;
+    private bool EffectiveBusy => pendingCommand is not null || view?.Busy == true;
+    private PublishingCommand? ActiveCommand => view?.Busy == true ? serviceCommand : pendingCommand;
+    private string CommandIcon(PublishingCommand command, string idleIcon) =>
+        ActiveCommand == command ? "fa-solid fa-spinner fa-spin" : $"fa-solid {idleIcon}";
+    private string AdmissionStatus => pendingCommand switch
+    {
+        PublishingCommand.Prepare => "Requesting documentation preparation…",
+        PublishingCommand.Commit => "Requesting commit and push…",
+        PublishingCommand.Retry => "Requesting push retry…",
+        PublishingCommand.Discard => "Requesting discard of prepared changes…",
+        _ => "Publishing operation in progress."
+    };
+    private readonly PublishingPage page = new(Guid.NewGuid());
+    private Guid? shownFailure;
+    private IJSObjectReference? timingModule, timingConsole;
+    private bool drainingTimings, initializingTimings;
+    private Guid? deliveredOperation;
+    private long deliveredSequence;
+    private IReadOnlyList<PublishingTiming> pendingTimings = [];
+    private readonly Queue<IReadOnlyList<PublishingTiming>> pendingPreviewTimings = new();
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (disposed || initializingTimings) return;
+        initializingTimings = true;
+        try
+        {
+            if (timingConsole is null)
+            {
+                if (timingModule is null)
+                {
+                    var imported = await JS.InvokeAsync<IJSObjectReference>("import", "./publishing-console.js");
+                    if (disposed) { await imported.DisposeAsync(); return; }
+                    timingModule = imported;
+                }
+                if (disposed) return;
+                var created = await timingModule.InvokeAsync<IJSObjectReference>("create");
+                if (disposed) { await created.DisposeAsync(); return; }
+                timingConsole = created;
+            }
+            await DrainTimings();
+        }
+        catch (Exception exception) { ReportConsoleFailure(exception); }
+        finally { initializingTimings = false; }
+    }
+    private void ReportConsoleFailure(Exception exception)
+    {
+        // Console delivery has no authority over the operation or its existing modal.
+        try { Logger.LogWarning(exception, "Publishing console delivery unavailable; retained timings can drain on the next authorized refresh/render."); } catch { }
+    }
+    private async Task DrainTimings()
+    {
+        if (disposed || timingConsole is null || drainingTimings) return;
+        drainingTimings = true;
+        try
+        {
+            while (!disposed)
+            {
+                var preview = pendingPreviewTimings.Count > 0;
+                var batch = preview ? pendingPreviewTimings.Peek() : pendingTimings
+                    .Where(x => x.Operation != deliveredOperation || x.Sequence > deliveredSequence).ToArray();
+                if (batch.Count == 0) break;
+                var start = System.Diagnostics.Stopwatch.GetTimestamp();
+                if (!await timingConsole.InvokeAsync<bool>("write", batch, preview) || disposed) break;
+                var roundtrip = System.Diagnostics.Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+                if (preview) pendingPreviewTimings.Dequeue();
+                else
+                {
+                    deliveredOperation = batch[^1].Operation;
+                    deliveredSequence = batch[^1].Sequence;
+                    if (pendingTimings.Count > 0 && pendingTimings[0].Operation == deliveredOperation)
+                        pendingTimings = pendingTimings.Where(x => x.Sequence > deliveredSequence).ToArray();
+                }
+                // Cursor success is independent of this optional delivery-only diagnostic.
+                try { await timingConsole.InvokeVoidAsync("delivery", roundtrip); }
+                catch (Exception exception) { ReportConsoleFailure(exception); }
+            }
+        }
+        catch (Exception exception) { ReportConsoleFailure(exception); }
+        finally { drainingTimings = false; }
+    }
+    private async Task PreviewBrowserStart(PublishingTimings timings)
+    {
+        if (disposed || timingConsole is null) return;
+        try { await timingConsole.InvokeVoidAsync("previewStart", timings.Operation); }
+        catch (Exception exception) { ReportConsoleFailure(exception); }
+    }
+    private async Task DeliverPreviewTimings(PublishingTimings timings)
+    {
+        if (disposed) return;
+        try
+        {
+            pendingPreviewTimings.Enqueue(timings.Read());
+            await DrainTimings();
+        }
+        catch (Exception exception) { ReportConsoleFailure(exception); }
+    }
+    protected override async Task OnInitializedAsync()
+    {
+        // Subscribe first: a mounting transition either appears in the initial read
+        // or requests another pass through the same renderer-owned drain.
+        subscription = Publishing.Subscribe(PublishingChanged);
+        await Refresh();
+    }
+    private async Task Refresh()
+    {
+        if (disposed) return;
+        refreshPending = true;
+        if (refreshing) { await refreshCompletion!.Task; return; }
+        refreshing = true;
+        var completion = refreshCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            while (refreshPending && !disposed)
+            {
+                refreshPending = false;
+                try
+                {
+                    var next = await Publishing.ReadAsync(Access, page, deliveredOperation, deliveredSequence);
+                    if (disposed) return;
+                    if (next.CandidateId != view?.CandidateId || next.Phase != "Prepared") { previews.Clear(); diffs.Clear(); }
+                    view = next;
+                    // Identity comes from actual running service work, not a local
+                    // click that another page's admission may have beaten.
+                    serviceCommand = !next.Busy ? null : next.Progress?.Operation switch
+                    {
+                        "Preparation" => PublishingCommand.Prepare,
+                        "Commit and push" => PublishingCommand.Commit,
+                        "Retry push" => PublishingCommand.Retry,
+                        _ => next.Stage switch
+                        {
+                            "Discarding prepared changes" or "Discarded" => PublishingCommand.Discard,
+                            "Ready for review; not yet published" or "No changes; nothing to publish" => PublishingCommand.Prepare,
+                            _ => null
+                        }
+                    };
+                    pendingTimings = next.Timings;
+                    if (next.Failure is { } failure && shownFailure != failure.Id)
+                    {
+                        shownFailure = failure.Id;
+                        Diagnostics.Show($"Documentation publishing failed.\n{failure.Details}");
+                    }
+                    StateHasChanged();
+                }
+                catch (Exception exception)
+                {
+                    // One failed drain, not one modal per overlapping request.
+                    refreshPending = false;
+                    if (disposed) return;
+                    Logger.LogError(exception, "Refreshing documentation publishing failed.");
+                    Diagnostics.Show($"Refreshing documentation publishing failed.\n{exception}");
+                    StateHasChanged();
+                }
+            }
+        }
+        finally { refreshing = false; completion.TrySetResult(); }
+    }
+    private async Task PublishingChanged()
+    {
+        if (disposed) return;
+        try
+        {
+            await InvokeAsync(Refresh);
+        }
+        catch (Exception exception)
+        {
+            if (!disposed)
+            {
+                Logger.LogError(exception, "Refreshing documentation publishing failed.");
+                // A retired renderer may reject dispatch; observe that failure too,
+                // without making a process-owned publishing operation depend on it.
+                try { await InvokeAsync(() => { if (!disposed) Diagnostics.Show($"Refreshing documentation publishing failed.\n{exception}"); }); }
+                catch (Exception dispatchException) { Logger.LogError(dispatchException, "Dispatching publishing refresh diagnostic failed."); }
+            }
+        }
+    }
+    private Task Prepare() => RunCommand(PublishingCommand.Prepare, () => Publishing.PrepareAsync(Access, new(page)), "Preparing documentation");
+    private Task Discard() => RunCommand(PublishingCommand.Discard, () => Publishing.DiscardAsync(Access, new(page, view?.CandidateId)), "Discarding prepared changes");
+    private Task Commit() => view?.CandidateId is { } id
+        ? RunCommand(PublishingCommand.Commit, () => Publishing.CommitAndPushAsync(Access, new(page, id, message)), "Committing documentation") : Task.CompletedTask;
+    private Task Retry() => view?.Commit is { } id
+        ? RunCommand(PublishingCommand.Retry, () => Publishing.RetryPushAsync(Access, new(page, id)), "Retrying documentation push") : Task.CompletedTask;
+    private async Task RunCommand(PublishingCommand command, Func<Task> action, string context)
+    {
+        if (disposed || EffectiveBusy) return;
+        pendingCommand = command;
+        try
+        {
+            previewError = null;
+            // Queue feedback before admission can do synchronous work, too.
+            StateHasChanged();
+            await Task.Yield();
+            if (disposed) return;
+            await action();
+            await Refresh();
+        }
+        catch (PublishingBlock exception) { if (!disposed) previewError = exception.Message; }
+        catch (Exception exception)
+        {
+            if (disposed) return;
+            Logger.LogError(exception, "{PublishingAction} failed.", context);
+            Diagnostics.Show($"{context} failed.\n{exception}");
+        }
+        finally
+        {
+            pendingCommand = null;
+            if (!disposed) StateHasChanged();
+        }
+    }
+    private async Task Diff(string path)
+    {
+        if (disposed || EffectiveBusy) return;
+        var candidate = view!.CandidateId!;
+        var timings = Publishing.CreatePreviewTimings();
+        using var caller = timings.Begin("Text preview caller (server handler)");
+        try
+        {
+            await PreviewBrowserStart(timings);
+            var diff = await Publishing.ReadTextDiffAsync(Access, page, candidate, path, timings);
+            caller.Complete();
+            if (disposed || view?.CandidateId != candidate || view.Phase != "Prepared") return;
+            diffs[path] = diff; previewError = null;
+        }
+        catch (PublishingBlock exception) { if (!disposed && view?.CandidateId == candidate) previewError = exception.Message; }
+        catch (Exception exception)
+        {
+            if (disposed) return;
+            previewError = "The text preview failed. See the error details.";
+            Logger.LogError(exception, "Loading publishing text preview failed.");
+            Diagnostics.Show($"Loading publishing text preview failed.\n{exception}");
+        }
+        finally { caller.Dispose(); await DeliverPreviewTimings(timings); }
+    }
+    private async Task Image(string path)
+    {
+        if (disposed || EffectiveBusy) return;
+        var candidate = view!.CandidateId!;
+        var timings = Publishing.CreatePreviewTimings();
+        using var caller = timings.Begin("Image preview caller (server handler)");
+        try
+        {
+            await PreviewBrowserStart(timings);
+            var image = await Publishing.ReadImageAsync(Access, page, candidate, path, timings);
+            caller.Complete();
+            if (disposed || view?.CandidateId != candidate || view.Phase != "Prepared") return;
+            previews[path] = image; previewError = null;
+        }
+        catch (PublishingBlock exception) { if (!disposed && view?.CandidateId == candidate) previewError = exception.Message; }
+        catch (Exception exception)
+        {
+            if (disposed) return;
+            previewError = "The image preview failed. See the error details.";
+            Logger.LogError(exception, "Loading publishing image preview failed.");
+            Diagnostics.Show($"Loading publishing image preview failed.\n{exception}");
+        }
+        finally { caller.Dispose(); await DeliverPreviewTimings(timings); }
+    }
+    public async ValueTask DisposeAsync()
+    {
+        disposed = true;
+        subscription?.Dispose(); subscription = null;
+        refreshPending = false;
+        pendingTimings = []; pendingPreviewTimings.Clear();
+        if (timingConsole is not null)
+        {
+            try { await timingConsole.InvokeVoidAsync("dispose"); await timingConsole.DisposeAsync(); }
+            catch (Exception exception) { ReportConsoleFailure(exception); }
+        }
+        if (timingModule is not null)
+        {
+            try { await timingModule.DisposeAsync(); }
+            catch (Exception exception) { ReportConsoleFailure(exception); }
+        }
+        // Only this mounted view retires. Process-owned work continues independently.
+    }
+}

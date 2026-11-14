@@ -3,78 +3,8 @@ const roomMapContextVisibilityKey = "silksong-rando-logic.room-context-panel-vis
 const roomMapContextHeightKey = "silksong-rando.v2.map-context-height";
 const roomMapContextRatioMinimum = 5;
 const roomMapContextRatioMaximum = 9;
-const mapViewPreferencePrefix = "silksong-rando-logic.map-view.";
 const roomContextPreferenceStyle = document.getElementById("room-context-preferences");
 const roomContextPreferences = { contextVisible: true, zoneVisible: true, ratioTerm: null };
-const mapLayerPreferences = new Map();
-const cssAttributeString = value => `"${String(value).replace(/[\0-\x1f\x7f"\\]/g, character => character === "\0" ? "\\fffd " : `\\${character.codePointAt(0).toString(16)} `)}"`;
-if (!window.areaMapViewportResolver) window.areaMapViewportResolver = (() => {
-    const storagePrefix = mapViewPreferencePrefix;
-    const parseViewBox = value => {
-        const raw = typeof value === "string" ? value.trim() : "";
-        if (!raw) return null;
-        const view = raw.split(/\s+/).map(Number);
-        return view.length === 4 && view.every(Number.isFinite) && view[2] > 0 && view[3] > 0 ? view : null;
-    };
-    const fittedView = base => { const pad = .03; return [base[0] - base[2] * pad, base[1] - base[3] * pad, base[2] * (1 + 2 * pad), base[3] * (1 + 2 * pad)]; };
-    const clamp = (view, base) => {
-        const result = view.slice();
-        result[2] = Math.min(base[2], Math.max(base[2] / 8, result[2]));
-        result[3] = result[2] * base[3] / base[2];
-        result[0] = Math.max(base[0], Math.min(base[0] + base[2] - result[2], result[0]));
-        result[1] = Math.max(base[1], Math.min(base[1] + base[3] - result[3], result[1]));
-        return result;
-    };
-    const storageKey = svg => `${storagePrefix}${svg.dataset.mapKey}`;
-    const resolve = (svg, loadedState) => {
-        const base = parseViewBox(svg.getAttribute("data-base-viewbox"));
-        if (!base) return null;
-        const initial = parseViewBox(svg.getAttribute("data-initial-viewbox")) || base;
-        const navigationBounds = fittedView(base);
-        const initialFit = fittedView(initial);
-        const rawViewVersion = svg.getAttribute("data-map-view-version") || "";
-        const hasViewVersion = rawViewVersion.trim().length > 0;
-        const state = loadedState && typeof loadedState === "object" && !Array.isArray(loadedState) ? loadedState : {};
-        const saved = Array.isArray(state.view) && state.view.length === 4 && state.view.every(Number.isFinite)
-            && (!hasViewVersion || state.viewVersion === rawViewVersion);
-        return {
-            navigationBounds,
-            initialFit,
-            view: clamp(saved ? state.view : initialFit, navigationBounds),
-            viewVersion: rawViewVersion,
-            hasViewVersion
-        };
-    };
-    return Object.freeze({ storageKey, resolve, clamp });
-})();
-
-if (window.customElements && !customElements.get("area-map-prepaint")) {
-    customElements.define("area-map-prepaint", class extends HTMLElement {
-        connectedCallback() {
-            const svg = this.previousElementSibling;
-            if (!svg?.matches?.("svg.map-wireframe")) return;
-            let state = {};
-            try { state = JSON.parse(sessionStorage.getItem(window.areaMapViewportResolver.storageKey(svg)) || "{}"); }
-            catch { state = {}; }
-            const resolved = window.areaMapViewportResolver.resolve(svg, state);
-            if (resolved) svg.setAttribute("viewBox", resolved.view.join(" "));
-        }
-    });
-}
-const mapLayerPreferenceCss = () => {
-    const rules = [];
-    for (const [viewportKey, layers] of mapLayerPreferences) {
-        const map = `.map-wireframe[data-map-key=${cssAttributeString(viewportKey)}]`;
-        if (typeof layers.image === "boolean") rules.push(`${map} .map-overlay-image { display: ${layers.image ? "inline" : "none"}; }`);
-        if (typeof layers.unlinked === "boolean") rules.push(`${map} [data-map-owner="unlinked"] { display: ${layers.unlinked ? "inline" : "none"};${layers.unlinked ? "" : " pointer-events: none;"} }`);
-        if (typeof layers.linked === "boolean") {
-            rules.push(layers.linked
-                ? `${map} [data-map-owner="linked"] { fill: rgb(0 0 0 / 0%); stroke: var(--map-room-border, #fff); pointer-events: all; cursor: default; }\n${map} [data-map-owner="linked"]:is(:hover, :focus) { stroke: var(--map-room-border, #fff); stroke-width: 1px; }\n${map} [data-map-owner="linked"]:focus { stroke-width: 2px; }`
-                : `${map} [data-map-owner="linked"] { fill: transparent; stroke: transparent; pointer-events: all; cursor: pointer; }\n${map} [data-map-owner="linked"]:is(:hover, :focus) { stroke: rgb(255 255 255 / 35%); stroke-width: 1px; }`);
-        }
-    }
-    return rules.join("\n");
-};
 const applyRoomContextPreferences = () => {
     if (!(roomContextPreferenceStyle instanceof HTMLStyleElement)) return;
     const ratio = Number.isFinite(roomContextPreferences.ratioTerm)
@@ -94,22 +24,11 @@ const applyRoomContextPreferences = () => {
 .room-editor-v2 .room-map-context > .room-context-zone-pane { display: ${zoneDisplay}; }
 .room-editor-v2 .room-map-context > .room-context-divider { display: ${dividerDisplay}; }
 .room-editor-v2 .room-map-context > .room-context-scene-pane { flex-basis: ${sceneBasis}; }
-.map-wireframe .map-overlay-image, .map-wireframe [data-map-owner="unlinked"] { display: inline; }
-.map-wireframe[data-has-overlay="true"] [data-map-owner="linked"] { fill: transparent; stroke: transparent; pointer-events: all; cursor: pointer; }
-.map-wireframe[data-has-overlay="true"] [data-map-owner="linked"]:is(:hover, :focus) { stroke: rgb(255 255 255 / 35%); stroke-width: 1px; }
-${mapLayerPreferenceCss()}
 `;
 };
 const setRoomMapContextVisibility = visible => { roomContextPreferences.contextVisible = visible; applyRoomContextPreferences(); };
 const setRoomZoneMapVisibility = visible => { roomContextPreferences.zoneVisible = visible; applyRoomContextPreferences(); };
 const applyRoomMapContextRatio = value => { roomContextPreferences.ratioTerm = Number.isFinite(value) ? value : null; applyRoomContextPreferences(); };
-window.updateMapLayerPreferences = (viewportKey, layers) => {
-    if (typeof viewportKey !== "string" || !layers || typeof layers !== "object") return;
-    const next = { ...(mapLayerPreferences.get(viewportKey) || {}) };
-    for (const layer of ["image", "linked", "unlinked"]) if (typeof layers[layer] === "boolean") next[layer] = layers[layer];
-    mapLayerPreferences.set(viewportKey, next);
-    applyRoomContextPreferences();
-};
 
 // This parser-blocking script runs before blazor.web.js. Resolve browser-owned
 // room-context composition before the prerendered document can first paint.
@@ -117,19 +36,6 @@ try { roomContextPreferences.contextVisible = sessionStorage.getItem(roomMapCont
 catch { roomContextPreferences.contextVisible = true; }
 try { roomContextPreferences.zoneVisible = sessionStorage.getItem(roomZoneMapVisibilityKey) !== "false"; }
 catch { roomContextPreferences.zoneVisible = true; }
-try {
-    for (let index = 0; index < sessionStorage.length; index++) {
-        const storageKey = sessionStorage.key(index);
-        if (!storageKey?.startsWith(mapViewPreferencePrefix)) continue;
-        let stored;
-        try { stored = JSON.parse(sessionStorage.getItem(storageKey) || "{}"); }
-        catch { continue; }
-        if (!stored || typeof stored !== "object" || Array.isArray(stored)) continue;
-        const layers = {};
-        for (const layer of ["image", "linked", "unlinked"]) if (typeof stored[layer] === "boolean") layers[layer] = stored[layer];
-        if (Object.keys(layers).length) mapLayerPreferences.set(storageKey.slice(mapViewPreferencePrefix.length), layers);
-    }
-} catch { }
 try {
     const stored = localStorage.getItem(roomMapContextHeightKey);
     const value = stored === null || !stored.trim() ? Number.NaN : Number(stored);
@@ -152,19 +58,21 @@ window.focusAndSelect = (element) => {
 
 /* V2 scene navigation is isolated to its mounted pane. It has no .NET callback
    or durable persistence. Its zone-pane preference is tab-local browser state. */
-window.initializeV2SceneViewport = (svg, viewKey, ownerGeneration, placementCallback) => {
+window.initializeV2SceneViewport = (svg, viewKey, ownerGeneration, placementCallback, useCurrentViewportBasis = false, settleKeyboardNudges = false) => {
     if (!(svg instanceof SVGElement)) return;
     // Test and legacy callers without an explicit owner generation remain a
     // browser-only owner; mounted V2 panes always provide the fourth argument.
     if (placementCallback === undefined && ownerGeneration && typeof ownerGeneration === "object") { placementCallback = ownerGeneration; ownerGeneration = 0; }
     const pane = svg.closest(".room-context-scene-pane");
-    const initial = String(svg.dataset.sceneInitialViewbox).split(" ").map(Number);
+    const authoringAllowed = () => pane?.dataset.sceneAuthoringAllowed === "true";
+    let initial = String(svg.dataset.sceneInitialViewbox).split(" ").map(Number);
     if (!(pane instanceof HTMLElement) || initial.length !== 4 || !initial.every(Number.isFinite)) return;
     let state = svg.__v2SceneViewport;
     // Blazor may replace the image/control subtree after Apply or recapture while
     // retaining this SVG and room key. Reconcile those current nodes without
     // resetting the pane-local shown state or viewport lifecycle.
-    if (state?.key === viewKey) { state.reconcile?.(ownerGeneration); svg.closest(".room-editor-v2")?.[v2ChildInteractionOwnerKey]?.reconcileAttention?.(); return; }
+    if (useCurrentViewportBasis && (Number(svg.dataset.sceneOwnerGeneration) !== ownerGeneration || !svg.isConnected)) return;
+    if (state?.key === viewKey) { state.reconcile?.(ownerGeneration, useCurrentViewportBasis ? initial : null); svg.closest(".room-editor-v2")?.[v2ChildInteractionOwnerKey]?.reconcileAttention?.(); return; }
     state?.dispose();
     const parse = value => String(value).split(" ").map(Number), apply = view => svg.setAttribute("viewBox", view.join(" "));
     const clamp = view => { const width = Math.min(initial[2], Math.max(initial[2] / 8, view[2])), height = width * initial[3] / initial[2]; return [Math.max(initial[0], Math.min(initial[0] + initial[2] - width, view[0])), Math.max(initial[1], Math.min(initial[1] + initial[3] - height, view[1])), width, height]; };
@@ -197,15 +105,25 @@ window.initializeV2SceneViewport = (svg, viewKey, ownerGeneration, placementCall
     // Passive synchronous presentation handoff only. The child owner owns
     // projection/cleanup; this owner remains the sole gesture/selection owner.
     const attentionRoot = svg.closest(".room-editor-v2");
-    const syncAttention = () => attentionRoot?.[v2ChildInteractionOwnerKey]?.syncAttention?.();
+    const syncAttention = () => { attentionRoot?.[v2ChildInteractionOwnerKey]?.syncAttention?.(); };
     // Pointer-up clears `down`, but a committed marker drag is allowed to retain
     // its browser visual until its one command/refresh settles. Track that visual
     // separately so replacing or disposing this room owner cannot strand it.
     const markerVisuals = new Set();
+    // Retained keyboard intent is independent of pointer visuals and selection.
+    // No queued item is ever changed here. Only the current unqueued burst mutates.
+    const keyboardDrafts = new Map(), keyboardNodes = new Set();
+    let keyboardBurst = 0, keyboardTimer = null, keyboardCurrent = null, keyboardGate = "", keyboardStatusOwned = false;
+    const keyboardPreview = id => {
+        if (["blocked", "unsent"].includes(keyboardGate)) return null;
+        const latest = [...keyboardDrafts.values()].reverse().find(x => x.entityId.toLowerCase() === id.toLowerCase());
+        return latest && ["local", "queued", "unknown", "projection", "incorporated"].includes(latest.state) ? latest : null;
+    };
     const markerVisual = id => { let found = null; markerVisuals.forEach(value => { if (value.id === id) found = value; }); return found; };
     const relationshipGeometry = thread => {
-        const marker = markerVisual(thread.markerId), markerGeometry = marker ? { x: marker.x, y: marker.y } : thread.marker;
-        const frameGeometry = frameVisual?.item?.dataset?.sceneId?.toLowerCase() === thread.frameId ? frameVisual.geometry : thread.frame;
+        const marker = keyboardPreview(thread.markerId) || markerVisual(thread.markerId), markerGeometry = marker ? { x: marker.x, y: marker.y } : thread.marker;
+        const keyboardFrame = keyboardPreview(thread.frameId);
+        const frameGeometry = keyboardFrame ? { x: keyboardFrame.x, y: keyboardFrame.y, w: keyboardFrame.width, h: keyboardFrame.height } : frameVisual?.item?.dataset?.sceneId?.toLowerCase() === thread.frameId ? frameVisual.geometry : thread.frame;
         return { marker: markerGeometry, frame: frameGeometry };
     };
     const renderRelationship = (thread, markerOverride = null, frameOverride = null) => {
@@ -245,6 +163,7 @@ window.initializeV2SceneViewport = (svg, viewKey, ownerGeneration, placementCall
     const setLayer = (kind, shown) => {
         const key = category(kind);
         if (!active || !(key in layers) || layers[key] === shown) return;
+        if (!shown && settleKeyboardNudges) transferKeyboard();
         layers[key] = shown;
         if (!shown) {
             layerEpochs[key]++;
@@ -282,6 +201,130 @@ window.initializeV2SceneViewport = (svg, viewKey, ownerGeneration, placementCall
         });
     };
     const clearDraft = () => { draft?.remove(); draft=null; };
+    const keyboardSnapshot = () => ({ roomId: svg.dataset.sceneViewportKey, ownerGeneration: currentOwnerGeneration, drafts: [...keyboardDrafts.values()].map(x => ({ ...x })) });
+    const paintKeyboard = () => {
+        if (!settleKeyboardNudges || !ownsCurrentGeneration()) return;
+        for (const node of keyboardNodes) node.style.transform = "";
+        keyboardNodes.clear();
+        for (const value of keyboardDrafts.values()) {
+            const latest = keyboardPreview(value.entityId);
+            if (latest !== value) continue;
+            const item = svg.querySelector(`[data-scene-id='${value.entityId}'][data-scene-selection-kind]`);
+            if (!item) continue;
+            const frame = value.kind === "subroom";
+            item.style.transform = `translate(${value.x - Number(frame ? item.dataset.sceneFrameX : item.dataset.sceneMarkerX)}px, ${-(value.y - Number(frame ? item.dataset.sceneFrameY : item.dataset.sceneMarkerY))}px)`;
+            keyboardNodes.add(item);
+        }
+        const failed = [...keyboardDrafts.values()].some(x => x.state === "prequeueFailed");
+        if (failed) {
+            keyboardStatusOwned = true;
+            if (status) status.textContent = "Movement was not saved. Retry retains the attempted position.";
+            if (retryButton) retryButton.hidden = !!keyboardGate;
+        } else {
+            if (keyboardStatusOwned && status) status.textContent = armed ? armedInstruction(armed) : status.title;
+            keyboardStatusOwned = false;
+            if (retryButton && !failedMarker) retryButton.hidden = true;
+        }
+        relationshipThreads.forEach(thread => renderRelationship(thread)); syncAttention();
+    };
+    const finishKeyboardAdmission = (room, owner, burst, revision, result) => {
+        const value = keyboardDrafts.get(burst);
+        if (!ownsCurrentGeneration() || room !== svg.dataset.sceneViewportKey || owner !== currentOwnerGeneration || !value || value.revision !== revision) return false;
+        if (result.state === "unaccepted") {
+            if (revision !== 0 || value.state !== "capturing" || value.sequence != null) return false;
+            keyboardDrafts.delete(burst);
+            if (keyboardCurrent === value) keyboardCurrent = null;
+            return true;
+        }
+        if (revision <= 0) return false;
+        if (value.sequence != null) {
+            if (value.sequence !== result.sequence || value.operationId !== result.operationId) return false;
+            // Managed render/drain observation can arrive before the synchronous
+            // admission returns. Acknowledge that exact ownership idempotently;
+            // an older queued receipt must not regress recovery/incorporation.
+            if (result.state === "queued" || value.state === "incorporated" || value.state === result.state) {
+                if (keyboardCurrent === value) keyboardCurrent = null;
+                return true;
+            }
+        } else if (!["admitting", "unknown", "prequeueFailed"].includes(value.state)) return false;
+        Object.assign(value, result);
+        if (value.state === "settled" || value.state === "resolved") value.state = "incorporated";
+        if (keyboardCurrent === value) keyboardCurrent = null;
+        paintKeyboard();
+        return true;
+    };
+    const takeKeyboard = (retry = false) => {
+        if (!settleKeyboardNudges || !ownsCurrentGeneration()) return { state: "unavailable" };
+        if ([...keyboardDrafts.values()].some(x => x.state === "admitting" || x.state === "capturing" || x.state === "unknown" && x.sequence == null)) return { state: "blocked" };
+        const failed = [...keyboardDrafts.values()].find(x => x.state === "prequeueFailed");
+        if (failed && !retry) return { state: "blocked" };
+        const value = retry ? failed : keyboardCurrent;
+        if (!value) return { state: retry ? "blocked" : "clean" };
+        clearTimeout(keyboardTimer); keyboardTimer = null;
+        value.state = "admitting";
+        return { state: "draft", draft: { ...value } };
+    };
+    const transferKeyboard = () => {
+        if (!settleKeyboardNudges) return true;
+        const taken = takeKeyboard();
+        if (taken.state !== "draft") return taken.state === "clean";
+        const value = taken.draft;
+        let result;
+        try { result = placementCallback.invokeMethod("AdmitKeyboardNudge", viewKey, currentOwnerGeneration, { ...value }); }
+        catch {
+            // The independent root/direct Room path inspects ownership. Another
+            // call on this same callback dependency cannot prove no append.
+            result = { state: "unknown" };
+        }
+        return finishKeyboardAdmission(svg.dataset.sceneViewportKey, currentOwnerGeneration, value.burst, value.revision, result) && result.state === "queued";
+    };
+    const observeKeyboard = (observations, gate) => {
+        if (!ownsCurrentGeneration()) return;
+        keyboardGate = gate;
+        for (const observation of observations) {
+            const value = keyboardDrafts.get(observation.burst);
+            if (!value || value.revision !== observation.revision || (value.sequence != null && (value.sequence !== observation.sequence || value.operationId !== observation.operationId))) continue;
+            value.sequence = observation.sequence; value.operationId = observation.operationId;
+            if (value.sequence != null && keyboardCurrent === value) keyboardCurrent = null;
+            if (observation.state === "settled" || observation.state === "resolved") value.state = "incorporated";
+            else value.state = observation.state;
+        }
+        paintKeyboard();
+    };
+    const localNudge = event => {
+        if (!authoringAllowed()) return;
+        if (!ownsCurrentGeneration() || down || armed || !visibleItem(selected) || !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+        event.preventDefault();
+        if (keyboardGate || [...keyboardDrafts.values()].some(x => ["prequeueFailed", "unsent", "unknown", "projection", "blocked", "capturing", "admitting"].includes(x.state))) return;
+        const item = selected, kind = item.dataset.sceneSelectionKind, id = item.dataset.sceneId;
+        if (keyboardCurrent && keyboardCurrent.entityId !== id && !transferKeyboard()) return;
+        let value = keyboardCurrent;
+        if (!value) {
+            const frame = kind === "subroom", previous = keyboardPreview(id);
+            value = { burst: ++keyboardBurst, revision: 0, kind, entityId: id,
+                x: previous?.x ?? Number(frame ? item.dataset.sceneFrameX : item.dataset.sceneMarkerX),
+                y: previous?.y ?? Number(frame ? item.dataset.sceneFrameY : item.dataset.sceneMarkerY),
+                width: frame ? Number(item.dataset.sceneFrameWidth) : null, height: frame ? Number(item.dataset.sceneFrameHeight) : null, state: "capturing" };
+            keyboardCurrent = value; keyboardDrafts.set(value.burst, value); // dirty BEFORE the managed capture
+            try {
+                if (placementCallback.invokeMethod("CaptureKeyboardNudge", viewKey, currentOwnerGeneration, { ...value }) !== true) { keyboardDrafts.delete(value.burst); keyboardCurrent = null; return; }
+            } catch {
+                // The return may be ambiguous, but no displacement was accepted.
+                // Keep revision zero (no paint/timer) for exact root/Room cleanup.
+                return;
+            }
+            value.state = "local";
+        }
+        const amount = event.shiftKey ? 5 : 1;
+        value.x += event.key === "ArrowLeft" ? -amount : event.key === "ArrowRight" ? amount : 0;
+        value.y += event.key === "ArrowDown" ? -amount : event.key === "ArrowUp" ? amount : 0;
+        value.revision++;
+        clearTimeout(keyboardTimer);
+        const owner = currentOwnerGeneration;
+        keyboardTimer = setTimeout(() => { keyboardTimer = null; if (ownsCurrentGeneration() && owner === currentOwnerGeneration) transferKeyboard(); }, 300);
+        // Accepted typed intent and its quiet boundary survive a presentation fault.
+        paintKeyboard();
+    };
     // A resize cannot use a group translation: the body, each exterior target,
     // and the upright label all have distinct prospective geometry.  Keep their
     // durable attributes so cancellation/rejection can restore the exact frame.
@@ -356,12 +399,12 @@ window.initializeV2SceneViewport = (svg, viewKey, ownerGeneration, placementCall
     const armedInstruction = value => value?.kind === "subroom"
         ? "draw subroom rectangle; drag to the opposite corner, or press Escape to cancel"
         : value ? `place ${value.kind} annotation; click the scene, or press Escape to cancel` : "";
-    const clearFailure = () => { failedMarker=null; if(status && !armed) status.textContent=""; if(retryButton) retryButton.hidden=true; };
+    const clearFailure = () => { failedMarker=null; if(status && !armed) status.textContent=""; if(retryButton) retryButton.hidden=true; paintKeyboard(); };
     // The typed .NET identity is authoritative and deliberately survives a
     // nonrenderable item. The browser mirrors only currently rendered geometry.
     const notifySelection = item => { const valid=currentOperation(), owner=currentOwnerGeneration; const call=item ? placementCallback?.invokeMethodAsync("SelectSceneItemAsync",viewKey,owner,item.dataset.sceneSelectionKind,item.dataset.sceneId) : placementCallback?.invokeMethodAsync("ClearSceneSelectionAsync",viewKey,owner); call?.then(()=>{if(!valid()||owner!==currentOwnerGeneration)return;}).catch(()=>{}); };
     const failure = value => { failedMarker=value; if(status) status.textContent="marker save failed"; if(retryButton) retryButton.hidden=false; };
-    const retryMarker = () => { const value=failedMarker; if(!value || !visibleKind(value.kind)) return; const valid=layerOperation(value.kind); callback("CommitMarkerDragAsync",value.kind,value.id,value.x,value.y).then(ok=>{if(valid()&&ok)clearFailure();}).catch(()=>{}); };
+    const retryMarker = () => { if(settleKeyboardNudges && [...keyboardDrafts.values()].some(x=>x.state==="prequeueFailed"))return; const value=failedMarker; if(!value || !visibleKind(value.kind)) return; const valid=layerOperation(value.kind); callback("CommitMarkerDragAsync",value.kind,value.id,value.x,value.y).then(ok=>{if(valid()&&ok)clearFailure();}).catch(()=>{}); };
     // Image visibility is deliberately owned entirely by this named mounted-pane
     // owner. It has no .NET callback, command, map load, or projection work.
     const showImage = shown => { if (!active) return; imageShown = shown; if (image) image.style.display = shown ? "" : "none"; if (imageToggle) { imageToggle.setAttribute("aria-pressed", String(shown)); imageToggle.setAttribute("aria-label", shown ? "Hide scene image" : "Show scene image"); imageToggle.setAttribute("title", shown ? "Hide scene image" : "Show scene image"); } };
@@ -380,10 +423,11 @@ window.initializeV2SceneViewport = (svg, viewKey, ownerGeneration, placementCall
     const renderSnap = (locked, axis) => { const target=targetEdge(locked); target?.classList.add(snapClass); if(!document.createElementNS)return;const line=document.createElementNS("http://www.w3.org/2000/svg","line");line.classList.add(guideClass);if(axis==="x"){line.setAttribute("x1",locked.value);line.setAttribute("x2",locked.value);line.setAttribute("y1",-Number(svg.dataset.sceneMinY));line.setAttribute("y2",-Number(svg.dataset.sceneMaxY));}else{const y=-locked.value;line.setAttribute("x1",Number(svg.dataset.sceneMinX));line.setAttribute("x2",Number(svg.dataset.sceneMaxX));line.setAttribute("y1",y);line.setAttribute("y2",y);}svg.appendChild(line); };
     const snap = (rectangle,event) => { clearSnap(false); if(!down||down.snapDisabled||event.ctrlKey){if(down)down.locks={};return rectangle;}const edge=(name,value,axis)=>{const threshold=scale(axis), list=down.candidates[axis], lock=down.locks[name];let choice=lock&&Math.abs(lock.value-value)<=threshold*2?lock:null;if(!choice)choice=list.map(c=>({c,d:Math.abs(c.value-value)})).filter(x=>x.d<=threshold).sort((a,b)=>a.d-b.d||a.c.value-b.c.value)[0]?.c;if(choice){down.locks[name]=choice;renderSnap(choice,axis);return choice.value;}delete down.locks[name];return value;};const l=edge("l",rectangle.x,"x"),r=edge("r",rectangle.x+rectangle.w,"x"),b=edge("b",rectangle.y,"y"),t=edge("t",rectangle.y+rectangle.h,"y");return{x:Math.min(l,r),y:Math.min(b,t),w:Math.max(.0001,Math.abs(r-l)),h:Math.max(.0001,Math.abs(t-b))}; };
     const geometry = event => { const at=point(event.clientX,event.clientY); if(down.drawStart){const start=down.drawStart, sy=-start.y, ay=-at.y;return{x:Math.min(start.x,at.x),y:Math.min(sy,ay),w:Math.abs(at.x-start.x),h:Math.abs(ay-sy)};}const item=down.frame,dx=at.x-down.origin.x,dy=-(at.y-down.origin.y),x=Number(item.dataset.sceneFrameX),y=Number(item.dataset.sceneFrameY),w=Number(item.dataset.sceneFrameWidth),h=Number(item.dataset.sceneFrameHeight),m=down.mode;if(m==="move")return{x:x+dx,y:y+dy,w,h};return{x:m.includes("l")?x+dx:x,y:m.includes("b")?y+dy:y,w:m.includes("l")?w-dx:m.includes("r")?w+dx:w,h:m.includes("b")?h-dy:m.includes("t")?h+dy:h}; };
-    const start = event => { if (event.button !== 0) return; clearFailure(); const at=point(event.clientX,event.clientY), snapStart=(extra={})=>Object.assign({id:event.pointerId,x:event.clientX,y:event.clientY,locks:{},snapDisabled:!!event.ctrlKey},extra); if (armed?.kind === "subroom") { event.preventDefault(); down=snapStart({drawStart:at}); down.candidates=candidates(); return; } if (armed) { event.preventDefault(); return; } const target=event.target?.closest?.("[data-scene-frame-target]"), item=event.target?.closest?.("[data-scene-selection-kind]"); if(item && item===selected && item.dataset.sceneSelectionKind==="subroom" && target) {down=snapStart({frame:item,mode:target.dataset.sceneFrameTarget,origin:at});down.candidates=candidates(item);} else if(item && item===selected && (item.dataset.sceneSelectionKind==="exit"||item.dataset.sceneSelectionKind==="check"||item.dataset.sceneSelectionKind==="connection")) down={id:event.pointerId,x:event.clientX,y:event.clientY,lastX:event.clientX,lastY:event.clientY,drag:item}; else if(event.target===svg||event.target?.classList?.contains("scene-layout-room-bounds")) down={id:event.pointerId,x:event.clientX,y:event.clientY,lastX:event.clientX,lastY:event.clientY,panning:false}; };
+    const start = event => { if (event.button !== 0) return; if (!authoringAllowed() && event.target !== svg && !event.target?.classList?.contains("scene-layout-room-bounds")) return; clearFailure(); const at=point(event.clientX,event.clientY), snapStart=(extra={})=>Object.assign({id:event.pointerId,x:event.clientX,y:event.clientY,locks:{},snapDisabled:!!event.ctrlKey},extra); if (armed?.kind === "subroom") { event.preventDefault(); down=snapStart({drawStart:at}); down.candidates=candidates(); return; } if (armed) { event.preventDefault(); return; } const target=event.target?.closest?.("[data-scene-frame-target]"), item=event.target?.closest?.("[data-scene-selection-kind]"); if(item && item===selected && item.dataset.sceneSelectionKind==="subroom" && target) {down=snapStart({frame:item,mode:target.dataset.sceneFrameTarget,origin:at});down.candidates=candidates(item);} else if(item && item===selected && (item.dataset.sceneSelectionKind==="exit"||item.dataset.sceneSelectionKind==="check"||item.dataset.sceneSelectionKind==="connection")) down={id:event.pointerId,x:event.clientX,y:event.clientY,lastX:event.clientX,lastY:event.clientY,drag:item}; else if(event.target===svg||event.target?.classList?.contains("scene-layout-room-bounds")) down={id:event.pointerId,x:event.clientX,y:event.clientY,lastX:event.clientX,lastY:event.clientY,panning:false}; };
     const move = event => { if (!down || event.pointerId !== down.id || Math.hypot(event.clientX-down.x,event.clientY-down.y)<5) return; if(down.drawStart||down.frame){down.moved=true;const value=snap(geometry(event),event); if(down.drawStart && document.createElementNS){clearDraft();draft=document.createElementNS("http://www.w3.org/2000/svg","rect");draft.classList.add("scene-layout-draft");draft.setAttribute("x",value.x);draft.setAttribute("y",-value.y-value.h);draft.setAttribute("width",value.w);draft.setAttribute("height",value.h);svg.appendChild(draft);} if(down.frame)showFrameVisual(down.frame,value,down.mode); return;} if(down.drag){down.moved=true;const current=point(event.clientX,event.clientY), origin=point(down.x,down.y), dx=current.x-origin.x, svgDy=current.y-origin.y;down.drag.style.transform=`translate(${dx}px, ${svgDy}px)`;updateMarkerRelationships(down.drag.dataset.sceneId,{x:Number(down.drag.dataset.sceneMarkerX)+dx,y:Number(down.drag.dataset.sceneMarkerY)-svgDy});return;} if (!down.panning) { down.panning = true; svg.setPointerCapture(down.id); } const previous = point(down.lastX, down.lastY), current = point(event.clientX, event.clientY), view = parse(svg.getAttribute("viewBox")); down.lastX = event.clientX; down.lastY = event.clientY; apply(clamp([view[0] - (current.x - previous.x), view[1] - (current.y - previous.y), view[2], view[3]])); };
     const select = event => {
         if (event.button !== 0) return;
+        if (settleKeyboardNudges && !down?.moved) transferKeyboard();
         clearFailure();
         if (down?.drawStart) { const value=snap(geometry(event),event); clearDraft(); if(down.moved && value.w>0 && value.h>0) callback("CommitSubroomGeometryAsync", armed.entityId,value.x,value.y,value.w,value.h).catch(()=>{}); else callback("CancelPlacementAsync").catch(()=>{}); return; }
         if (armed) {
@@ -407,7 +451,14 @@ window.initializeV2SceneViewport = (svg, viewKey, ownerGeneration, placementCall
     };
     const end = (event, cancelled=false) => { if (cancelled) clearFailure(); if (down?.id === event.pointerId) { if (cancelled && down.drag) { down.drag.style.transform=""; updateMarkerRelationships(down.drag.dataset.sceneId); } if (cancelled && down.frame) restoreFrameVisual(); if (svg.hasPointerCapture(event.pointerId)) svg.releasePointerCapture(event.pointerId); clearDraft(); clearSnap(); down = null; } };
     const toggleImage = () => showImage(!imageShown), toggleZone = () => { clearFailure(); const shown = !zoneShown; setZoneVisible(shown); window.saveRoomZoneMapVisibility?.(shown); };
-    const reconcile = ownerGeneration => {
+    const reconcile = (ownerGeneration, currentBasis = null) => {
+        // A usable result is accounted before Razor updates these datasets. Keep
+        // its last visual through that gap; release it only against the fresh DOM.
+        if (settleKeyboardNudges) for (const [burst, value] of keyboardDrafts) if (value.state === "incorporated") keyboardDrafts.delete(burst);
+        // V3 supplies current authoritative reset/clamp inputs. This assignment is
+        // not a camera operation; retained V2 callers never supply this capability.
+        if (currentBasis && ownsCurrentGeneration() && Number(svg.dataset.sceneOwnerGeneration) === ownerGeneration && svg.isConnected)
+            initial = currentBasis.slice();
         currentOwnerGeneration = ownerGeneration;
         bindLayerControls();
         // Detach replaced controls before observing the new DOM. A stale control
@@ -445,6 +496,8 @@ window.initializeV2SceneViewport = (svg, viewKey, ownerGeneration, placementCall
         applyLayers();
         showImage(imageShown);
         setZoneVisible(zoneShown);
+        if (settleKeyboardNudges && selected && !selected.isConnected) { const replacement = svg.querySelector(`[data-scene-id='${selected.dataset.sceneId}'][data-scene-selection-kind]`); selected = replacement || null; selected?.classList.add("selected"); }
+        paintKeyboard();
         syncAttention();
     };
     const cancelGesture = () => { clearFailure(); clearDraft(); clearSnap(); if (down?.drag) { down.drag.style.transform=""; updateMarkerRelationships(down.drag.dataset.sceneId); } if (frameVisual) restoreFrameVisual(); if (down && svg.hasPointerCapture(down.id)) svg.releasePointerCapture(down.id); down=null; };
@@ -452,8 +505,9 @@ window.initializeV2SceneViewport = (svg, viewKey, ownerGeneration, placementCall
     const cancelDrag = event => end(event, true);
     // Key repeats arrive before the server refreshes DOM attributes.  Chain from
     // the accepted/pending geometry, never the stale rendered dataset.
-    const nudge = event => { if(!visibleItem(selected) || !["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(event.key)) return; clearFailure(); event.preventDefault(); const item=selected, kind=item.dataset.sceneSelectionKind, frame=kind==="subroom", amount=event.shiftKey?5:1, base=nudgeGeometry?.id===item.dataset.sceneId?nudgeGeometry:{id:item.dataset.sceneId,kind,x:Number(frame?item.dataset.sceneFrameX:item.dataset.sceneMarkerX),y:Number(frame?item.dataset.sceneFrameY:item.dataset.sceneMarkerY)}; const next={...base,x:base.x+(event.key==="ArrowLeft"?-amount:event.key==="ArrowRight"?amount:0),y:base.y+(event.key==="ArrowDown"?-amount:event.key==="ArrowUp"?amount:0)}, epoch=nudgeEpoch,layerCurrent=layerOperation(kind),valid=()=>layerCurrent()&&epoch===nudgeEpoch; nudgeGeometry=next; nudgeTail=nudgeTail.then(async()=>{if(!valid())return;try{const ok=await callback("CommitSceneNudgeAsync",kind,item.dataset.sceneId,next.x,next.y);if(valid()&&!ok){nudgeEpoch++;nudgeGeometry=null;}}catch{if(valid()){nudgeEpoch++;nudgeGeometry=null;}}}); };
-    svg.addEventListener("wheel", wheel, { passive:false }); svg.addEventListener("pointerdown", start); svg.addEventListener("pointermove", move); svg.addEventListener("pointerup", select); svg.addEventListener("pointerup", end); svg.addEventListener("pointercancel", cancelDrag); svg.addEventListener("keydown", cancelPlacement); svg.addEventListener("keydown", nudge); svg.addEventListener("contextmenu", cancelPlacement); imageToggle?.addEventListener("click", toggleImage); zoneToggle?.addEventListener("click", toggleZone); reset?.addEventListener("click", resetView);
+    const nudge = event => { if(!authoringAllowed() || !visibleItem(selected) || !["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(event.key)) return; clearFailure(); event.preventDefault(); const item=selected, kind=item.dataset.sceneSelectionKind, frame=kind==="subroom", amount=event.shiftKey?5:1, base=nudgeGeometry?.id===item.dataset.sceneId?nudgeGeometry:{id:item.dataset.sceneId,kind,x:Number(frame?item.dataset.sceneFrameX:item.dataset.sceneMarkerX),y:Number(frame?item.dataset.sceneFrameY:item.dataset.sceneMarkerY)}; const next={...base,x:base.x+(event.key==="ArrowLeft"?-amount:event.key==="ArrowRight"?amount:0),y:base.y+(event.key==="ArrowDown"?-amount:event.key==="ArrowUp"?amount:0)}, epoch=nudgeEpoch,layerCurrent=layerOperation(kind),valid=()=>layerCurrent()&&epoch===nudgeEpoch; nudgeGeometry=next; nudgeTail=nudgeTail.then(async()=>{if(!valid()||!authoringAllowed())return;try{const ok=await callback("CommitSceneNudgeAsync",kind,item.dataset.sceneId,next.x,next.y);if(valid()&&!ok){nudgeEpoch++;nudgeGeometry=null;}}catch{if(valid()){nudgeEpoch++;nudgeGeometry=null;}}}); };
+    const keyboardHandler = settleKeyboardNudges ? localNudge : nudge;
+    svg.addEventListener("wheel", wheel, { passive:false }); svg.addEventListener("pointerdown", start); svg.addEventListener("pointermove", move); svg.addEventListener("pointerup", select); svg.addEventListener("pointerup", end); svg.addEventListener("pointercancel", cancelDrag); svg.addEventListener("keydown", cancelPlacement); svg.addEventListener("keydown", keyboardHandler); svg.addEventListener("contextmenu", cancelPlacement); imageToggle?.addEventListener("click", toggleImage); zoneToggle?.addEventListener("click", toggleZone); reset?.addEventListener("click", resetView);
     retryButton?.addEventListener("click", retryMarker);
     // Capture precedes authoritative page admission. A candidate may reveal its
     // layer, but cannot retire the retained interaction or release a cancelled
@@ -486,7 +540,7 @@ window.initializeV2SceneViewport = (svg, viewKey, ownerGeneration, placementCall
     };
     const ownsRevision = (owner, revision, latest) => ownsCurrentGeneration() && owner === currentOwnerGeneration && Number(svg.dataset.sceneOwnerGeneration) === owner && svg.isConnected && Number.isFinite(revision) && revision >= latest;
     const clearPlacement = (owner, revision) => { if (!ownsRevision(owner, revision, latestArmRevision)) return; latestArmRevision=revision; if (armed) clearSnap(); armed=null; svg.classList.remove("scene-layout-placement-armed"); svg.style.cursor=""; };
-    const clearSelection = (owner, revision) => { if (!ownsRevision(owner, revision, latestSelectionRevision)) return; latestSelectionRevision=revision; if (!selected) return; cancelGesture(); clearFailure(); nudgeEpoch++; nudgeGeometry=null; selected.classList.remove("selected"); selected=null; syncAttention(); };
+    const clearSelection = (owner, revision) => { if (!ownsRevision(owner, revision, latestSelectionRevision)) return; if (settleKeyboardNudges && keyboardCurrent) transferKeyboard(); latestSelectionRevision=revision; if (!selected) return; cancelGesture(); clearFailure(); nudgeEpoch++; nudgeGeometry=null; selected.classList.remove("selected"); selected=null; syncAttention(); };
     const selectItem = (id, owner, revision) => {
         if (!ownsRevision(owner, revision, latestSelectionRevision)) return;
         const item=svg.querySelector(`[data-scene-id='${id}']`);
@@ -497,10 +551,37 @@ window.initializeV2SceneViewport = (svg, viewKey, ownerGeneration, placementCall
         latestSelectionRevision=revision;
         if (explicitIntent) explicitIntent.selectionPending=false;
         if (selected === item) return;
+        if (settleKeyboardNudges) transferKeyboard();
         cancelGesture(); clearFailure(); nudgeEpoch++; nudgeGeometry=null; selected?.classList.remove("selected"); selected=item; selected.classList.add("selected"); syncAttention();
     };
     svg.__v2SceneViewport = { key:viewKey, isLive:()=>active, reconcile, arm, clearPlacement, clearSelection, select:selectItem, dispose:() => { active=false; clearFailure(); nudgeEpoch++; nudgeGeometry=null; cancelGesture(); clearMarkerVisuals(); selected?.classList.remove("selected"); attentionRoot?.[v2ChildInteractionOwnerKey]?.retireSceneAttention?.(svg); svg.removeEventListener("wheel", wheel); svg.removeEventListener("pointerdown", start); svg.removeEventListener("pointermove", move); svg.removeEventListener("pointerup", select); svg.removeEventListener("pointerup", end); svg.removeEventListener("pointercancel", cancelDrag); svg.removeEventListener("keydown", cancelPlacement); svg.removeEventListener("keydown", nudge); svg.removeEventListener("contextmenu", cancelPlacement); for (const { node, click } of layerControls) node.removeEventListener("click", click); layerControls=[]; imageToggle?.removeEventListener("click", toggleImage); zoneToggle?.removeEventListener("click", toggleZone); reset?.removeEventListener("click", resetView); retryButton?.removeEventListener("click", retryMarker); } };
     svg.__v2SceneViewport.ownsOwner = value => ownsCurrentGeneration() && currentOwnerGeneration === value;
+    svg.__v2SceneViewport.keyboardSnapshot = keyboardSnapshot;
+    // Passive pre-retirement observation; pan/selection alone is not authoring.
+    svg.__v2SceneViewport.hasAuthoringWork = () => !!(down?.drawStart || down?.frame || down?.drag || draft || failedMarker || frameVisual || markerVisuals.size);
+    svg.__v2SceneViewport.takeKeyboard = takeKeyboard;
+    svg.__v2SceneViewport.finishKeyboardAdmission = finishKeyboardAdmission;
+    svg.__v2SceneViewport.observeKeyboard = observeKeyboard;
+    // Guard competing geometry before acquiring its pointer origin. If transfer
+    // just queued this item's geometry, normal pending eligibility must settle
+    // before starting a pointer gesture; never jump from prospective to old data.
+    const keyboardPointerBoundary = event => {
+        if (!settleKeyboardNudges || event.button !== 0) return;
+        const item = event.target?.closest?.("[data-scene-selection-kind]");
+        if (!keyboardCurrent && !keyboardDrafts.size) return;
+        const transferred = transferKeyboard();
+        if (item && (!transferred || keyboardGate || [...keyboardDrafts.values()].some(x => x.entityId === item.dataset.sceneId))) { event.preventDefault(); event.stopImmediatePropagation(); }
+    };
+    svg.addEventListener("pointerdown", keyboardPointerBoundary, true);
+    const disposeScene = svg.__v2SceneViewport.dispose;
+    svg.__v2SceneViewport.dispose = () => {
+        clearTimeout(keyboardTimer); keyboardTimer = null;
+        svg.removeEventListener("keydown", keyboardHandler);
+        svg.removeEventListener("pointerdown", keyboardPointerBoundary, true);
+        for (const node of keyboardNodes) node.style.transform = "";
+        keyboardNodes.clear(); keyboardDrafts.clear(); keyboardCurrent = null;
+        disposeScene();
+    };
     svg.__v2SceneViewport.isKindVisible = visibleKind;
     // The existing root child click owner forwards only actual explicit row/re-arm
     // activations. Reveal is synchronous with that browser intent, never a delayed
@@ -814,125 +895,12 @@ window.createV2MapContextHeightOwner = (root) => {
 };
 
 // One modal-local owner: resize/hover stay local; native search belongs to Blazor.
-const sceneReviewResizeOwnerKey = Symbol("scene-review-preview-resize-owner");
-window.createSceneReviewPreviewResizeOwner = (host, modal) => {
-    const handle = host?.querySelector?.("[data-scene-preview-resize-edge]");
-    if (!(host instanceof HTMLElement) || !(handle instanceof HTMLElement) || !(modal instanceof HTMLElement) ||
-        !modal.isConnected || !modal.contains(host)) throw new Error("Scene Review preview is not mounted.");
-    modal[sceneReviewResizeOwnerKey]?.dispose();
-    let disposed = false, ratio = 5, drag = null, pointer = null;
-    const live = () => !disposed && modal.isConnected && modal[sceneReviewResizeOwnerKey] === owner;
-    const overlay = () => host.querySelector("[data-scene-preview-hover]");
-    const clearHover = () => { const circle = overlay(); if (circle) circle.style.display = "none"; };
-    const rowAt = target => target instanceof Element ? target.closest("[data-scene-hover-id]") : null;
-    const reconcile = () => {
-        if (!live()) return;
-        const circle = overlay();
-        const controls = modal.querySelector(".scene-workbench-controls");
-        if (!pointer || drag || host.hidden || controls?.disabled) { clearHover(); return; }
-        // Hit-test the current rendered row, not a retained/recycled node identity.
-        // The document supplies a point lookup only; all event/query ownership is local.
-        const row = rowAt(modal.ownerDocument.elementFromPoint(pointer.x, pointer.y));
-        if (!circle || !row || !modal.contains(row) || row.closest("[hidden]") || !row.getClientRects().length) { clearHover(); return; }
-        const xText = row.dataset.sceneHoverX, yText = row.dataset.sceneHoverY;
-        const x = Number(xText), y = Number(yText), radius = Number(circle.dataset.sceneHoverRadius);
-        if (!row.dataset.sceneHoverId || !xText || !yText || !Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(radius) || radius <= 0) { clearHover(); return; }
-        for (const [name, value] of [["cx", x], ["cy", y], ["r", radius]]) {
-            const text = String(value);
-            if (circle.getAttribute(name) !== text) circle.setAttribute(name, text);
-        }
-        circle.style.display = "";
-    };
-    const hoverMove = event => {
-        if (!live() || !event.isPrimary) return;
-        pointer = { x: event.clientX, y: event.clientY };
-        reconcile();
-    };
-    const hoverOut = event => {
-        if (!live() || !event.isPrimary) return;
-        // Descendant-to-descendant transitions within one row keep its decoration.
-        if (rowAt(event.target) && rowAt(event.target) === rowAt(event.relatedTarget)) return;
-        pointer = event.relatedTarget instanceof Node && modal.contains(event.relatedTarget) ? { x: event.clientX, y: event.clientY } : null;
-        reconcile();
-    };
-    const hoverLeave = () => { pointer = null; clearHover(); };
-    // Virtualize renders independently of the parent OnAfterRender. Observe only
-    // this modal's structural/fact changes, never the attributes we decorate.
-    const hoverObserver = new MutationObserver(reconcile);
-    const apply = value => host.style.setProperty("--scene-review-ratio-term", String(value));
-    const clamp = value => Math.min(9, Math.max(5, value));
-    const release = pointerId => {
-        if (handle.hasPointerCapture(pointerId)) handle.releasePointerCapture(pointerId);
-        window.removeEventListener("keydown", escape);
-    };
-    const cancel = event => {
-        if (!drag || (event?.pointerId !== undefined && event.pointerId !== drag.pointerId)) return;
-        const previous = drag; drag = null;
-        apply(ratio); release(previous.pointerId);
-    };
-    const escape = event => { if (event.key === "Escape" && drag) { event.preventDefault(); cancel(); } };
-    const ratioFor = event => clamp(16 * (drag.height + event.clientY - drag.y) / drag.width);
-    const move = event => {
-        if (disposed || !drag || event.pointerId !== drag.pointerId) return;
-        apply(ratioFor(event));
-    };
-    const end = event => {
-        if (disposed || !drag || event.pointerId !== drag.pointerId) return;
-        ratio = ratioFor(event);
-        const previous = drag; drag = null;
-        apply(ratio); release(previous.pointerId);
-    };
-    const down = event => {
-        if (!live() || drag || event.button !== 0 || !event.isPrimary || modal.querySelector(".scene-workbench-controls")?.disabled || host.hidden) return;
-        const bounds = host.getBoundingClientRect();
-        if (bounds.width <= 0) return;
-        event.preventDefault();
-        handle.setPointerCapture(event.pointerId);
-        drag = { pointerId: event.pointerId, y: event.clientY, height: bounds.height, width: bounds.width };
-        hoverLeave();
-        window.addEventListener("keydown", escape);
-    };
-    handle.addEventListener("pointerdown", down);
-    handle.addEventListener("pointermove", move);
-    handle.addEventListener("pointerup", end);
-    handle.addEventListener("pointercancel", cancel);
-    handle.addEventListener("lostpointercapture", cancel);
-    apply(5);
-    const owner = {
-        reconcile,
-        dispose() {
-            if (disposed) return;
-            try { cancel(); }
-            finally {
-                disposed = true;
-                window.removeEventListener("keydown", escape);
-                hoverLeave();
-                hoverObserver.disconnect();
-                modal.removeEventListener("pointerover", hoverMove);
-                modal.removeEventListener("pointermove", hoverMove);
-                modal.removeEventListener("pointerout", hoverOut);
-                modal.removeEventListener("pointerleave", hoverLeave);
-                modal.removeEventListener("pointercancel", hoverLeave);
-                modal.removeEventListener("scroll", reconcile, true);
-                handle.removeEventListener("pointerdown", down);
-                handle.removeEventListener("pointermove", move);
-                handle.removeEventListener("pointerup", end);
-                handle.removeEventListener("pointercancel", cancel);
-                handle.removeEventListener("lostpointercapture", cancel);
-                if (modal[sceneReviewResizeOwnerKey] === owner) delete modal[sceneReviewResizeOwnerKey];
-            }
-        }
-    };
-    modal[sceneReviewResizeOwnerKey] = owner;
-    modal.addEventListener("pointerover", hoverMove);
-    modal.addEventListener("pointermove", hoverMove);
-    modal.addEventListener("pointerout", hoverOut);
-    modal.addEventListener("pointerleave", hoverLeave);
-    modal.addEventListener("pointercancel", hoverLeave);
-    modal.addEventListener("scroll", reconcile, true);
-    hoverObserver.observe(modal, { childList: true, subtree: true, attributes: true,
-        attributeFilter: ["hidden", "disabled", "data-scene-hover-id", "data-scene-hover-x", "data-scene-hover-y", "data-scene-hover-radius"] });
-    return owner;
+// Shared native picker helper is also used by distributed room import.
+window.openSceneUploadPicker = (inputId) => {
+    const input = document.getElementById(inputId);
+    if (input instanceof HTMLInputElement && !input.disabled) {
+        input.click();
+    }
 };
 
 window.loadRoomZoneMapVisibility = () => {
@@ -945,42 +913,6 @@ window.saveRoomZoneMapVisibility = (visible) => {
     setRoomZoneMapVisibility(visible);
     sessionStorage.setItem(roomZoneMapVisibilityKey, String(visible));
 };
-
-let sceneDropInputId = null;
-
-window.openSceneUploadPicker = (inputId) => {
-    const input = document.getElementById(inputId);
-    if (input instanceof HTMLInputElement && !input.disabled) {
-        input.click();
-    }
-};
-
-window.registerSceneDropTarget = (inputId) => {
-    sceneDropInputId = inputId;
-};
-
-document.addEventListener("dragover", (event) => {
-    if (event.dataTransfer?.types.includes("Files")) {
-        event.preventDefault();
-    }
-});
-
-document.addEventListener("drop", (event) => {
-    if (!event.dataTransfer?.files?.length) {
-        return;
-    }
-
-    event.preventDefault();
-    const input = sceneDropInputId ? document.getElementById(sceneDropInputId) : null;
-    if (!(input instanceof HTMLInputElement) || input.disabled) {
-        return;
-    }
-
-    const transfer = new DataTransfer();
-    transfer.items.add(event.dataTransfer.files[0]);
-    input.files = transfer.files;
-    input.dispatchEvent(new Event("change", { bubbles: true }));
-});
 
 // Editor navigation supplies direct stable field IDs. It never infers a row
 // from DOM order, entity IDs, headings, anchors, or generated replacement IDs.
@@ -996,9 +928,12 @@ window.focusEditorField = (id) => {
         field.select();
     }
 };
-window.focusV2ModalDialog = (id) => {
+window.focusV2ModalDialog = (id, externalModal) => {
+    if (externalModal?.open) return false;
     const dialog = document.getElementById(id);
-    if (dialog instanceof HTMLElement) dialog.focus();
+    if (!(dialog instanceof HTMLElement) || !dialog.isConnected) return false;
+    dialog.focus();
+    return document.activeElement === dialog;
 };
 const caretAtBoundary = (editor, key) => {
     if (editor instanceof HTMLSelectElement || editor.type === "checkbox") {
@@ -1071,6 +1006,7 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
         const friendlyNameEditor = field => field instanceof HTMLTextAreaElement && field.matches("[data-v2-friendly-name-space]");
         const renderFriendlyName = field => {
             if(disposed||!friendlyNameEditor(field))return;
+             mountedPaint.delete(field);
             const identity=identify(field.value), space=field.dataset.v2FriendlyNameSpace;
             let role=null;
               const namespaces=space==="enemies"?[[requirementsLookups.soulAliases,"soul"]]:space==="checks"?[[requirementsLookups.itemAliases,"item"],[requirementsLookups.countableAliases,"countable"]]:[];
@@ -1105,6 +1041,7 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
              }
             if(role)field.dataset.v2FriendlyNameRole=role;
             else field.removeAttribute("data-v2-friendly-name-role");
+             mountedPaint.set(field,{source:field.value,context:requirementsLookups,space,role:field.getAttribute("data-v2-friendly-name-role")});
         };
         const reconcileFriendlyNames = () => { if(!disposed)root.querySelectorAll("textarea[data-v2-friendly-name-space]").forEach(renderFriendlyName); };
       const setText = (node, text, cls = "") => { const span = document.createElement("span"); span.textContent = text; if (cls) span.className = cls; node.append(span); };
@@ -1308,16 +1245,114 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
          try { if(!source.trim()){add(source);return {spans,danger:false};} expression(); return {spans,danger}; } catch { throw new Error("Requirements highlighter failed."); }
       };
         const rawRequirements = (layer,value) => { const target=layer?.querySelector?.("[data-v2-requirements-highlight]");if(target){target.replaceChildren();target.textContent=value;}layer?.removeAttribute?.("data-v2-requirements-highlight-ready");layer?.classList?.remove("requirements-parser-danger");if(layer?.matches?.(".requirements-inline-layer"))layer.closest("td")?.classList.remove("requirements-parser-danger"); };
-           const renderArchivedRequirements = element => { const target=element.matches("[data-v2-requirements-highlight]")?element:element.querySelector("[data-v2-requirements-highlight]"); if(!target)return; const source=target.textContent||"",savedContext=requirementsContext,savedLookups=requirementsLookups;try{requirementsContext={...savedContext,rooms:[],checks:[]};requirementsLookups={...savedLookups,roomsByReference:new Map(),checksByName:new Map(),checksByRoom:new Map()};target.replaceChildren();const result=parseRequirementsV2(source,null);for(const [text,cls] of result.spans)setText(target,text,cls);}catch{target.replaceChildren();target.textContent=source;target.removeAttribute("data-v2-requirements-highlight-ready");target.classList.remove("requirements-parser-danger");target.closest("td")?.classList.remove("requirements-parser-danger");}finally{requirementsContext=savedContext;requirementsLookups=savedLookups;} };
-        const renderRequirements = (layer, value, roomId) => { try { const target=layer?.querySelector?.("[data-v2-requirements-highlight]");if(!target)return;target.replaceChildren();const result=parseRequirementsV2(value,roomId);for(const [text,cls] of result.spans)setText(target,text,cls);layer.setAttribute("data-v2-requirements-highlight-ready","");layer.classList.toggle("requirements-parser-danger",result.danger);if(layer.matches(".requirements-inline-layer"))layer.closest("td")?.classList.toggle("requirements-parser-danger",result.danger);}catch{rawRequirements(layer,value);} };
+         // Successful presentation applicability only: no parse results or diagnostics
+         // survive a paint. Weak keys and the compiled context belong to this root.
+         const mountedPaint = new WeakMap();
+         const rememberRequirementPaint = (target,layer,source,roomId,context,archived=false) => {
+             mountedPaint.set(target,{source,roomId,context,layer,archived,html:target.innerHTML,
+                 ready:layer.hasAttribute("data-v2-requirements-highlight-ready"),danger:layer.classList.contains("requirements-parser-danger"),
+                 cell:layer.closest("td"),cellDanger:layer.closest("td")?.classList.contains("requirements-parser-danger")});
+         };
+         const requirementPaintApplies = (target,layer,source,roomId,archived=false) => {
+             const paint=target&&mountedPaint.get(target);
+             return paint&&paint.source===source&&paint.roomId===roomId&&paint.context===requirementsLookups&&paint.layer===layer&&paint.archived===archived
+                 &&paint.html===target.innerHTML&&paint.ready===layer.hasAttribute("data-v2-requirements-highlight-ready")
+                 &&paint.danger===layer.classList.contains("requirements-parser-danger")&&paint.cell===layer.closest("td")
+                 &&paint.cellDanger===layer.closest("td")?.classList.contains("requirements-parser-danger");
+         };
+         const renderArchivedRequirements = element => {
+             const target=element.matches("[data-v2-requirements-highlight]")?element:element.querySelector("[data-v2-requirements-highlight]");
+             if(!target)return;
+             mountedPaint.delete(target);
+             const source=target.textContent||"",savedContext=requirementsContext,savedLookups=requirementsLookups;
+             try{
+                 requirementsContext={...savedContext,rooms:[],checks:[]};
+                 requirementsLookups={...savedLookups,roomsByReference:new Map(),checksByName:new Map(),checksByRoom:new Map()};
+                 target.replaceChildren();const result=parseRequirementsV2(source,null);
+                 for(const [text,cls] of result.spans)setText(target,text,cls);
+                 rememberRequirementPaint(target,target,source,null,savedLookups,true);
+             }catch{
+                 target.replaceChildren();target.textContent=source;target.removeAttribute("data-v2-requirements-highlight-ready");target.classList.remove("requirements-parser-danger");target.closest("td")?.classList.remove("requirements-parser-danger");
+             }finally{requirementsContext=savedContext;requirementsLookups=savedLookups;}
+         };
+         const renderRequirements = (layer, value, roomId) => {
+             const target=layer?.querySelector?.("[data-v2-requirements-highlight]");if(!target)return;
+             mountedPaint.delete(target);
+             try{
+                 target.replaceChildren();const result=parseRequirementsV2(value,roomId);
+                 for(const [text,cls] of result.spans)setText(target,text,cls);
+                 layer.setAttribute("data-v2-requirements-highlight-ready","");layer.classList.toggle("requirements-parser-danger",result.danger);
+                 if(layer.matches(".requirements-inline-layer"))layer.closest("td")?.classList.toggle("requirements-parser-danger",result.danger);
+                 rememberRequirementPaint(target,layer,value,roomId,requirementsLookups);
+             }catch{rawRequirements(layer,value);}
+         };
+         const reconcileMountedRequirements = () => {
+             if(disposed)return;
+             if(activeRequirement){
+                 const value=activeRequirement.value;
+                 refreshRequirementAccess(activeRequirement);
+                 if(value!==activeRequirement.value)renderExpandedRequirement(activeRequirement);
+             }
+             root.querySelectorAll("textarea[data-v2-requirements-editor]").forEach(editor=>{
+                 const layer=editor.closest(".requirements-editor-layer"),target=layer?.querySelector("[data-v2-requirements-highlight]");
+                 const paint=mountedPaint.get(editor);
+                 if(!paint||paint.target!==target||paint.layer!==layer||!requirementPaintApplies(target,layer,editor.value,editor.dataset.v2RequirementsRoom))renderInlineRequirement(editor);
+             });
+             root.querySelectorAll(".requirements-preview").forEach(element=>{
+                 const target=element.matches("[data-v2-requirements-highlight]")?element:element.querySelector("[data-v2-requirements-highlight]");
+                 if(target&&!requirementPaintApplies(target,target,target.textContent||"",null,true))renderArchivedRequirements(element);
+             });
+             root.querySelectorAll("textarea[data-v2-friendly-name-space]").forEach(field=>{
+                 const paint=mountedPaint.get(field);
+                 if(!paint||paint.source!==field.value||paint.context!==requirementsLookups||paint.space!==field.dataset.v2FriendlyNameSpace
+                     ||paint.role!==field.getAttribute("data-v2-friendly-name-role"))renderFriendlyName(field);
+             });
+         };
         const growInlineRequirement = editor => { if(!requirementEditor(editor))return;editor.style.height="0px";editor.style.height=`${editor.scrollHeight}px`; };
-        const renderInlineRequirement = editor => { if(!requirementEditor(editor))return;const layer=editor.closest(".requirements-editor-layer");renderRequirements(layer,editor.value,editor.dataset.v2RequirementsRoom);growInlineRequirement(editor); };
-        const alignExpandedRequirement = state => { const editor=state?.proxy,layer=state?.layer,highlight=layer?.querySelector("[data-v2-requirements-highlight]");if(!expandedRequirementEditor(editor)||!layer||!highlight)return;editor.style.height="0px";const style=getComputedStyle(editor),lineHeight=Number.parseFloat(style.lineHeight)||14,padding=(Number.parseFloat(style.paddingTop)||0)+(Number.parseFloat(style.paddingBottom)||0),minimum=Math.ceil(lineHeight*3+padding),maximum=Math.max(minimum,window.innerHeight-32),desired=Math.max(minimum,editor.scrollHeight);layer.style.height=`${Math.min(desired,maximum)}px`;editor.style.height="100%";editor.style.overflowY=desired>maximum?"auto":"hidden";highlight.style.transform=`translate(${-editor.scrollLeft}px, ${-editor.scrollTop}px)`; };
-        const renderExpandedRequirement = state => { if(!state)return;renderRequirements(state.layer,state.value,state.roomId);alignExpandedRequirement(state); };
-        const synchronizeRequirement = state => { const proxy=state?.proxy;if(!expandedRequirementEditor(proxy))return;state.value=proxy.value;renderExpandedRequirement(state);const inline=root.querySelector(`#${CSS.escape(state.id)}`);if(requirementEditor(inline)){state.inline=inline;inline.value=state.value;renderInlineRequirement(inline);} };
+         const renderInlineRequirement = editor => { if(!requirementEditor(editor))return;mountedPaint.delete(editor);const layer=editor.closest(".requirements-editor-layer");renderRequirements(layer,editor.value,editor.dataset.v2RequirementsRoom);growInlineRequirement(editor);const target=layer?.querySelector("[data-v2-requirements-highlight]");if(target&&mountedPaint.has(target))mountedPaint.set(editor,{target,layer}); };
+         const alignExpandedRequirement = state => { const editor=state?.proxy,layer=state?.layer,highlight=layer?.querySelector("[data-v2-requirements-highlight]");if(!expandedRequirementEditor(editor)||!layer||!highlight)return;const scroll=roomProjectionEnabled?{top:editor.scrollTop,left:editor.scrollLeft}:null;editor.style.height="0px";const style=getComputedStyle(editor),lineHeight=Number.parseFloat(style.lineHeight)||14,padding=(Number.parseFloat(style.paddingTop)||0)+(Number.parseFloat(style.paddingBottom)||0),minimum=Math.ceil(lineHeight*3+padding),maximum=Math.max(minimum,window.innerHeight-32),desired=Math.max(minimum,editor.scrollHeight);layer.style.height=`${Math.min(desired,maximum)}px`;editor.style.height="100%";editor.style.overflowY=desired>maximum?"auto":"hidden";if(scroll){editor.scrollTop=scroll.top;editor.scrollLeft=scroll.left;}highlight.style.transform=`translate(${-editor.scrollLeft}px, ${-editor.scrollTop}px)`; };
+        const refreshRequirementAccess = state => {
+            if(!state)return null;
+            const candidate=root.querySelector(`#${CSS.escape(state.id)}`);
+            const inline=requirementEditor(candidate)&&candidate.dataset.v2RequirementsRoom===state.roomId?candidate:null;
+            const editable=!disposed&&activeRequirement===state&&inline&&!inline.disabled&&!inline.readOnly;
+            if(expandedRequirementEditor(state.proxy)){
+                state.proxy.readOnly=!editable;
+                state.proxy.disabled=!inline||inline.disabled;
+                // A stale proxy is never authority over a newly readonly canonical.
+                if(!editable&&inline){state.value=inline.value;if(state.proxy.value!==state.value)state.proxy.value=state.value;}
+            }
+            if(inline)state.inline=inline;
+            return inline;
+        };
+        const renderExpandedRequirement = state => { if(!state)return;refreshRequirementAccess(state);renderRequirements(state.layer,state.value,state.roomId);alignExpandedRequirement(state); };
+        const synchronizeRequirement = (state,renderProxy=true) => {
+            const proxy=state?.proxy;if(!expandedRequirementEditor(proxy))return false;
+            const inline=refreshRequirementAccess(state);
+            if(!inline||disposed||activeRequirement!==state||inline.disabled||inline.readOnly){if(renderProxy)renderExpandedRequirement(state);return false;}
+            state.value=proxy.value;
+            if(renderProxy)renderExpandedRequirement(state);
+            inline.value=state.value;renderInlineRequirement(inline);
+            return true;
+        };
+         const saveExpandedRequirement = state => {
+             // V3 reuses the canonical inline row's existing typed blur boundary.
+             // The proxy never receives row identity or its own save/draft owner.
+              if(!roomProjectionEnabled||disposed||closingRequirement||!state||activeRequirement!==state||!state.proxy?.isConnected)return;
+             if(state.composing){state.focusLossPending=true;return;}
+             state.focusLossPending=false;
+             const inline=root.querySelector(`#${CSS.escape(state.id)}`),kind=kindOf(inline),c=kind&&config(kind),owner=kind&&owners[kind];
+             if(!requirementEditor(inline)||inline.disabled||inline.readOnly||!c||!inline.dataset[c.client]||!owner?.invokeMethodAsync)return;
+             // No proxy rendering, replacement, focus or selection/scroll writes at
+             // this boundary. registerRoom freezes the complete current native frame.
+             if(!synchronizeRequirement(state,false))return;
+             dispatchBoundary(kind,owner,[c.blur,inline.dataset[c.client],inline.dataset[c.field],null,inline.value]).catch(()=>{});
+             // Overlapping focusout/blur/hidden notifications use AcceptRow's existing
+             // projected-row diff/no-op, not a second queue or a browser success flag.
+         };
         const createExpandedRequirement = state => { const host=root.querySelector("[data-v2-requirements-expanded-host]");if(!host)return false;const backdrop=document.createElement("div"),layer=document.createElement("div"),highlight=document.createElement("div"),proxy=document.createElement("textarea");backdrop.className="requirements-expanded-backdrop";backdrop.dataset.v2RequirementsExpandedBackdrop="";layer.className="requirements-editor-layer requirements-expanded-layer";layer.setAttribute("role","dialog");layer.setAttribute("aria-modal","true");layer.setAttribute("aria-label",`${state.label} expanded editor`);highlight.dataset.v2RequirementsHighlight="";highlight.setAttribute("aria-hidden","true");proxy.id=`${state.id}-expanded-proxy`;proxy.className="requirements-expanded-editor";proxy.dataset.v2RequirementsExpandedEditor="";proxy.setAttribute("aria-label",`${state.label} expanded editor`);proxy.value=state.value;layer.append(highlight,proxy);backdrop.append(layer);host.replaceChildren(backdrop);const consume=event=>{event.preventDefault();event.stopImmediatePropagation();};let armedPointer=null,readyPointer=null;const clearArm=()=>{window.removeEventListener("pointerdown",interveningPointerDown,true);window.removeEventListener("pointerup",armedPointerUp,true);window.removeEventListener("pointercancel",armedPointerCancel,true);armedPointer=null;};const clearReady=()=>{window.removeEventListener("pointerdown",readyPointerDown,true);window.removeEventListener("pointercancel",readyPointerCancel,true);window.removeEventListener("click",readyClick,true);readyPointer=null;};const clearGesture=()=>{clearArm();clearReady();};const interveningPointerDown=()=>clearArm();const armedPointerCancel=()=>{clearArm();clearReady();};const armedPointerUp=event=>{const pointerId=armedPointer,matching=event.pointerId===pointerId,dismiss=matching&&event.isPrimary===true&&event.button===0&&event.target===backdrop;clearArm();clearReady();if(!dismiss)return;consume(event);readyPointer=pointerId;window.addEventListener("pointerdown",readyPointerDown,true);window.addEventListener("pointercancel",readyPointerCancel,true);window.addEventListener("click",readyClick,true);};const readyPointerDown=()=>clearReady();const readyPointerCancel=()=>clearReady();const readyClick=event=>{const dismiss=event.target===backdrop;clearReady();if(!dismiss)return;consume(event);closeRequirements(true);};backdrop.addEventListener("pointerdown",event=>{if(event.target!==backdrop)return;consume(event);clearGesture();if(event.isPrimary!==true||event.button!==0)return;armedPointer=event.pointerId;window.addEventListener("pointerdown",interveningPointerDown,true);window.addEventListener("pointerup",armedPointerUp,true);window.addEventListener("pointercancel",armedPointerCancel,true);});backdrop.addEventListener("click",event=>{if(event.target===backdrop)consume(event);});layer.addEventListener("pointerdown",event=>event.stopPropagation());layer.addEventListener("pointerup",event=>event.stopPropagation());layer.addEventListener("click",event=>event.stopPropagation());state.backdrop=backdrop;state.layer=layer;state.proxy=proxy;state.clearBackdropGesture=clearGesture;renderExpandedRequirement(state);return true; };
-        const closeRequirements = (restoreFocus=false) => { if(!activeRequirement||closingRequirement)return;closingRequirement=true;pointerRequirementCaret=null;const state=activeRequirement,proxy=state.proxy;if(expandedRequirementEditor(proxy)){state.value=proxy.value;state.start=proxy.selectionStart??state.start;state.end=proxy.selectionEnd??state.end;state.direction=proxy.selectionDirection||state.direction;}const inline=root.querySelector(`#${CSS.escape(state.id)}`);if(requirementEditor(inline)){state.inline=inline;if(inline.value!==state.value)inline.value=state.value;renderInlineRequirement(inline);}state.clearBackdropGesture?.();state.backdrop?.remove();activeRequirement=null;if(restoreFocus&&requirementEditor(inline)&&inline.isConnected){inline.focus({preventScroll:true});try{inline.setSelectionRange(Math.min(state.start,state.value.length),Math.min(state.end,state.value.length),state.direction);}catch{}}closingRequirement=false;reconcileAttention(); };
-        const reconcileRequirement = () => { pointerRequirementCaret=null;if(!activeRequirement)return;const state=activeRequirement,hadProxy=expandedRequirementEditor(state.proxy)&&state.proxy.isConnected;if(hadProxy)state.value=state.proxy.value;const inline=root.querySelector(`#${CSS.escape(state.id)}`);if(!requirementEditor(inline)){closeRequirements(false);return;}state.inline=inline;if(inline.value!==state.value)inline.value=state.value;renderInlineRequirement(inline);if(!hadProxy){state.clearBackdropGesture?.();if(!createExpandedRequirement(state)){closeRequirements(false);return;}}if(state.proxy.value!==state.value)state.proxy.value=state.value;renderExpandedRequirement(state);if(!hadProxy){state.proxy.focus({preventScroll:true});try{state.proxy.setSelectionRange(Math.min(state.start,state.value.length),Math.min(state.end,state.value.length),state.direction);}catch{}} };
+         const closeRequirements = (restoreFocus=false) => { if(!activeRequirement||closingRequirement)return;closingRequirement=true;pointerRequirementCaret=null;const state=activeRequirement,proxy=state.proxy;if(expandedRequirementEditor(proxy)){synchronizeRequirement(state,false);state.start=proxy.selectionStart??state.start;state.end=proxy.selectionEnd??state.end;state.direction=proxy.selectionDirection||state.direction;}const inline=refreshRequirementAccess(state);state.clearBackdropGesture?.();state.backdrop?.remove();activeRequirement=null;if(restoreFocus&&requirementEditor(inline)&&inline.isConnected){inline.focus({preventScroll:true});try{inline.setSelectionRange(Math.min(state.start,state.value.length),Math.min(state.end,state.value.length),state.direction);}catch{}}closingRequirement=false;reconcileAttention(); };
+         const reconcileRequirement = () => { pointerRequirementCaret=null;if(!activeRequirement)return;const state=activeRequirement,hadProxy=expandedRequirementEditor(state.proxy)&&state.proxy.isConnected;const inline=refreshRequirementAccess(state);if(!inline){closeRequirements(false);return;}if(hadProxy)synchronizeRequirement(state,false);else if(!disposed&&!inline.disabled&&!inline.readOnly){if(inline.value!==state.value)inline.value=state.value;}else state.value=inline.value;renderInlineRequirement(inline);if(!hadProxy){state.clearBackdropGesture?.();if(!createExpandedRequirement(state)){closeRequirements(false);return;}}if(state.proxy.value!==state.value)state.proxy.value=state.value;renderExpandedRequirement(state);if(!hadProxy){if(!roomProjectionEnabled||(document.hasFocus()&&document.visibilityState!=="hidden"))state.proxy.focus({preventScroll:true});try{state.proxy.setSelectionRange(Math.min(state.start,state.value.length),Math.min(state.end,state.value.length),state.direction);}catch{}} };
         const sourceOffset = (container,node,offset) => { if(!(node instanceof Node)||!container.contains(node))return null;try{const range=document.createRange();range.selectNodeContents(container);range.setEnd(node,Math.max(0,Math.min(Number(offset)||0,node.nodeType===Node.TEXT_NODE?(node.nodeValue||"").length:node.childNodes.length)));return range.toString().length;}catch{return null;} };
         const nearestSourceOffset = (container,x,y) => { const walker=document.createTreeWalker(container,NodeFilter.SHOW_TEXT),nodes=[];let node,base=0,best={offset:0,distance:Infinity};while(node=walker.nextNode()){const text=node.nodeValue||"";nodes.push({node,text,base});base+=text.length;}const consider=(offset,rect,horizontal)=>{if(!rect||(!rect.width&&!rect.height))return;const px=horizontal,top=rect.top,bottom=rect.bottom||rect.top,dx=Math.abs(x-px),dy=y<top?top-y:y>bottom?y-bottom:0,distance=dx*dx+dy*dy;if(distance<best.distance)best={offset,distance};};for(const item of nodes){const boundaries=[0];for(let at=0;at<item.text.length;){at+=String.fromCodePoint(item.text.codePointAt(at)).length;boundaries.push(at);}for(const local of boundaries){try{const range=document.createRange();range.setStart(item.node,local);range.collapse(true);const rect=range.getBoundingClientRect();consider(item.base+local,rect,rect.left);}catch{}}for(let index=0;index<boundaries.length-1;index++){const start=boundaries[index],end=boundaries[index+1];try{const range=document.createRange();range.setStart(item.node,start);range.setEnd(item.node,end);const rects=[...range.getClientRects()];for(const rect of rects){consider(item.base+start,rect,rect.left);consider(item.base+end,rect,rect.right);}}catch{}}}return Math.max(0,Math.min(best.offset,base)); };
         const normalizeSourceOffset = (text,offset) => { const value=Math.max(0,Math.min(offset,text.length));return value>0&&value<text.length&&text.charCodeAt(value)>=0xDC00&&text.charCodeAt(value)<=0xDFFF&&text.charCodeAt(value-1)>=0xD800&&text.charCodeAt(value-1)<=0xDBFF?value-1:value; };
@@ -1434,17 +1469,142 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
           hoveredAttentionRow = next;
           paintAttention();
       };
-      const attentionFocus = event => {
-          if (disposed) return;
+       const attentionFocus = event => {
+           if (disposed) return;
+           if (event.type === "focusin" && roomProjectionEnabled) roomInteraction++;
           const next = attentionFocusRow(event.type === "focusout" ? event.relatedTarget : event.target);
           if (next === focusedAttentionRow) return;
           focusedAttentionRow = next;
           paintAttention();
       };
-     const kindOf = x => Object.keys(configs).find(kind => x?.dataset?.[configs[kind].field]) ?? null;
+      const kindOf = x => Object.keys(configs).find(kind => x?.dataset?.[configs[kind].field]) ?? null;
+      // R3 opts into native generation evidence on this SAME root owner. V2 does
+      // not enable it; no second listener, save queue or native event dispatcher.
+       let roomProjectionEnabled = false;
+       let roomHeaderOwner = null;
+        let roomInteraction = 0;
+        const roomComposing = new Set();
+        let roomCompositionRetired = false;
+        let roomCompositionContinuation = 0;
+        const composingRoomField = field => !roomCompositionRetired && (roomComposing.has(field)
+            || activeRequirement?.inline === field && roomComposing.has(activeRequirement.proxy));
+        const retireRoomComposition = () => { roomCompositionRetired=true;roomCompositionContinuation++;roomComposing.clear(); };
+        const roomNative = new Map();
+        const retiredRoomNative = new Set();
+       const roomNativeElements = new WeakSet();
+      const nativeIdentity = field => {
+          const kind = kindOf(field), c = kind && config(kind);
+          if (c && field.dataset[c.client]) return { kind, client: field.dataset[c.client], field: field.dataset[c.field] };
+          return field?.dataset?.v2HeaderField ? { kind: "header", client: "", field: field.dataset.v2HeaderField } : null;
+      };
+      const nativeKey = identity => JSON.stringify([identity.kind, identity.client, identity.field]);
+      const nativeValue = field => activeRequirement?.inline === field && activeRequirement.proxy && !field.disabled && !field.readOnly
+          ? activeRequirement.proxy.value : field instanceof HTMLInputElement && field.type === "checkbox" ? String(field.checked) : field.value;
+       const nativeInitialValue = field => field instanceof HTMLInputElement && field.type === "checkbox" ? String(field.defaultChecked)
+           : field instanceof HTMLSelectElement ? ([...field.options].find(option => option.defaultSelected)?.value ?? field.options[0]?.value ?? "") : field.defaultValue;
+       const writeRoomNativeValue = (field,value) => {
+           if(field instanceof HTMLInputElement&&field.type==="checkbox"){field.checked=value==="true";return;}
+           const identity=nativeIdentity(field);
+           if(field instanceof HTMLSelectElement&&identity?.kind==="check"&&identity.field==="type"&&![...field.options].some(option=>option.value===value)){
+               // Unknown authored types remain visible/diagnostic, never silently
+               // become the empty selection when a merged result adds a raw value.
+               const option=document.createElement("option");option.value=value;option.textContent=`Unrecognized: ${value}`;option.disabled=true;option.dataset.v3RoomUnknown="true";field.append(option);
+           }
+           field.value=value;
+       };
+       const observeRoomNative = (field, nativeEvent = false) => {
+          if (!roomProjectionEnabled || !control(field) || !root.contains(field)) return null;
+          const identity = nativeIdentity(field);
+          if (!identity) return null;
+            const key = nativeKey(identity), prior = roomNative.get(key);
+            // Installation can retire a field before Razor removes its old DOM.
+            if (retiredRoomNative.has(key)) return null;
+           // A section transfer/visibility change may recreate a DOM control while
+           // retaining its permanent field identity. Its old Razor initial frame is
+           // not user input. Restore the installed native value before observing it;
+           // a value already edited away from that frame wins instead.
+           if (!roomNativeElements.has(field)) {
+               roomNativeElements.add(field);
+                 if (prior && !nativeEvent && !composingRoomField(field) && nativeValue(field) === nativeInitialValue(field)) {
+                   writeRoomNativeValue(field,prior.value);
+               }
+           }
+           const value = nativeValue(field);
+           if(field instanceof HTMLSelectElement)for(const option of field.querySelectorAll("option[data-v3-room-unknown]"))if(option.value!==value)option.remove();
+           const state = { ...identity, value, generation: prior ? prior.generation + (prior.value === value ? 0 : 1) : (nativeInitialValue(field) === value ? 0 : 1), composing: composingRoomField(field) };
+          roomNative.set(key, state);
+          return state;
+      };
+      const roomNativeFields = () => [...root.querySelectorAll("input,textarea,select")].filter(field => nativeIdentity(field));
+      const snapshotRoomNative = () => {
+          if (disposed || !roomProjectionEnabled) throw new Error("The room native owner is unavailable.");
+            const composingKeys = new Set();
+            for (const field of roomNativeFields()) {
+                const state=observeRoomNative(field);
+                if(state?.composing)composingKeys.add(nativeKey(state));
+            }
+            // Absent controls retain values, not an ended/removed DOM owner's IME.
+            for(const [key,state] of roomNative)if(state.composing&&!composingKeys.has(key))roomNative.set(key,{...state,composing:false});
+           // Absent controls retain field identity and genuine later generations.
+           // Include them in preflight and the next atomic authoritative install.
+           return [...roomNative.values()];
+      };
+       const installRoomNative = (patches, requireCompositionIdle) => {
+           if (disposed || !roomProjectionEnabled || !Array.isArray(patches) || typeof requireCompositionIdle !== "boolean") throw new Error("The room native installation is unavailable.");
+          const desired = new Map();
+          for (const patch of patches) {
+              if (!patch || typeof patch.kind !== "string" || typeof patch.client !== "string" || typeof patch.field !== "string"
+                   || typeof patch.value !== "string" || !Number.isSafeInteger(patch.generation) || patch.generation < 0 || typeof patch.composing !== "boolean")
+                  throw new Error("Unusable room native installation.");
+              const key = nativeKey(patch);
+              if (desired.has(key)) throw new Error("Duplicate room native field installation.");
+              desired.set(key, patch);
+          }
+            // External replacement is all-or-nothing when IME started after preflight.
+            // Result incorporation may proceed, but preserves each composing owner.
+            const actual=snapshotRoomNative();
+            if(requireCompositionIdle&&actual.some(field=>field.composing))return actual;
+            // Validate first, then compare native generations at the actual write,
+          // not when the HTTP response arrived. Later native typing always wins.
+           for (const field of roomNativeFields()) {
+               const current = observeRoomNative(field);
+               if (!current) continue;
+               const patch = desired.get(nativeKey(current));
+               if (!patch || current.composing || current.generation !== patch.generation) continue;
+              if (current.value === patch.value) continue;
+              const focused = activeRequirement?.inline === field && activeRequirement.proxy ? activeRequirement.proxy : field;
+              const selection = document.activeElement === focused && (focused instanceof HTMLInputElement || focused instanceof HTMLTextAreaElement)
+                  ? { start: focused.selectionStart, end: focused.selectionEnd, direction: focused.selectionDirection } : null;
+               writeRoomNativeValue(field,patch.value);
+              roomNative.set(nativeKey(current), { ...current, value: patch.value });
+              if (activeRequirement?.inline === field) {
+                  activeRequirement.value = patch.value;
+                  if (activeRequirement.proxy) activeRequirement.proxy.value = patch.value;
+                  renderExpandedRequirement(activeRequirement);
+              }
+              if (requirementEditor(field)) renderInlineRequirement(field);
+              if (friendlyNameEditor(field)) renderFriendlyName(field);
+              // Retain the CURRENT caret when an untouched field takes merged
+              // values. Never focus a field or replay response-time selection.
+              if (selection?.start !== null && selection?.start !== undefined && selection.end !== null) {
+                  try { focused.setSelectionRange(Math.min(selection.start, patch.value.length), Math.min(selection.end, patch.value.length), selection.direction ?? "none"); } catch { }
+              }
+           }
+           // Seed never-mounted fields and update previously mounted absent ones
+           // in this installation, before returning the final native snapshot.
+           // A later native edit remains newer than its supplied patch generation.
+           for (const [key, patch] of desired) {
+               retiredRoomNative.delete(key);
+               const current = roomNative.get(key);
+                if (!current || !current.composing && current.generation === patch.generation) roomNative.set(key, { ...patch, composing: false });
+           }
+            for (const [key,current] of roomNative) if (!desired.has(key) && !current.composing) { roomNative.delete(key); retiredRoomNative.add(key); }
+           return snapshotRoomNative();
+      };
      const data = (x,k,n) => x.dataset[`${config(k).directionPrefix}${n}`];
      const clear = kind => { for(const [item, saved] of feedback){if(kind && saved.kind!==kind)continue;item.classList.remove(saved.before,saved.tail);feedback.delete(item);} };
-      const owned = event => !disposed && event.target instanceof Node && root.contains(event.target);
+        const owned = event => !disposed && event.target instanceof Node && root.contains(event.target);
+       const noteRoomInteraction = event => {if(roomProjectionEnabled&&owned(event))roomInteraction++;};
       const followNative = () => {
           const focused = document.activeElement;
           const field = activeRequirement?.proxy === focused ? activeRequirement.inline : focused;
@@ -1480,7 +1640,8 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
      // value cleanup on the existing boundary completion/render, not a browser
      // row draft, save queue, revision protocol or another circuit callback.
       const reconciledFacts = new WeakMap();
-      const reconcileBoundaryFacts = (kind=null,client=null) => {
+       const reconcileBoundaryFacts = (kind=null,client=null) => {
+          if(roomProjectionEnabled)return; // R3 installs only generation-reviewed native values.
          for(const registered of kind?[kind]:Object.keys(configs)){
              const c=config(registered);if(!c)return;
              for(const field of root.querySelectorAll(`[data-${attribute(c.field)}][data-v2-child-reconcile-value]`)){
@@ -1509,11 +1670,11 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
               return result;
           });
       };
-           const keydown = event => { if(!owned(event)||typeof event.key!=="string")return; const field=event.target;if(expandedRequirementEditor(field)){if(event.key==="Tab"||event.key==="Escape"){event.preventDefault();event.stopImmediatePropagation();closeRequirements(true);}return;} const kind=kindOf(field); if(!kind||!control(field))return; if(event.key==="Tab"){if(field.value?.length>0)tabSources.add(field);return;} if(!event.key.startsWith("Arrow")||field instanceof HTMLSelectElement||(field instanceof HTMLInputElement&&field.type==="checkbox"))return; const isRequirement=requirementEditor(field);if(isRequirement&&(event.isComposing===true||event.keyCode===229))return; const c=config(kind), owner=owners[kind], direction=event.key.slice(5).toLowerCase(), suffix=`${direction[0].toUpperCase()}${direction.slice(1)}`, encoded=data(field,kind,suffix); if(!encoded||!caretAtBoundary(field,event.key)||!owner?.invokeMethodAsync)return; const [row,target]=encoded.split("|"), latent=data(field,kind,`${suffix}Latent`)==="true"; if(!row||!target||(!latent&&!root.querySelector(`#editor-row-${row}-${target}`)))return; event.preventDefault();event.stopImmediatePropagation(); const args=[c.method,field.dataset[c.client],field.dataset[c.field],direction,field.value];dispatchBoundary(kind,owner,args).catch(()=>{}); };
+            const keydown = event => { if(!owned(event)||typeof event.key!=="string")return; const field=event.target;if(expandedRequirementEditor(field)){refreshRequirementAccess(activeRequirement);if(event.key==="Tab"||event.key==="Escape"){event.preventDefault();event.stopImmediatePropagation();closeRequirements(true);}return;}if(field.disabled||field.readOnly)return; const kind=kindOf(field); if(!kind||!control(field))return; if(event.key==="Tab"){if(field.value?.length>0)tabSources.add(field);return;} if(!event.key.startsWith("Arrow")||field instanceof HTMLSelectElement||(field instanceof HTMLInputElement&&field.type==="checkbox"))return; const isRequirement=requirementEditor(field);if(isRequirement&&(event.isComposing===true||event.keyCode===229))return; const c=config(kind), owner=owners[kind], direction=event.key.slice(5).toLowerCase(), suffix=`${direction[0].toUpperCase()}${direction.slice(1)}`, encoded=data(field,kind,suffix); if(!encoded||!caretAtBoundary(field,event.key)||!owner?.invokeMethodAsync)return; const [row,target]=encoded.split("|"), latent=data(field,kind,`${suffix}Latent`)==="true"; if(!row||!target||(!latent&&!root.querySelector(`#editor-row-${row}-${target}`)))return; event.preventDefault();event.stopImmediatePropagation(); const args=[c.method,field.dataset[c.client],field.dataset[c.field],direction,field.value];dispatchBoundary(kind,owner,args).catch(()=>{}); };
          const pointerdown = event => { pointerRequirementCaret=null;if(!owned(event)||event.isPrimary!==true||event.button!==0)return;const inline=event.target;if(requirementEditor(inline))pointerRequirementCaret={id:inline.id,pointerId:event.pointerId,offset:pointerSourceOffset(inline,event)}; };
          const pointercancel = () => { pointerRequirementCaret=null; };
          const dblclick = event => { if(!owned(event))return;const inline=event.target;if(!requirementEditor(inline))return;event.stopImmediatePropagation();const caret=pointerRequirementCaret?.id===inline.id?pointerRequirementCaret.offset:null;pointerRequirementCaret=null;openRequirements(inline,caret); };
-          const focusout = event => { if(!owned(event))return; attentionFocus(event); const field=event.target;if(field===suppressedRequirementBlur){suppressedRequirementBlur=null;event.stopImmediatePropagation();return;}const kind=kindOf(field); if(!kind||!control(field))return; const c=config(kind),owner=owners[kind]; if(!field.dataset[c.client]||!owner?.invokeMethodAsync)return; event.stopImmediatePropagation(); const target=tabSources.has(field)&&event.relatedTarget instanceof HTMLElement&&event.relatedTarget.id?event.relatedTarget.id:null; tabSources.delete(field); const textField=field instanceof HTMLTextAreaElement||(field instanceof HTMLInputElement&&field.type!=="checkbox");const args=[c.blur,field.dataset[c.client],field.dataset[c.field],target,textField?field.value:null];dispatchBoundary(kind,owner,args).catch(()=>{}); };
+            const focusout = event => { if(!owned(event))return; attentionFocus(event); const field=event.target;if(field.disabled||field.readOnly){tabSources.delete(field);return;}if(roomProjectionEnabled&&activeRequirement?.proxy===field){saveExpandedRequirement(activeRequirement);return;}if(field===suppressedRequirementBlur){suppressedRequirementBlur=null;event.stopImmediatePropagation();return;}if(roomProjectionEnabled&&roomHeaderOwner&&field.dataset?.v2HeaderField){event.stopImmediatePropagation();roomHeaderOwner.invokeMethodAsync("DispatchRoomHeaderBoundary",field.dataset.v2HeaderField,snapshotRoomNative()).catch(()=>{});return;}const kind=kindOf(field); if(!kind||!control(field))return; const c=config(kind),owner=owners[kind]; if(!field.dataset[c.client]||!owner?.invokeMethodAsync)return; event.stopImmediatePropagation(); const target=tabSources.has(field)&&event.relatedTarget instanceof HTMLElement&&event.relatedTarget.id?event.relatedTarget.id:null; tabSources.delete(field); const textField=field instanceof HTMLTextAreaElement||(field instanceof HTMLInputElement&&field.type!=="checkbox");const args=[c.blur,field.dataset[c.client],field.dataset[c.field],target,textField?field.value:null];dispatchBoundary(kind,owner,args).catch(()=>{}); };
         const dragstart = event => { if(!owned(event)||!(event.target instanceof Element))return;const kind=Object.keys(configs).find(k=>event.target.closest(`[data-${attribute(configs[k].grip)}]`));if(!kind)return;const c=config(kind),grip=event.target.closest(`[data-${attribute(c.grip)}]`);if(grip.disabled||grip.draggable!==true||!event.dataTransfer)return;const row=grip.closest(`tr[data-${attribute(c.row)}]`),id=row?.dataset[c.row],owner=owners[kind],table=row?.closest("table");if(!id||!owner?.invokeMethodAsync||table?.dataset[c.table]!=="active")return;closeRequirements(false);try{event.dataTransfer.setData("text/plain",id);}catch{return;}drag={kind,id,partition:table.dataset[c.table],section:c.section?table.dataset[c.section]:null};event.dataTransfer.effectAllowed="move"; };
       // Resolve the receiving table independently of drag state so no-drag drops
       // remain harmless browser-only events.
@@ -1530,12 +1691,14 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
             event.preventDefault();event.stopImmediatePropagation();
             if(!c.drop||!owners[saved.kind]?.invokeMethodAsync)return;
             const target=event.target instanceof Element?event.target.closest(`tr[data-${attribute(c.row)}]`):null;
-            const index=target?Number.parseInt(target.dataset.v2ChildIndex,10):Number.parseInt(table.dataset.v2ChildCount,10);
-            const args=[c.drop,saved.id,saved.partition,Number.isSafeInteger(index)?index:0];
+             const raw=target?target.dataset.v2ChildIndex:table.dataset.v2ChildCount;
+             if(typeof raw!=="string"||!/^\d+$/.test(raw))return;
+             const index=Number(raw);if(!Number.isSafeInteger(index))return;
+             const args=[c.drop,saved.id,saved.partition,index];
             if(c.section)args.push(saved.section);
             owners[saved.kind].invokeMethodAsync(...args).catch(()=>{});
         };
-        const change=event=>{if(!owned(event))return;const field=event.target,kind=kindOf(field);if(!kind||field.disabled||!(field instanceof HTMLSelectElement||(field instanceof HTMLInputElement&&field.type==="checkbox")))return;const c=config(kind),owner=owners[kind];if(!c.control||!field.dataset[c.client]||!owner?.invokeMethodAsync)return;event.stopImmediatePropagation();dispatchBoundary(kind,owner,[c.control,field.dataset[c.client],field.dataset[c.field],field instanceof HTMLInputElement?String(field.checked):field.value]).catch(()=>{});};
+          const change=event=>{if(!owned(event))return;const field=event.target,kind=kindOf(field);observeRoomNative(field,true);if(!kind||field.disabled||!(field instanceof HTMLSelectElement||(field instanceof HTMLInputElement&&field.type==="checkbox")))return;const c=config(kind),owner=owners[kind];if(!c.control||!field.dataset[c.client]||!owner?.invokeMethodAsync)return;event.stopImmediatePropagation();dispatchBoundary(kind,owner,[c.control,field.dataset[c.client],field.dataset[c.field],field instanceof HTMLInputElement?String(field.checked):field.value]).catch(()=>{});};
         const click=event=>{if(!owned(event))return;sceneLayerClick(event);if(event.target instanceof Element&&!control(event.target)){const cell=event.target.closest("td");let editor=cell?.querySelector("input:not([type='checkbox']), textarea");if(!editor&&(cell?.classList.contains("verification-cell")||cell?.classList.contains("check-type-cell")))editor=cell.querySelector("select");if(editor&&!editor.disabled&&!editor.readOnly)editor.focus();}const button=event.target instanceof Element?event.target.closest("button[data-v2-child-action]"):null;if(!button||button.disabled)return;const action=button.dataset.v2ChildAction,kind=Object.keys(configs).find(k=>configs[k].action&&button.closest(`table[data-${attribute(configs[k].table)}]`));if(!kind)return;const c=config(kind),id=button.closest("tr")?.dataset[c.row],owner=owners[kind];if(!c.actions?.includes(action)||!id||!owner?.invokeMethodAsync)return;event.preventDefault();event.stopImmediatePropagation();owner.invokeMethodAsync(c.action,action,id).catch(()=>{});};
         const sceneLayerClick = event => {
             const button = event.target instanceof Element ? event.target.closest("button") : null;
@@ -1559,17 +1722,82 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
                  const target=root.querySelector(`#${CSS.escape(field.dataset.v2ChildMirrorTarget)}`);
                  if(target instanceof HTMLInputElement&&!target.disabled&&!target.readOnly&&field.closest("tr")?.contains(target))target.value=field.value;
              }
-             if(expandedRequirementEditor(field)){if(activeRequirement?.proxy===field)synchronizeRequirement(activeRequirement);return;}if(requirementEditor(field))renderInlineRequirement(field);
+               if(expandedRequirementEditor(field)){if(activeRequirement?.proxy===field&&synchronizeRequirement(activeRequirement))observeRoomNative(activeRequirement.inline,true);return;}
+               if(owned(event)){observeRoomNative(field,true);if(field.dataset?.v2ChildMirrorTarget)observeRoomNative(root.querySelector(`#${CSS.escape(field.dataset.v2ChildMirrorTarget)}`),true);}
+              if(requirementEditor(field))renderInlineRequirement(field);
          };
         const scroll=event=>{if(activeRequirement?.proxy===event.target)alignExpandedRequirement(activeRequirement);};
         const resize=()=>{root.querySelectorAll("textarea[data-v2-requirements-editor]").forEach(growInlineRequirement);alignExpandedRequirement(activeRequirement);};
-        ["keydown","pointerdown","pointercancel","dblclick","focusout","input","scroll","change","click","dragstart","dragover","drop","dragend"].forEach(type=>root.addEventListener(type,{keydown,pointerdown,pointercancel,dblclick,focusout,input,scroll,change,click,dragstart,dragover,drop,dragend}[type],true));window.addEventListener("resize",resize);
-         root.addEventListener("pointerover", attentionPointer, true);
+          const compositionstart=event=>{
+              if(!roomProjectionEnabled||roomCompositionRetired||!owned(event))return;
+              const field=activeRequirement?.proxy===event.target?refreshRequirementAccess(activeRequirement):event.target;
+              if(!control(field)||field.disabled||field.readOnly||!nativeIdentity(field))return;
+              roomCompositionContinuation++;roomComposing.add(event.target);
+              if(activeRequirement?.proxy===event.target)activeRequirement.composing=true;
+              observeRoomNative(field,true);
+          };
+          const compositionend=event=>{
+              if(!roomProjectionEnabled||roomCompositionRetired||!owned(event))return;
+              const ended=roomComposing.delete(event.target);
+              const state=activeRequirement?.proxy===event.target?activeRequirement:null;
+              if(state){state.composing=false;refreshRequirementAccess(state);}
+             // Sample the actual final native value after composition's synchronous
+             // event sequence. Retirement/close is rechecked; this is not a retry.
+              if(state?.focusLossPending)queueMicrotask(()=>{if(state.focusLossPending)saveExpandedRequirement(state);});
+              if(!ended)return;
+              const continuation=++roomCompositionContinuation, owner=roomHeaderOwner;
+              queueMicrotask(()=>{
+                   if(disposed||roomCompositionRetired||continuation!==roomCompositionContinuation||owner!==roomHeaderOwner||!owner)return;
+                  snapshotRoomNative();
+                  owner.invokeMethodAsync("RoomNativeCompositionEnded").catch(()=>{});
+              });
+         };
+         const windowBlur=()=>saveExpandedRequirement(activeRequirement);
+         const visibilitychange=()=>{if(document.visibilityState==="hidden")saveExpandedRequirement(activeRequirement);};
+         const rootHandlers={keydown,pointerdown,pointercancel,dblclick,focusout,input,scroll,change,click,dragstart,dragover,drop,dragend,compositionstart,compositionend};
+        for(const type of Object.keys(rootHandlers)){const handler=rootHandlers[type];rootHandlers[type]=event=>{if(["keydown","pointerdown","input","change"].includes(type))noteRoomInteraction(event);handler(event);};root.addEventListener(type,rootHandlers[type],true);}window.addEventListener("resize",resize);
+          window.addEventListener("blur",windowBlur);
+          document.addEventListener("visibilitychange",visibilitychange);
+          root.addEventListener("pointerover", attentionPointer, true);
          root.addEventListener("pointerout", attentionPointer, true);
          root.addEventListener("focusin", attentionFocus, true);
          // focusout updates attention inside its existing capture handler before
          // stopImmediatePropagation, without altering the independent save callback.
-          const api={
+           const api={
+                enableRoomProjection:()=>{if(disposed)throw new Error("The room native owner is unavailable.");roomProjectionEnabled=true;return snapshotRoomNative();},
+                registerRoomHeader:reference=>{if(disposed)throw new Error("The room native owner is unavailable.");roomProjectionEnabled=true;roomHeaderOwner=reference;return snapshotRoomNative();},
+                 readRoomCoordinates:dialog=>{if(disposed||!roomProjectionEnabled||!(dialog instanceof HTMLElement)||dialog.getAttribute("role")!=="dialog"||!root.contains(dialog)||!dialog.isConnected)throw new Error("The room coordinate dialog is unavailable.");return [...dialog.querySelectorAll("input[data-room-coordinate]")].map(input=>({field:input.dataset.roomCoordinate,value:input.value,valid:input.validity.valid}));},
+                  clearRoomMetadataAnnotation:dialog=>{if(disposed||!roomProjectionEnabled||!(dialog instanceof HTMLElement)||dialog.getAttribute("role")!=="dialog"||!root.contains(dialog)||!dialog.isConnected)throw new Error("The room coordinate dialog is unavailable.");const fields=["annotation X","annotation Y"].map(name=>dialog.querySelector(`input[data-room-coordinate='${name}']`));if(fields.some(field=>!(field instanceof HTMLInputElement)))throw new Error("The annotation draft fields are unavailable.");for(const field of fields)field.value="";},
+               registerRoom:(reference,kind,descriptor)=>{
+                   if(disposed)throw new Error("The room native owner is unavailable.");
+                   roomProjectionEnabled=true;
+                   // Freeze native row facts at the ACTUAL blur/Arrow/control/drop
+                   // boundary, not after a .NET/HTTP continuation. Retain the same
+                   // listener and Requirements owner used by the retained tables.
+                    const receiver={invokeMethodAsync:(method,...args)=>{
+                        let focusTarget=null;
+                        if(method===descriptor.method){
+                            const field=root.querySelector(`#${CSS.escape(`editor-row-${args[0]}-${args[1]}`)}`);
+                            const direction=String(args[2]??""), suffix=direction[0]?.toUpperCase()+direction.slice(1);
+                            const encoded=field?.dataset?.[`${descriptor.directionPrefix}${suffix}`];
+                            if(encoded){const [client,fieldName]=encoded.split("|");if(client&&fieldName)focusTarget=`editor-row-${client}-${fieldName}`;}
+                        }
+                        return reference.invokeMethodAsync("DispatchRoomBoundary",kind,method,args,snapshotRoomNative(),roomInteraction,focusTarget);
+                    }};
+                   api.register(receiver,kind,descriptor);
+                   snapshotRoomNative();
+               },
+                 snapshotRoomNative,
+                 retireRoomComposition,
+                // Separate scene-draft evidence; never fake native text fields.
+                 snapshotRoomSceneDraft:()=>{if(disposed)throw new Error("The room native owner is unavailable.");return root.querySelector("[data-scene-layout-canvas=true]")?.__v2SceneViewport?.keyboardSnapshot?.()??null;},
+                 hasRoomAuthoringGesture:()=>{if(disposed)throw new Error("The room native owner is unavailable.");return !!drag || root.querySelector("[data-scene-layout-canvas=true]")?.__v2SceneViewport?.hasAuthoringWork?.() === true;},
+                takeRoomSceneDraft:(retry=false)=>{if(disposed)throw new Error("The room native owner is unavailable.");return root.querySelector("[data-scene-layout-canvas=true]")?.__v2SceneViewport?.takeKeyboard?.(retry)??{state:"unavailable"};},
+                finishRoomSceneDraft:(room,owner,burst,revision,result)=>{if(disposed)throw new Error("The room native owner is unavailable.");return root.querySelector("[data-scene-layout-canvas=true]")?.__v2SceneViewport?.finishKeyboardAdmission?.(room,owner,burst,revision,result)===true;},
+                observeRoomSceneDrafts:(values,gate)=>{if(disposed)throw new Error("The room native owner is unavailable.");root.querySelector("[data-scene-layout-canvas=true]")?.__v2SceneViewport?.observeKeyboard?.(values,gate);},
+                roomInteractionGeneration:()=>roomInteraction,
+                 installRoomNative,
+                focusRoomBoundary:(id,interaction)=>{if(disposed||!roomProjectionEnabled||interaction!==roomInteraction)return false;const target=document.getElementById(id);if(!target||!root.contains(target)||target.disabled||target.readOnly)return false;window.focusEditorField(id);return true;},
               followBoundary,
               reconcileAttention,
               syncAttention:paintAttention,
@@ -1578,11 +1806,12 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
             beforeFocus:()=>{if(!disposed)reconcileBoundaryFacts();},
             register:(reference,kind,descriptor)=>{if(!disposed&&typeof kind==="string"&&descriptor&&["method","blur","drop","row","table","grip","field","client","directionPrefix","before","tail","tailRow"].every(key=>typeof descriptor[key]==="string"&&descriptor[key])){pointerRequirementCaret=null;if(activeRequirement&&kindOf(activeRequirement.inline)===kind)closeRequirements(false);clear(kind);if(drag?.kind===kind)drag=null;configs[kind]=Object.freeze({...descriptor});owners[kind]=reference;reconcileAttention();}},
             unregister:kind=>{pointerRequirementCaret=null;if(activeRequirement&&kindOf(activeRequirement.inline)===kind)closeRequirements(false);clear(kind);if(drag?.kind===kind)drag=null;delete owners[kind];delete configs[kind];reconcileAttention();},
-                setRequirementsContext:context=>{requirementsContext=context??{rooms:[],checks:[],predicates:[],items:[],countables:[],souls:[],crests:[],methods:[]};requirementsLookups=compileRequirementsLookups(requirementsContext);reconcileBoundaryFacts();reconcileRequirement();root.querySelectorAll("textarea[data-v2-requirements-editor]").forEach(renderInlineRequirement);root.querySelectorAll(".requirements-preview").forEach(renderArchivedRequirements);reconcileFriendlyNames();reconcileAttention();},
-            commitActiveRequirement:async()=>{let field;if(activeRequirement){const state=activeRequirement;closeRequirements(true);field=root.querySelector(`#${CSS.escape(state.id)}`);}else{const focused=document.activeElement;if(!requirementEditor(focused)||!root.contains(focused))return true;field=focused;}const kind=kindOf(field),c=kind&&config(kind),owner=kind&&owners[kind];if(!requirementEditor(field)||!c||!owner?.invokeMethodAsync||!field.dataset[c.client])return false;suppressedRequirementBlur=field;field.blur();if(suppressedRequirementBlur===field)suppressedRequirementBlur=null;try{return await owner.invokeMethodAsync(c.blur,field.dataset[c.client],field.dataset[c.field],null,field.value)!==false;}catch{return false;}},
+                setRequirementsContext:context=>{const next=context??{rooms:[],checks:[],predicates:[],items:[],countables:[],souls:[],crests:[],methods:[]},lookups=compileRequirementsLookups(next);requirementsContext=next;requirementsLookups=lookups;reconcileBoundaryFacts();reconcileRequirement();root.querySelectorAll("textarea[data-v2-requirements-editor]").forEach(renderInlineRequirement);root.querySelectorAll(".requirements-preview").forEach(renderArchivedRequirements);reconcileFriendlyNames();reconcileAttention();},
+                reconcileMountedRequirements,
+            commitActiveRequirement:async()=>{let field;if(activeRequirement){const state=activeRequirement;closeRequirements(true);field=root.querySelector(`#${CSS.escape(state.id)}`);}else{const focused=document.activeElement;if(!requirementEditor(focused)||!root.contains(focused))return true;field=focused;}if(requirementEditor(field)&&(field.disabled||field.readOnly))return true;const kind=kindOf(field),c=kind&&config(kind),owner=kind&&owners[kind];if(!requirementEditor(field)||!c||!owner?.invokeMethodAsync||!field.dataset[c.client])return false;suppressedRequirementBlur=field;field.blur();if(suppressedRequirementBlur===field)suppressedRequirementBlur=null;try{return await owner.invokeMethodAsync(c.blur,field.dataset[c.client],field.dataset[c.field],null,field.value)!==false;}catch{return false;}},
             focus:id=>{if(!disposed)window.focusEditorField(id);},
             clear,
-            dispose:()=>{if(disposed)return;disposed=true;root.removeEventListener("pointerover",attentionPointer,true);root.removeEventListener("pointerout",attentionPointer,true);root.removeEventListener("focusin",attentionFocus,true);reconcileAttention();["keydown","pointerdown","pointercancel","dblclick","focusout","input","scroll","change","click","dragstart","dragover","drop","dragend"].forEach(type=>root.removeEventListener(type,{keydown,pointerdown,pointercancel,dblclick,focusout,input,scroll,change,click,dragstart,dragover,drop,dragend}[type],true));window.removeEventListener("resize",resize);closeRequirements(false);clear();drag=null;pointerRequirementCaret=null;Object.keys(owners).forEach(k=>delete owners[k]);Object.keys(configs).forEach(k=>delete configs[k]);if(root[v2ChildInteractionOwnerKey]===api)delete root[v2ChildInteractionOwnerKey];}
+              dispose:()=>{if(disposed)return;retireRoomComposition();disposed=true;root.removeEventListener("pointerover",attentionPointer,true);root.removeEventListener("pointerout",attentionPointer,true);root.removeEventListener("focusin",attentionFocus,true);reconcileAttention();Object.keys(rootHandlers).forEach(type=>root.removeEventListener(type,rootHandlers[type],true));window.removeEventListener("resize",resize);window.removeEventListener("blur",windowBlur);document.removeEventListener("visibilitychange",visibilitychange);closeRequirements(false);clear();drag=null;pointerRequirementCaret=null;roomHeaderOwner=null;Object.keys(owners).forEach(k=>delete owners[k]);Object.keys(configs).forEach(k=>delete configs[k]);if(root[v2ChildInteractionOwnerKey]===api)delete root[v2ChildInteractionOwnerKey];}
         };
         root[v2ChildInteractionOwnerKey]=api;
         reconcileFriendlyNames();

@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk.BlazorWebAssembly">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <OverrideHtmlAssetPlaceholders>true</OverrideHtmlAssetPlaceholders>
+    <StaticWebAssetBasePath>/</StaticWebAssetBasePath>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Shared root assets remain server-owned; the client does not use its
+         template favicon or Bootstrap. Avoid duplicate root asset endpoints. -->
+    <Content Remove="wwwroot\favicon.png;wwwroot\lib\bootstrap\**" />
+  </ItemGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
+    <PathMap>$(MSBuildProjectDirectory)=/_/client</PathMap>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\SilksongRandoLogicManager.Audit\SilksongRandoLogicManager.Audit.csproj" />
+    <ProjectReference Include="..\SilksongRandoLogicManager.Contracts\SilksongRandoLogicManager.Contracts.csproj" />
+    <ProjectReference Include="..\SilksongRandoLogicManager.SceneProcessing\SilksongRandoLogicManager.SceneProcessing.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <RazorComponent Include="..\Silksong Rando Logic Manager\Silksong Rando Logic Manager\Components\SceneWorkbench.razor" Link="Components\SceneWorkbench.razor" />
+    <RazorComponent Include="..\Silksong Rando Logic Manager\Silksong Rando Logic Manager\Components\SceneReviewExplore.razor" Link="Components\SceneReviewExplore.razor" />
+    <RazorComponent Include="..\Silksong Rando Logic Manager\Silksong Rando Logic Manager\Components\RoomEditorV2\SceneContextPanePresentation.razor" Link="Components\RoomEditorV2\SceneContextPanePresentation.razor" />
+    <RazorComponent Include="..\Silksong Rando Logic Manager\Silksong Rando Logic Manager\Components\RequirementCatalogue\RequirementSyntaxGuideContent.razor" Link="Components\RequirementCatalogue\RequirementSyntaxGuideContent.razor" />
+    <RazorComponent Include="..\Silksong Rando Logic Manager\Silksong Rando Logic Manager\Components\RequirementCatalogue\RequirementSyntaxGuideModal.razor" Link="Components\RequirementCatalogue\RequirementSyntaxGuideModal.razor" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" Version="10.0.14" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="10.0.14" PrivateAssets="all" />
+    <PackageReference Include="Markdig" Version="1.3.2" />
+  </ItemGroup>
+
+</Project>

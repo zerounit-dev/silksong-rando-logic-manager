@@ -10,7 +10,7 @@ public static class LogicDbContextFactoryRegistration
         string databasePath)
     {
         services.AddDbContextFactory<LogicDbContext>((provider, options) =>
-            options.UseSqlite($"Data Source={databasePath}")
+            options.UseSqlite(new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder { DataSource = databasePath }.ToString())
                 .AddInterceptors(provider.GetRequiredService<Services.DebugEfContextDiagnosticInterceptor>()));
         var descriptor = services.Last(service => service.ServiceType == typeof(IDbContextFactory<LogicDbContext>));
         services.Remove(descriptor);

@@ -1,0 +1,549 @@
+@using Microsoft.AspNetCore.Components.Routing
+@using Silksong_Rando_Logic_Manager.Components
+@implements IAsyncDisposable
+@inject SceneReviewProjectionService ReviewProjection
+@inject IJSRuntime JS
+
+@if (review is not null && preview is not null)
+{
+    var renderedModalReview = review;
+        <section @key="review" @ref="modalElement" class="scene-review-workbench" aria-labelledby="scene-review-title">
+            <fieldset class="scene-workbench-controls" disabled="@isApplying">
+            <header class="scene-review-header">
+                <div>
+                    <h2 id="scene-review-title">scene review: @review.SceneName</h2>
+                    @if (preview.MatchingRooms.Count == 0)
+                    {
+                        <p><i class="fa-solid fa-file-circle-plus" aria-hidden="true"></i> a new ungrouped room will be created on import.</p>
+                    }
+                    else if (preview.MatchingRooms.Count == 1)
+                    {
+                        <p><i class="fa-solid fa-circle-check" aria-hidden="true"></i> matched: @preview.MatchingRooms[0].FriendlyName</p>
+                    }
+                    else
+                    {
+                        <fieldset class="scene-room-choice">
+                            <legend>select matching room</legend>
+                            @foreach (var room in preview.MatchingRooms)
+                            {
+                                <label><input type="radio" name="scene-target-room" checked="@(targetRoomId == room.Id)" disabled="@DraftBlocked" @onchange="(() => SelectTargetRoom(room.Id))" /> @room.FriendlyName <span>@room.ReferenceId</span></label>
+                            }
+                        </fieldset>
+                    }
+                </div>
+                <div class="scene-review-summary">
+                    <span class="scene-conflicts">@ConflictSummary()</span>
+                    @if (review.Warnings.Count > 0)
+                    {
+                        <span class="scene-warning"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i> @review.Warnings.Count parse warning@(review.Warnings.Count == 1 ? string.Empty : "s")</span>
+                    }
+                </div>
+            </header>
+
+            <nav class="scene-workbench-tabs" aria-label="Scene workbench views">
+                <button type="button" class="@(!reconciling ? "active" : null)" aria-pressed="@(!reconciling)" @onclick="(() => SetReconcile(renderedModalReview, false))">Explore</button>
+                <button type="button" class="@(reconciling ? "active" : null)" aria-pressed="@reconciling" @onclick="(() => SetReconcile(renderedModalReview, true))">Reconcile</button>
+            </nav>
+            @if (reconciling && importError is not null) { <p class="scene-upload-error" role="alert">@importError</p> }
+            <SceneReviewExplore @key="review" @ref="explore" View="@ExploreView" Hidden="@reconciling" Error="@importError"
+                                AcceptReview="AcceptReview" AcceptDraft="AcceptDraft" ClassificationChanged="SetClassification" DispositionChanged="SetExploreDisposition" />
+
+            <div class="scene-reconcile-scroll" hidden="@(!reconciling)">
+                <section class="scene-reconcile-bounds">
+                    <strong>Bounds</strong>
+                    @if (review.SceneUnitSize is { } parsed)
+                    {
+                        <div>current min @Value(EffectiveTargetRoom?.SceneMinX ?? 0), @Value(EffectiveTargetRoom?.SceneMinY ?? 0); max <span class="@(BoundsChanged ? "scene-current-change" : null)">@Value(EffectiveTargetRoom?.SceneMaxX), @Value(EffectiveTargetRoom?.SceneMaxY)</span></div>
+                        <div class="@(BoundsChanged ? "scene-incoming-change" : null)">proposed min @Value(EffectiveTargetRoom?.SceneMinX ?? 0), @Value(EffectiveTargetRoom?.SceneMinY ?? 0); max @Value(ProposedMaxX), @Value(ProposedMaxY)</div>
+                        @if (EffectiveTargetRoom is { } existing && (existing.SceneMaxX is null) != (existing.SceneMaxY is null)) { <p>Existing incomplete bounds are kept unchanged.</p> }
+                        @if (ShowReplacementDimensions)
+                        {
+                            <div class="scene-dimension-draft"><span>replace current maxima</span><label>max X <input type="number" step="any" disabled="@DraftBlocked" @bind:get="replacementWidth" @bind:set="value => { if (AcceptDraft(renderedModalReview)) replacementWidth = value; }" /></label><label>max Y <input type="number" step="any" disabled="@DraftBlocked" @bind:get="replacementHeight" @bind:set="value => { if (AcceptDraft(renderedModalReview)) replacementHeight = value; }" /></label></div>
+                        }
+                         <label><input type="checkbox" checked="@applyBounds" disabled="@DraftBlocked" @onchange="(args => { if (AcceptDraft(renderedModalReview)) applyBounds = args.Value is true; })" /> Apply bounds</label>
+                    }
+                    else { <p>The incoming dimensions could not be verified. Bounds will not change.</p> }
+                </section>
+                @foreach (var category in new[] { SceneDumpClassification.Exit, SceneDumpClassification.Check, SceneDumpClassification.Enemy })
+                {
+                    var enemy = category == SceneDumpClassification.Enemy;
+                    <section class="scene-reconcile-section">
+                        <h3>@CategoryTitle(category)</h3>
+                        <h4>Incoming</h4>
+                        <table class="scene-reconcile-table scene-incoming-table @(enemy ? "scene-enemy-reconcile" : null)">
+                            <thead><tr><th>Object</th><th>Target / disposition</th><th>Friendly name</th><th>Game ID</th><th>Position</th>@if (enemy) { <th>Requirements</th><th>Notes</th><th class="scene-evidence-status" aria-label="Evidence"></th> }<th>Apply</th></tr></thead>
+                            <tbody>
+                            @foreach (var node in Incoming(category))
+                            {
+                                var draft = Draft(node);
+                                var current = CurrentRecord(node);
+                                var idChanged = current is not null && current.InGameId != SceneDumpIdentity.GameId(node);
+                                var positionChanged = current is not null && PositionChanged(node, current);
+                                var paired = idChanged || positionChanged || enemy;
+                                var evidence = enemy ? SceneWorkbenchReviewPolicy.CompareEnemyEvidence(node, draft.Requirements, draft.Notes) : null;
+                                <tr @key="node.Id" class="@(paired ? "scene-incoming-current" : null) @(DuplicateTarget(node) ? "scene-duplicate-target" : null)">
+                                    <td title="@node.HierarchyPath">@node.Name</td>
+                                    <td><div class="scene-target-choice"><select class="@(draft.ExistingRecordId is null ? "scene-target-unmatched" : null)" value="@TargetValue(draft)" disabled="@DraftBlocked" @onchange="(args => SetExistingRecord(node, args.Value?.ToString()))"><option value="unresolved" disabled>Unresolved</option><option value="">Create new</option>@foreach (var record in SelectableRecords(node)) { <option value="@record.Id" title="@record.InGameId">@record.FriendlyName (@MiddleId(record.InGameId, enemy))</option> }</select><i class="fa-solid fa-circle-info" role="img" title="@MatchExplanation(draft)" aria-label="@MatchExplanation(draft)"></i></div>@if (DuplicateTarget(node)) { <span class="scene-decision-error" role="alert">Choose a different target for each row</span> }</td>
+                                    <td>@if (draft.Unresolved) { <span>Choose a disposition</span> } else if (current is null) { <input value="@draft.FriendlyName" disabled="@DraftBlocked" @onchange="(args => { if (AcceptDraft(renderedModalReview)) SetFriendlyName(node, args.Value?.ToString()); })" aria-label="Friendly name for @node.Name" autocomplete="off" /> } else { @current.FriendlyName }</td>
+                                     <td><span class="scene-game-id @(idChanged ? "scene-current-change scene-current-value" : current is null && !draft.Unresolved ? "scene-incoming-change" : null)" title="@(current is null ? SceneDumpIdentity.GameId(node) : current.InGameId)">@MiddleId(current is null ? SceneDumpIdentity.GameId(node) : current.InGameId, enemy)</span>@if (enemy && idChanged && current!.InGameId?.Length > 48 && SceneDumpIdentity.GameId(node)?.Length > 48 && MiddleId(current.InGameId, true) == MiddleId(SceneDumpIdentity.GameId(node), true)) { <strong class="scene-hidden-change" title="Raw game IDs differ"> changed</strong> }</td>
+                                     <td><span class="@(positionChanged ? "scene-current-change scene-current-value" : current is null && !draft.Unresolved ? "scene-incoming-change" : null)">@(current is null ? Position(node.WorldPosition) : Position(current))</span></td>
+                                    @if (enemy)
+                                    {
+                                        <td><textarea rows="2" value="@draft.Requirements" disabled="@DraftBlocked" @onchange="(args => { if (AcceptDraft(renderedModalReview)) SetDocumentation(node, true, args.Value?.ToString()); })" aria-label="Requirements for @node.Name"></textarea></td>
+                                        <td><textarea rows="2" value="@draft.Notes" disabled="@DraftBlocked" @onchange="(args => { if (AcceptDraft(renderedModalReview)) SetDocumentation(node, false, args.Value?.ToString()); })" aria-label="Notes for @node.Name"></textarea></td>
+                                        <td class="scene-evidence-status"><i class="fa-solid @(evidence!.Incomplete ? "fa-triangle-exclamation scene-evidence-warning" : "fa-circle-info")" role="img" title="@evidence.StatusExplanation" aria-label="@evidence.StatusExplanation"></i></td>
+                                    }
+                                    <td class="scene-apply-cell"><input type="checkbox" checked="@draft.Apply" disabled="@(DraftBlocked || draft.Unresolved)" @onchange="(args => SetApply(node, args.Value is true))" aria-label="Apply @node.Name" /></td>
+                                </tr>
+                                @if (paired)
+                                {
+                                     <tr class="scene-incoming-delta">
+                                         <td></td><td></td><td></td>
+                                         <td>@if (idChanged) { <span class="scene-game-id scene-incoming-change" title="@SceneDumpIdentity.GameId(node)">@MiddleId(SceneDumpIdentity.GameId(node), enemy)</span> }</td>
+                                         <td>@if (positionChanged) { <span class="scene-incoming-change">@Position(node.WorldPosition)</span> }</td>
+                                         @if (enemy)
+                                         {
+                                             <td class="scene-incoming-evidence">
+                                                 @if (evidence!.Requirement.Text.Length > 0)
+                                                 {
+                                                     <span class="@EvidenceClass(evidence.Requirement)" title="@evidence.Requirement.Explanation" aria-label="@evidence.Requirement.Explanation">@evidence.Requirement.Text</span>
+                                                 }
+                                             </td>
+                           <td class="scene-incoming-evidence">
+                              @if (evidence.Notes.Count > 0)
+                              {
+                               <div>
+                               @if (evidence.HasFiniteFacts) { <span>Spawn conditions: </span> }
+                                                 @for (var index = 0; index < evidence.Notes.Count; index++)
+                                                 {
+                                                     var piece = evidence.Notes[index];
+                                                     @if (index > 0) { <span>, </span> }
+                                   <span class="@EvidenceClass(piece)" title="@piece.Explanation" aria-label="@piece.Explanation">@piece.Text</span>
+                               }
+                               </div>
+                              }
+                              @if (evidence.FsmSection.Text.Length > 0)
+                              {
+                                  <div><span class="@EvidenceClass(evidence.FsmSection)" title="@evidence.FsmSection.Explanation" aria-label="@evidence.FsmSection.Explanation">@evidence.FsmSection.Text</span></div>
+                              }
+                                             </td>
+                                             <td class="scene-evidence-status"></td>
+                                         }
+                                         <td></td>
+                                     </tr>
+                                }
+                            }
+                            </tbody>
+                        </table>
+                        <h4>Existing active items</h4>
+                        <table class="scene-reconcile-table scene-existing-table">
+                            <thead><tr>@if (category != SceneDumpClassification.Exit) { <th>Type</th> }<th>Friendly name</th><th>Game ID</th><th>Position</th>@if (category == SceneDumpClassification.Check) { <th>Annotation position</th> }<th>Archive</th></tr></thead>
+                            <tbody>@foreach (var record in Existing(category))
+                            {
+                                <tr class="@(Assigned(record.Id) ? "scene-assigned-record" : null)">@if (category != SceneDumpClassification.Exit) { <td>@TypeName(record.LocationType)</td> }<td>@record.FriendlyName</td><td><span class="scene-game-id" title="@record.InGameId">@MiddleId(record.InGameId, enemy)</span></td><td>@Position(record)</td>@if (category == SceneDumpClassification.Check) { <td>@AnnotationPosition(record)</td> }<td class="scene-archive-cell"><input type="checkbox" checked="@archives.Contains(record.Id)" disabled="@(DraftBlocked || Assigned(record.Id))" @onchange="(args => SetArchive(record.Id, args.Value is true))" aria-label="Archive @record.FriendlyName" /></td></tr>
+                            }</tbody>
+                        </table>
+                    </section>
+                }
+            </div>
+            <div class="scene-review-actions scene-workbench-footer">
+                @if (isApplying) { <span role="status">applying...</span> }
+                 @if (reconciling)
+                 {
+                     <button class="scene-import-button" type="button" disabled="@(!CanImport)" @onclick="(() => ImportAsync(renderedModalReview))"><i class="fa-solid fa-check" aria-hidden="true"></i> Apply</button>
+                 }
+                 else
+                 {
+                     <button class="scene-import-button" type="button" @onclick="(() => SetReconcile(renderedModalReview, true))">Review changes</button>
+                 }
+                <button class="scene-cancel-button" type="button" @onclick="(() => Cancel(renderedModalReview))">cancel</button>
+            </div>
+            </fieldset>
+
+        </section>
+}
+
+@code {
+    [Parameter, EditorRequired] public SceneDumpReview Review { get; set; } = default!;
+    [Parameter, EditorRequired] public SceneImportPreview Preview { get; set; } = default!;
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public bool ApplyUnavailable { get; set; }
+    [Parameter] public string? Error { get; set; }
+    [Parameter] public IReadOnlyList<SceneForeignMatch> ForeignMatches { get; set; } = [];
+    [Parameter] public Func<bool>? CanInteract { get; set; }
+    [Parameter] public Func<bool>? CanEditDraft { get; set; }
+    [Parameter] public EventCallback<SceneWorkbenchCommand> Apply { get; set; }
+    [Parameter] public EventCallback Cancelled { get; set; }
+    [Parameter] public EventCallback<Exception> Failed { get; set; }
+    [CascadingParameter(Name = "ApplicationCodeFailure")] public Action? ApplicationCodeFailure { get; set; }
+    private SceneDumpReview? review;
+    private SceneImportPreview? preview;
+    private SceneImportPreview? preparedPreview;
+    private SceneReviewExplore? explore;
+    private int classificationRevision;
+    private bool reconciling, applyBounds = true;
+    private bool isApplying => Busy || CanInteract?.Invoke() == false;
+    private bool DraftBlocked => isApplying || CanEditDraft?.Invoke() == false;
+    private readonly HashSet<Guid> archives = [];
+    private readonly HashSet<Guid> originalCandidates = [];
+    private readonly Dictionary<Guid, SceneDumpClassification> originalClassifications = [];
+    private readonly Dictionary<Guid, SceneDumpClassification> preparedClassifications = [];
+    private ElementReference modalElement;
+    private IJSObjectReference? previewModule;
+    private IJSObjectReference? resizeOwner;
+    private bool mountingResizeOwner, disposed;
+    private bool browserFailed;
+    private string? importError;
+    private Guid? targetRoomId;
+    private double? replacementWidth;
+    private double? replacementHeight;
+    private readonly Dictionary<Guid, SceneReviewImportDraft> drafts = [];
+    private IReadOnlyList<SceneReviewPoint> allPreviewPoints = [];
+    private IReadOnlyDictionary<Guid, SceneReviewPoint> previewPointsById = new Dictionary<Guid, SceneReviewPoint>();
+
+    private bool CanImport => !ApplyUnavailable && !DraftBlocked && preview is not null && (preview.MatchingRooms.Count != 0 || !string.IsNullOrWhiteSpace(review?.SceneName)) && (preview.MatchingRooms.Count < 2 || targetRoomId is not null) && !ActiveDrafts.Any(draft => draft.ExistingRecordId is { } id && ActiveDrafts.Count(other => other.ExistingRecordId == id) > 1);
+    private IEnumerable<SceneReviewImportDraft> ActiveDrafts => review is null ? [] : Flatten(review.RootObjects).Where(node => SceneDumpIdentity.IsImportable(node.Classification)).Select(Draft);
+    private SceneReviewExploreView ExploreView => new(review!, classificationRevision, originalCandidates, originalClassifications,
+        preview!.ObjectMatches, new Dictionary<SceneDumpClassification, IReadOnlyList<SceneImportSelectableRecord>>
+        {
+            [SceneDumpClassification.Exit] = Existing(SceneDumpClassification.Exit),
+            [SceneDumpClassification.Check] = Existing(SceneDumpClassification.Check),
+            [SceneDumpClassification.Enemy] = Existing(SceneDumpClassification.Enemy)
+        }, drafts, previewPointsById, PreviewFrame, EffectiveTargetRoom?.ImageUrl);
+    private SceneImportRoom? EffectiveTargetRoom => targetRoomId is { } id ? preview?.MatchingRooms.SingleOrDefault(room => room.Id == id) : preview?.MatchingRooms.Count == 1 ? preview.MatchingRooms[0] : null;
+    private SceneUnitSize? CurrentDimensions => EffectiveTargetRoom is { SceneMaxX: { } width, SceneMaxY: { } height } ? new SceneUnitSize(width, height) : null;
+    private bool ShowReplacementDimensions => review?.SceneUnitSize is { } parsed && CurrentDimensions is { } current && (current.Width != parsed.Width || current.Height != parsed.Height);
+    private SceneUnitSize? ReplacementDimensions => ShowReplacementDimensions && replacementWidth is { } width && replacementHeight is { } height ? new SceneUnitSize(width, height) : null;
+    private SceneReviewBounds? PreviewFrame
+    {
+        get
+        {
+            if (EffectiveTargetRoom is { } room)
+                return SceneBounds.TryGetSize(room.SceneMinX, room.SceneMinY, room.SceneMaxX, room.SceneMaxY, out var width, out var height)
+                    ? new(room.SceneMinX, -room.SceneMaxY!.Value, width, height) : null;
+            return preview?.MatchingRooms.Count == 0 && review?.SceneUnitSize is { } size
+                ? new(0, -size.Height, size.Width, size.Height) : null;
+        }
+    }
+    private double? ProposedMaxX => EffectiveTargetRoom is null || EffectiveTargetRoom is { SceneMaxX: null, SceneMaxY: null }
+        ? review?.SceneUnitSize?.Width : ShowReplacementDimensions ? replacementWidth : EffectiveTargetRoom.SceneMaxX;
+    private double? ProposedMaxY => EffectiveTargetRoom is null || EffectiveTargetRoom is { SceneMaxX: null, SceneMaxY: null }
+        ? review?.SceneUnitSize?.Height : ShowReplacementDimensions ? replacementHeight : EffectiveTargetRoom.SceneMaxY;
+    private bool BoundsChanged => EffectiveTargetRoom?.SceneMaxX != ProposedMaxX || EffectiveTargetRoom?.SceneMaxY != ProposedMaxY;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (disposed || browserFailed) return;
+        try
+        {
+        if (firstRender)
+        {
+            var importedModule = await ApplicationModules.ImportAsync(JS, "scene-preview.js", ApplicationCodeFailure);
+            if (disposed) { await importedModule.DisposeAsync(); return; }
+            previewModule = importedModule;
+        }
+        // Another render can finish while the first render is still importing.
+        // That first continuation mounts the current review once the module is ready.
+        if (previewModule is not { } module) return;
+        if (review is not null && resizeOwner is null && !mountingResizeOwner && !disposed &&
+            explore is { } currentExplore && currentExplore.TryGetPreviewElement(review, out var previewElement))
+        {
+            var mountedReview = review;
+            mountingResizeOwner = true;
+            try
+            {
+                var owner = await module.InvokeAsync<IJSObjectReference>("create", previewElement, modalElement);
+                if (disposed || review != mountedReview || explore != currentExplore) await DisposeResizeOwnerAsync(owner);
+                else resizeOwner = owner;
+            }
+            finally
+            {
+                mountingResizeOwner = false;
+                if (!disposed && review is not null && review != mountedReview && resizeOwner is null) await InvokeAsync(StateHasChanged);
+            }
+        }
+        if (!disposed && review is not null && resizeOwner is { } currentOwner)
+            await currentOwner.InvokeVoidAsync("reconcile");
+        }
+        catch (Exception exception)
+        {
+            browserFailed = true;
+            if (!disposed) await Failed.InvokeAsync(exception);
+        }
+    }
+
+    protected override void OnParametersSet()
+    {
+            if (disposed) return;
+            importError = Error;
+            if (review == Review && preparedPreview == Preview) return;
+            if (review == Review)
+            {
+                preparedPreview = Preview;
+                preview = Preview;
+                targetRoomId = preview.MatchingRooms.Count == 1 ? preview.MatchingRooms[0].Id : null;
+                InitializeDrafts(review!);
+                ResetReplacementDimensions();
+                return;
+            }
+            preparedPreview = Preview;
+            var parsed = Review;
+            var parsedPreview = Preview;
+            review = parsed;
+            classificationRevision = 0;
+            reconciling = false;
+            applyBounds = true;
+            originalCandidates.Clear();
+            originalClassifications.Clear();
+            foreach (var node in Flatten(parsed.RootObjects))
+            {
+                originalClassifications[node.Id] = node.Classification;
+                if (IsPromoted(node)) originalCandidates.Add(node.Id);
+            }
+            preview = parsedPreview;
+            targetRoomId = parsedPreview.MatchingRooms.Count == 1 ? parsedPreview.MatchingRooms[0].Id : null;
+            InitializeDrafts(parsed);
+            ResetReplacementDimensions();
+            allPreviewPoints = ReviewProjection.CreatePoints(parsed.RootObjects);
+            previewPointsById = allPreviewPoints.ToDictionary(point => point.Id);
+    }
+
+    private SceneDumpObject? FindNode(Guid id) => review is null ? null : FindNode(review.RootObjects, id);
+    private static SceneDumpObject? FindNode(IEnumerable<SceneDumpObject> nodes, Guid id) => nodes.SelectMany(node => new[] { node }.Concat(Flatten(node.Children))).FirstOrDefault(node => node.Id == id);
+    private static IEnumerable<SceneDumpObject> Flatten(IEnumerable<SceneDumpObject> nodes) => nodes.SelectMany(node => new[] { node }.Concat(Flatten(node.Children)));
+
+    private static bool IsPromoted(SceneDumpObject node) =>
+        node.Classification != SceneDumpClassification.Other || node.CandidateReasons.Count > 0;
+    private void SetClassification(SceneReviewClassificationChange change)
+    {
+        var node = change.Node;
+        if (!AcceptDraft(change.Review) || FindNode(node.Id) != node) return;
+        if (Enum.IsDefined(change.Classification))
+        {
+            node.Classification = change.Classification;
+            SceneFillerVisibility.Apply(review!);
+            classificationRevision++;
+            preview = preview! with { ObjectMatches = preview!.ObjectMatches.Select(match => match.ObjectId == node.Id
+                ? MatchObject(node) : match).ToArray() };
+            ReconcileDrafts();
+            AllocateNames();
+            importError = null;
+            allPreviewPoints = ReviewProjection.CreatePoints(review!.RootObjects);
+            previewPointsById = allPreviewPoints.ToDictionary(point => point.Id);
+        }
+    }
+    private void SelectTargetRoom(Guid roomId)
+    {
+        if (DraftBlocked || disposed || preview?.MatchingRooms.Any(room => room.Id == roomId) != true) return;
+        targetRoomId = roomId;
+        archives.Clear();
+        preparedClassifications.Clear();
+        ReconcileDrafts(roomChanged: true);
+        AllocateNames();
+        ResetReplacementDimensions();
+    }
+    private void ResetReplacementDimensions()
+    {
+        replacementWidth = review?.SceneUnitSize?.Width;
+        replacementHeight = review?.SceneUnitSize?.Height;
+    }
+
+    private Guid? EffectiveTargetRoomId => targetRoomId ?? (preview?.MatchingRooms.Count == 1 ? preview.MatchingRooms[0].Id : null);
+    private string ConflictSummary()
+    {
+        var target = EffectiveTargetRoomId;
+        var matches = preview!.ObjectMatches;
+        var selected = matches.Sum(x => x.Matches.Count(match => match.RoomId == target));
+        var elsewhere = matches.Sum(x => x.Matches.Count(match => match.RoomId != target));
+        return $"matches: {selected} selected room, {elsewhere} other room";
+    }
+
+    private static string ClassificationText(SceneDumpClassification classification) => classification switch { SceneDumpClassification.Exit => "exit", SceneDumpClassification.Check => "check", SceneDumpClassification.Enemy => "enemy", _ => "other" };
+    private static string Position(ScenePosition? position) => position is null ? "-" : CompactPosition(position.X, position.Y, position.Z);
+    private static string Position(SceneImportSelectableRecord record) => CompactPosition(record.X, record.Y, record.Z);
+    private static string AnnotationPosition(SceneImportSelectableRecord record) => $"{Value(record.EnemyEquivalence?.AnnotationX)}, {Value(record.EnemyEquivalence?.AnnotationY)}";
+    private static string CompactPosition(double? x, double? y, double? z) => $"{Value(x)}, {Value(y)}" + (z is { } raw && raw != 0 ? $", { (Math.Abs(raw) < .005 ? raw.ToString("G", System.Globalization.CultureInfo.InvariantCulture) : Value(raw))}" : string.Empty);
+    private static string Value(double? value) => value?.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) ?? "-";
+    private static string N(double value) => value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    private static string Dimensions(SceneUnitSize? dimensions) => dimensions is { } value ? $"{Value(value.Width)} x {Value(value.Height)}" : "unavailable";
+    private void InitializeDrafts(SceneDumpReview parsed)
+    {
+        drafts.Clear();
+        archives.Clear();
+        preparedClassifications.Clear();
+        ReconcileDrafts();
+        AllocateNames();
+    }
+
+    private void ReconcileDrafts(bool roomChanged = false)
+    {
+        var nodes = Flatten(review!.RootObjects).ToArray();
+        var deliberate = roomChanged ? new Dictionary<Guid, SceneReviewImportDraft>() : nodes.Where(node =>
+            preparedClassifications.GetValueOrDefault(node.Id) == node.Classification &&
+            drafts.TryGetValue(node.Id, out var retained) && retained.HasDeliberateRecordSelection &&
+            (retained.Mode == SceneImportMode.Create && retained.ExistingRecordId is null ||
+             retained.Mode == SceneImportMode.Update && SelectableRecords(node).Any(record => record.Id == retained.ExistingRecordId)))
+            .ToDictionary(node => node.Id, node => drafts[node.Id]);
+        var automatic = ReviewProjection.WorkbenchDrafts(nodes, preview!, EffectiveTargetRoomId, deliberate);
+        foreach (var node in nodes.Where(node => SceneDumpIdentity.IsImportable(node.Classification)))
+        {
+            drafts.TryGetValue(node.Id, out var retained);
+            var compatible = preparedClassifications.GetValueOrDefault(node.Id) == node.Classification;
+            // Only deliberate compatible choices bypass fresh automatic matching.
+            // Other retains a draft, not an automatic claim exempt from peer ambiguity on return.
+            if (deliberate.ContainsKey(node.Id)) continue;
+            var next = automatic[node.Id] with { AuthoredName = retained?.AuthoredName, Apply = retained?.Apply ?? true };
+            if (!roomChanged && compatible && retained is not null && next.Mode == retained.Mode && next.ExistingRecordId == retained.ExistingRecordId && next.Unresolved == retained.Unresolved)
+                next = next with { Requirements = retained.Requirements, Notes = retained.Notes };
+            drafts[node.Id] = next;
+            preparedClassifications[node.Id] = node.Classification;
+        }
+        if (roomChanged)
+            foreach (var node in nodes.Where(node => node.Classification == SceneDumpClassification.Other))
+                if (drafts.TryGetValue(node.Id, out var retained)) drafts[node.Id] = retained with
+                { Mode = SceneImportMode.Create, ExistingRecordId = null, HasDeliberateRecordSelection = false, Requirements = string.Empty, Notes = string.Empty };
+    }
+    private void AllocateNames() => ReviewProjection.AllocateNames(Flatten(review!.RootObjects).Where(node => SceneDumpIdentity.IsImportable(node.Classification)), preview!, EffectiveTargetRoomId, drafts);
+
+    private SceneReviewImportDraft Draft(SceneDumpObject node) => drafts[node.Id];
+    private IReadOnlyList<SceneImportSelectableRecord> SelectableRecords(SceneDumpObject node) => ReviewProjection.WorkbenchRecords(preview!, node.Classification, EffectiveTargetRoomId);
+    private bool AcceptReview(SceneDumpReview? renderedReview) => !disposed && !isApplying && review is not null && review == renderedReview;
+    private bool AcceptDraft(SceneDumpReview? renderedReview) => AcceptReview(renderedReview) && !DraftBlocked;
+    private void SetReconcile(SceneDumpReview renderedReview, bool value) { if (AcceptReview(renderedReview)) reconciling = value; }
+    private void SetExistingRecord(SceneDumpObject node, string? value)
+    {
+        if (DraftBlocked || disposed || FindNode(node.Id) != node) return;
+        var draft = Draft(node);
+        drafts[node.Id] = Guid.TryParse(value, out var id) && SelectableRecords(node).Any(record => record.Id == id)
+            ? draft with { Mode = SceneImportMode.Update, ExistingRecordId = id, FriendlyName = SelectableRecords(node).Single(record => record.Id == id).FriendlyName, HasDeliberateRecordSelection = true }
+            : draft with { Mode = SceneImportMode.Create, ExistingRecordId = null, HasDeliberateRecordSelection = true };
+        var target = CurrentRecord(node);
+        drafts[node.Id] = drafts[node.Id] with { Unresolved = false, MatchReason = "Deliberate choice",
+            Requirements = target?.Requirements ?? SceneEnemySpawnNotesResolver.EnemyRequirements(node),
+            Notes = target?.Notes ?? SceneEnemySpawnNotesResolver.EnemyNotes(node) };
+        ReconcileDrafts();
+        AllocateNames();
+    }
+    private void SetExploreDisposition(SceneReviewDispositionChange change)
+    {
+        if (AcceptDraft(change.Review)) SetExistingRecord(change.Node, change.RecordId?.ToString());
+    }
+    private void SetFriendlyName(SceneDumpObject node, string? value)
+    {
+        if (DraftBlocked || disposed || FindNode(node.Id) != node || Draft(node) is not { Mode: SceneImportMode.Create, Unresolved: false } draft || draft.FriendlyName == (value ?? string.Empty)) return;
+        drafts[node.Id] = Draft(node) with { FriendlyName = value ?? string.Empty, AuthoredName = value ?? string.Empty };
+        AllocateNames();
+    }
+
+    private async Task ImportAsync(SceneDumpReview renderedReview)
+    {
+        if (!AcceptReview(renderedReview) || !reconciling || !CanImport) return;
+        importError = null;
+        try
+        {
+            if (applyBounds && ShowReplacementDimensions && ReplacementDimensions is null)
+                throw new SceneWorkbenchValidationException("Enter both replacement maxima, or uncheck Apply bounds.");
+            var rows = ActiveDrafts.Select(draft => new SceneWorkbenchRow(new(draft.ObjectId, draft.Mode, draft.ExistingRecordId, draft.FriendlyName), draft.Apply, draft.Unresolved, draft.Requirements, draft.Notes)).ToArray();
+            var archiveCommands = new[] { SceneDumpClassification.Exit, SceneDumpClassification.Check, SceneDumpClassification.Enemy }
+                .SelectMany(category => Existing(category).Where(record => archives.Contains(record.Id)).Select(record => new SceneWorkbenchArchive(record.Id, category))).ToArray();
+            await Apply.InvokeAsync(new(targetRoomId, rows, archiveCommands, applyBounds, applyBounds ? ReplacementDimensions : null));
+        }
+        catch (SceneWorkbenchValidationException exception)
+        {
+            if (!disposed) importError = exception.Message;
+        }
+        catch (Exception exception)
+        {
+            await Failed.InvokeAsync(exception);
+        }
+    }
+
+    private async Task Cancel(SceneDumpReview renderedReview)
+    {
+        if (!AcceptReview(renderedReview)) return;
+        await Cancelled.InvokeAsync();
+    }
+    private async Task CloseReviewAsync()
+    {
+        var owner = resizeOwner;
+        resizeOwner = null;
+        explore?.Dispose();
+        explore = null;
+        review = null;
+        preview = null;
+        classificationRevision = 0;
+        reconciling = false;
+        archives.Clear();
+        originalCandidates.Clear();
+        originalClassifications.Clear();
+        preparedClassifications.Clear();
+        importError = null;
+        targetRoomId = null;
+        replacementWidth = null;
+        replacementHeight = null;
+        drafts.Clear();
+        allPreviewPoints = [];
+        previewPointsById = new Dictionary<Guid, SceneReviewPoint>();
+        if (owner is not null) await DisposeResizeOwnerAsync(owner);
+    }
+    private async Task DisposeResizeOwnerAsync(IJSObjectReference owner)
+    {
+        Exception? cleanupError = null;
+        try { await owner.InvokeVoidAsync("dispose"); }
+        catch (JSDisconnectedException) { }
+        catch (Exception exception) { cleanupError = exception; }
+
+        // Reference release is independent of the optional browser-owner invocation.
+        try { await owner.DisposeAsync(); }
+        catch (JSDisconnectedException) { }
+        catch (Exception exception)
+        {
+            cleanupError = cleanupError is null ? exception : new AggregateException(cleanupError, exception);
+        }
+
+        if (cleanupError is null) return;
+        // Neither cleanup nor diagnostic delivery may turn a committed import into
+        // a failure or interrupt close/stale-mount/component disposal.
+        try { await Failed.InvokeAsync(cleanupError); }
+        catch (Exception) { /* Cleanup cannot reverse a committed import. */ }
+    }
+    private IEnumerable<SceneDumpObject> Incoming(SceneDumpClassification category) => Flatten(review!.RootObjects).Where(node => node.Classification == category);
+    private IReadOnlyList<SceneImportSelectableRecord> Existing(SceneDumpClassification category) => ReviewProjection.WorkbenchRecords(preview!, category, EffectiveTargetRoomId);
+    private SceneImportSelectableRecord? CurrentRecord(SceneDumpObject node) => SelectableRecords(node).SingleOrDefault(record => record.Id == Draft(node).ExistingRecordId);
+    private bool Assigned(Guid id) => ActiveDrafts.Any(draft => draft.ExistingRecordId == id);
+    private bool DuplicateTarget(SceneDumpObject node) => Draft(node).ExistingRecordId is { } id && ActiveDrafts.Count(draft => draft.ExistingRecordId == id) > 1;
+    private static bool PositionChanged(SceneDumpObject node, SceneImportSelectableRecord current) => current.X != node.WorldPosition?.X || current.Y != node.WorldPosition?.Y || current.Z != node.WorldPosition?.Z;
+    private static string TargetValue(SceneReviewImportDraft draft) => draft.Unresolved ? "unresolved" : draft.ExistingRecordId?.ToString() ?? string.Empty;
+    private static string CategoryTitle(SceneDumpClassification category) => category switch { SceneDumpClassification.Exit => "Transitions", SceneDumpClassification.Check => "Check locations", _ => "Enemies" };
+    private static string TypeName(string? type) => CheckLocationTypeCatalogue.Definitions.SingleOrDefault(item => item.OutputValue == type)?.Name ?? (type is null ? "Unknown" : $"Unrecognized: {type}");
+    private static string MiddleId(string? value, bool enemy) => value is null ? "-" : !enemy || value.Length <= 48 ? value : value[..23] + "…" + value[^23..];
+    private static string MatchExplanation(SceneReviewImportDraft draft) => draft.MatchReason.Length > 0 ? draft.MatchReason : "No single eligible match was found, so Create new is selected.";
+    private static string EvidenceClass(SceneWorkbenchEvidencePiece piece) => piece.AlreadyRecorded ? "scene-evidence-recorded" : "scene-incoming-change";
+    private void SetDocumentation(SceneDumpObject node, bool requirements, string? value)
+    {
+        if (DraftBlocked || disposed || FindNode(node.Id) != node || node.Classification != SceneDumpClassification.Enemy) return;
+        drafts[node.Id] = requirements ? Draft(node) with { Requirements = value ?? string.Empty } : Draft(node) with { Notes = value ?? string.Empty };
+    }
+    private void SetApply(SceneDumpObject node, bool value) { if (!DraftBlocked && !disposed && FindNode(node.Id) == node && !Draft(node).Unresolved) drafts[node.Id] = Draft(node) with { Apply = value }; }
+    private SceneImportObjectMatch MatchObject(SceneDumpObject node)
+    {
+        var match = SceneImportMatching.MatchObject(node, preview!.Transitions, preview.Checks);
+        return match with { Matches = match.Matches.Concat(ForeignMatches.Where(f => !string.IsNullOrWhiteSpace(match.GameId) &&
+            string.Equals(f.IdentityKey.Trim(), match.GameId.Trim(), StringComparison.OrdinalIgnoreCase))
+            .Select(f => new SceneImportRecordMatch(f.RecordId, f.RoomId, f.Family))).Distinct().ToArray() };
+    }
+    private void SetArchive(Guid id, bool value) { if (DraftBlocked || disposed || Assigned(id)) return; if (value) archives.Add(id); else archives.Remove(id); }
+    public async ValueTask DisposeAsync()
+    {
+        disposed = true;
+        await CloseReviewAsync();
+        var module = previewModule;
+        previewModule = null;
+        if (module is not null)
+        {
+            try { await module.DisposeAsync(); }
+            catch (JSDisconnectedException) { }
+            catch (Exception exception) { try { await Failed.InvokeAsync(exception); } catch (Exception) { } }
+        }
+    }
+}

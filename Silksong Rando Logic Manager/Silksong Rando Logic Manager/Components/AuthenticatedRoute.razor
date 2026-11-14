@@ -1,0 +1,36 @@
+@using Microsoft.AspNetCore.Components.Authorization
+@using Silksong_Rando_Logic_Manager.Authentication
+@inject LiveAccess Access
+@inject AuthenticationStateProvider Authentication
+@if (allowed)
+{
+        <RouteView RouteData="RouteData" DefaultLayout="typeof(Layout.ImportToolLayout)" />
+}
+else if (denial is not null)
+{
+    <p role="alert">@denial</p>
+    <a href="/account/login" data-enhance-nav="false">Sign in</a>
+}
+
+@code {
+    [Parameter, EditorRequired] public RouteData RouteData { get; set; } = default!;
+    private bool allowed;
+    private string? denial;
+    private ExecutionIdentity? identity;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        allowed = false;
+        Access.Capture((await Authentication.GetAuthenticationStateAsync()).User);
+        try
+        {
+            identity = await Access.RequireAsync(RouteData.PageType == typeof(Pages.DocumentationPublishing)
+                ? AccessPolicies.PublishDocumentation : AccessPolicies.Normal);
+            allowed = true;
+        }
+        catch (AccessDeniedException error)
+        {
+            denial = error.Message;
+        }
+    }
+}

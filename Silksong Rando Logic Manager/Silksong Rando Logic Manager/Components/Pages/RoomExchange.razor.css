@@ -1,0 +1,6 @@
+.exchange-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+.exchange-actions a, .exchange-actions button { display: inline-flex; align-items: center; gap: .3rem; }
+.exchange-export-body h2, .exchange-feedback h2 { text-transform: lowercase; }
+.exchange-export-body p, .exchange-feedback p { margin: 0 0 .6rem; line-height: 1.5; }
+.exchange-fields { border: 0; margin: 0; padding: 0; min-width: 0; }
+.exchange-icon-slot { display: inline-flex; width: 1em; height: 1em; align-items: center; justify-content: center; flex: 0 0 1em; }

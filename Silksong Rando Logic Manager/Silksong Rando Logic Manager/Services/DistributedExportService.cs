@@ -6,22 +6,38 @@ using Silksong_Rando_Logic_Manager.Data;
 
 namespace Silksong_Rando_Logic_Manager.Services;
 
-public sealed class DistributedExportService(IDbContextFactory<LogicDbContext> dbContextFactory, TimeProvider timeProvider)
+public sealed class DistributedExportService(IDbContextFactory<LogicDbContext> dbContextFactory, TimeProvider timeProvider,
+    SharedPublicationCoordinator publications, Authentication.LiveAccess access)
 {
     private static readonly JsonSerializerOptions JsonOptions = CreateJsonOptions();
 
     public async Task<CompleteExportOutcome> ExportCompleteAsync(bool includeAreaMap, CancellationToken cancellationToken = default)
+    {
+        using var publication = await publications.AcquireAsync(cancellationToken);
+        await access.RequireAsync(token: cancellationToken);
+        return await ExportCompleteAsync(dbContextFactory, timeProvider, includeAreaMap, publication, cancellationToken);
+    }
+
+    internal static Task<CompleteExportOutcome> ExportPreparedAsync(Publishing.PublishingSnapshotFactory contexts,
+        TimeProvider timeProvider, bool includeAreaMap, CancellationToken cancellationToken = default) =>
+        ExportCompleteAsync(contexts, timeProvider, includeAreaMap, null, cancellationToken);
+
+    private static async Task<CompleteExportOutcome> ExportCompleteAsync(IDbContextFactory<LogicDbContext> dbContextFactory,
+        TimeProvider timeProvider, bool includeAreaMap, SharedPublicationCoordinator.Admission? publication, CancellationToken cancellationToken)
     {
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         var rooms = await LoadRoomsAsync(db, null, cancellationToken);
         var groups = await db.RoomGroups.AsNoTracking().OrderBy(x => x.SortOrder).ThenBy(x => x.Id).Select(x => new DistributedRoomGroup(x.Id, x.FriendlyName, x.ZoneReferenceText, x.IsVirtual, x.SortOrder, x.CreatedUtc, x.UpdatedUtc)).ToListAsync(cancellationToken);
         if (InvalidLocationType(rooms) is { } invalid) return new CompleteExportInvalidLocationType(invalid);
         var envelope = new Version6RoomExportEnvelope(6, false, rooms, new DistributedRoomGroupingSnapshot(groups), includeAreaMap ? await LoadAreaMapAsync(db, cancellationToken) : null);
-        return new CompleteExported(Serialize(envelope, $"silksong-logic-{Timestamp()}.json"));
+        publication?.Dispose();
+        return new CompleteExported(Serialize(envelope, $"silksong-logic-{Timestamp(timeProvider)}.json"));
     }
 
     public async Task<CurrentRoomExportOutcome> ExportCurrentRoomAsync(Guid roomId, CancellationToken cancellationToken = default)
     {
+        using var publication = await publications.AcquireAsync(cancellationToken);
+        await access.RequireAsync(token: cancellationToken);
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         var rooms = await LoadRoomsAsync(db, roomId, cancellationToken);
         var room = rooms.SingleOrDefault();
@@ -29,12 +45,15 @@ public sealed class DistributedExportService(IDbContextFactory<LogicDbContext> d
         if (InvalidLocationType(rooms) is { } invalid) return new CurrentRoomExportInvalidLocationType(invalid);
         var groups = room.RoomGroupId is Guid groupId ? await db.RoomGroups.AsNoTracking().Where(x => x.Id == groupId).Select(x => new DistributedRoomGroup(x.Id, x.FriendlyName, x.ZoneReferenceText, x.IsVirtual, x.SortOrder, x.CreatedUtc, x.UpdatedUtc)).ToListAsync(cancellationToken) : [];
         var envelope = new Version6RoomExportEnvelope(6, true, rooms, new DistributedRoomGroupingSnapshot(groups), null);
+        publication.Dispose();
         var prefix = string.IsNullOrWhiteSpace(room.ReferenceId) ? "empty-room" : room.ReferenceId;
-        return new CurrentRoomExported(Serialize(envelope, $"{prefix}-{Timestamp()}.json"));
+        return new CurrentRoomExported(Serialize(envelope, $"{prefix}-{Timestamp(timeProvider)}.json"));
     }
 
     public async Task<ZoneExportOutcome> ExportZoneAsync(Guid roomId, CancellationToken cancellationToken = default)
     {
+        using var publication = await publications.AcquireAsync(cancellationToken);
+        await access.RequireAsync(token: cancellationToken);
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         var groupId = await db.Rooms.AsNoTracking().Where(x => x.Id == roomId).Select(x => x.RoomGroupId).SingleOrDefaultAsync(cancellationToken);
         if (groupId is not Guid id) return new ZoneExportUnavailable(roomId);
@@ -47,7 +66,8 @@ public sealed class DistributedExportService(IDbContextFactory<LogicDbContext> d
         var rooms = await LoadRoomsAsync(db, null, id, cancellationToken);
         if (InvalidLocationType(rooms) is { } invalid) return new ZoneExportInvalidLocationType(invalid);
         var envelope = new Version6RoomExportEnvelope(6, true, rooms, new DistributedRoomGroupingSnapshot([group]), null);
-        return new ZoneExported(Serialize(envelope, $"zone-{id:D}-{Timestamp()}.json"));
+        publication.Dispose();
+        return new ZoneExported(Serialize(envelope, $"zone-{id:D}-{Timestamp(timeProvider)}.json"));
     }
 
     private static Task<List<DistributedRoomDocument>> LoadRoomsAsync(LogicDbContext db, Guid? roomId, CancellationToken cancellationToken) =>
@@ -89,8 +109,8 @@ public sealed class DistributedExportService(IDbContextFactory<LogicDbContext> d
         return null;
     }
 
-    private DistributedExportResult Serialize(Version6RoomExportEnvelope envelope, string fileName) => new(fileName, envelope, JsonSerializer.SerializeToUtf8Bytes(envelope, JsonOptions));
-    private string Timestamp() => timeProvider.GetUtcNow().ToString("yyyyMMdd-HHmmss-fff", CultureInfo.InvariantCulture);
+    private static DistributedExportResult Serialize(Version6RoomExportEnvelope envelope, string fileName) => new(fileName, envelope, JsonSerializer.SerializeToUtf8Bytes(envelope, JsonOptions));
+    private static string Timestamp(TimeProvider timeProvider) => timeProvider.GetUtcNow().ToString("yyyyMMdd-HHmmss-fff", CultureInfo.InvariantCulture);
 
     private static JsonSerializerOptions CreateJsonOptions()
     {

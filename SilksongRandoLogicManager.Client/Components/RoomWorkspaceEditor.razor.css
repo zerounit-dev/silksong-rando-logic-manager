@@ -1,0 +1,168 @@
+.confirmation-modal.room-conflict-comparison {
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    width: min(96rem, calc(100vw - 2rem));
+    min-width: 0;
+    max-height: calc(100dvh - 2rem);
+    overflow: auto;
+}
+
+.room-conflict-comparison > h2 {
+    text-transform: none;
+}
+
+.room-conflict-scroll {
+    flex: 0 0 auto;
+    overflow: auto;
+}
+
+.room-conflict-scroll:focus-visible {
+    outline: 1px solid #575650;
+    outline-offset: -1px;
+}
+
+.room-conflict-comparison > h2,
+.room-conflict-comparison > p {
+    flex-shrink: 0;
+}
+
+.room-conflict-panels {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(24rem, 1fr));
+    gap: 1rem;
+    padding: .15rem;
+}
+
+.room-conflict-panel {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    padding: 1rem;
+    border: 1px solid #99978f;
+}
+
+.room-conflict-panel > h3 {
+    margin: 0 0 .75rem;
+    font-size: .9rem;
+}
+
+.room-conflict-record {
+    margin: 0;
+}
+
+.room-conflict-field {
+    padding: .5rem;
+    border: 1px solid transparent;
+    margin-bottom: .4rem;
+}
+
+.room-conflict-different {
+    border-color: #99978f;
+}
+
+.room-conflict-field dt {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: .5rem;
+    margin-bottom: .25rem;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+}
+
+.room-conflict-cue {
+    font-size: .7rem;
+    font-weight: normal;
+    border-bottom: 1px solid currentColor;
+}
+
+.room-conflict-field dd {
+    margin: 0;
+}
+
+.room-conflict-literal {
+    white-space: break-spaces;
+    overflow-wrap: anywhere;
+    tab-size: 4;
+    min-height: 1.5em;
+}
+
+.room-conflict-empty {
+    font-style: italic;
+    color: #66645d;
+}
+
+.room-conflict-flag {
+    display: inline-flex;
+    align-items: center;
+    gap: .3rem;
+}
+
+.room-conflict-field select {
+    font: inherit;
+    color: inherit;
+}
+
+.room-conflict-choice {
+    margin-top: auto;
+    padding-top: 1rem;
+}
+
+/* Keep all recovery footprints in the wrapping row, even when inapplicable.
+   Unlike display:none, visibility preserves line breaks as failures come and go.
+   Compact border-box controls fit inside the ordinary metadata line box. */
+.room-meta-status > .room-recovery-action {
+    box-sizing: border-box;
+    flex: 0 0 auto;
+    height: 1.25em;
+    min-height: 0;
+    margin: 0;
+    padding: 0 .25em;
+    border: 1px solid #99978f;
+    border-radius: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    font-size: .68rem;
+    line-height: 1;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.room-meta-status > .room-recovery-action[data-inactive="true"] {
+    visibility: hidden;
+    pointer-events: none;
+}
+
+.room-meta-status > .room-recovery-action:focus-visible {
+    outline: 1px solid #575650;
+    outline-offset: 1px;
+}
+
+.room-meta-status > .room-recovery-action:disabled {
+    border-color: #c9c8c2;
+    color: #85837b;
+    cursor: not-allowed;
+}
+
+/* Independent entry feedback: an empty slot and every glyph have one baseline. */
+.room-meta-status > .room-entry-freshness-slot {
+    display: inline-flex;
+    position: relative;
+    width: 1em;
+    height: 1em;
+    flex: 0 0 1em;
+    align-items: center;
+    justify-content: center;
+}
+
+.room-meta-status > .room-entry-freshness-slot > i {
+    position: absolute;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .room-meta-status > .room-entry-freshness-slot > .fa-spin {
+        animation: none;
+    }
+}

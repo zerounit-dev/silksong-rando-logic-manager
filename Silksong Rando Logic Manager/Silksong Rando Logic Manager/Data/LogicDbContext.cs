@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using Microsoft.EntityFrameworkCore.Metadata;
 
 namespace Silksong_Rando_Logic_Manager.Data;
 
@@ -105,6 +106,18 @@ public sealed class LogicDbContext(DbContextOptions<LogicDbContext> options) : D
     private static void ConfigureRoom(EntityTypeBuilder<Room> entity)
     {
         ConfigureArchivable(entity);
+        entity.ToTable("Rooms", table =>
+        {
+            table.UseSqlReturningClause(false);
+            table.HasCheckConstraint("CK_Rooms_CacheFlagUtc", "typeof(\"CacheFlagUtc\") = 'integer' AND \"CacheFlagUtc\" BETWEEN 0 AND 3155378975999999999");
+        });
+        var cacheFlag = entity.Property(x => x.CacheFlagUtc)
+            .HasConversion(value => value.Ticks, value => new DateTime(value, DateTimeKind.Utc))
+            .HasColumnType("INTEGER").HasDefaultValue(new DateTime(0, DateTimeKind.Utc)).ValueGeneratedOnAddOrUpdate();
+        cacheFlag.Metadata.SetBeforeSaveBehavior(PropertySaveBehavior.Ignore);
+        cacheFlag.Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Ignore);
+        entity.Property(x => x.CompletionStatus).HasConversion<int>().HasColumnType("INTEGER")
+            .HasDefaultValue(Services.AppliedRoomStatus.Neutral);
         entity.Property(x => x.ReferenceId).IsRequired().UseCollation("NOCASE");
         entity.Property(x => x.FriendlyName).IsRequired();
         entity.Property(x => x.InGameId).UseCollation("NOCASE");

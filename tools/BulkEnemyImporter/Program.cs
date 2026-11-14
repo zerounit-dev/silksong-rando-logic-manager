@@ -22,7 +22,7 @@ internal static class BulkEnemyOperator
             var database = options.Path("database");
             var planPath = options.Path("plan");
             ExternalArtifact(planPath, input, database);
-            var service = new BulkEnemyIngestService(database, logs.CreateLogger<RequirementValidationService>());
+            var service = new BulkEnemyIngestService(database, logs.CreateLogger<RequirementValidationService>(), logs.CreateLogger<SceneImportService>());
             if (options.Command == "plan")
             {
                 var reportPath = options.Path("report");

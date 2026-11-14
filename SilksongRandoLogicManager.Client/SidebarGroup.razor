@@ -1,0 +1,67 @@
+@using SilksongRandoLogicManager.Contracts
+
+<section class="room-group">
+    <div class="group-heading" draggable="@((!Searching && !Locked && Model.Index.Group is not null) ? "true" : "false")" data-sidebar-group="@Id" data-sidebar-group-index="@(Id is null ? (int?)null : Model.Index.Position)" data-sidebar-room-target="@(Id?.ToString() ?? "")" data-sidebar-room-index="@Model.Index.ActiveIds.Length">
+        @if (Id is { } groupId)
+        {
+            <button class="group-label @SidebarPresentation.StatusClass(Model.Index.Status)" type="button" aria-expanded="@Opened.ToString().ToLowerInvariant()" @onclick="Toggle"><span class="group-toggle-icon" data-sidebar-group-grip title="Drag group" aria-hidden="true">@Icon(Pending == $"group:{groupId}", Opened ? "fa-chevron-down" : "fa-chevron-right")</span>@Model.Index.Name</button>
+            <button class="rename-group-button icon-button" type="button" disabled="@Locked" title="Edit @Model.Index.Name" aria-label="Edit @Model.Index.Name" @onclick="Edit">@Icon(EditorLoading, "fa-pen-to-square")</button>
+        }
+        else
+        {
+            <span class="group-label @SidebarPresentation.StatusClass(Model.Index.Status)">Ungrouped</span>
+            <button class="rename-group-button icon-button" type="button" disabled="@Locked" title="Auto-match ungrouped rooms" aria-label="Auto-match ungrouped rooms" @onclick="AutoMatch">@Icon(Pending == "auto", "fa-wand-magic-sparkles")</button>
+        }
+    </div>
+    @if (Opened)
+    {
+        @if (!Searching) { <button class="new-page-button page-list-action" type="button" disabled="@Locked" @onclick="Create">@Icon(Pending == $"create-room:{Id}", "fa-file-circle-plus") page</button> }
+        @foreach (var row in Model.Active)
+        {
+            <div class="drop-line" aria-hidden="true" data-sidebar-room-target="@(Id?.ToString() ?? "")" data-sidebar-room-index="@row.ActiveIndex"></div>
+            <a @key="row.Room.Id" class="@(row.Css + (Selected == row.Room.Id ? " active" : ""))" href="@row.Href" title="@row.Label" aria-label="@row.Label" draggable="@((!Searching && !Locked) ? "true" : "false")" data-sidebar-room="@row.Room.Id" data-sidebar-room-target="@(Id?.ToString() ?? "")" data-sidebar-room-index="@row.ActiveIndex" @onclick="(() => Select.InvokeAsync(row.Room.Id))" @onclick:preventDefault>@ImageSlot(row.Room)<span class="room-link-name">@row.Text</span></a>
+        }
+        <div class="drop-line" aria-hidden="true" data-sidebar-room-target="@(Id?.ToString() ?? "")" data-sidebar-room-index="@Model.Index.ActiveIds.Length"></div>
+        @if (Model.Archived.Length > 0) { <div class="archived-section-label">[archived]</div> }
+        @foreach (var row in Model.Archived)
+        {
+            <a @key="row.Room.Id" class="@(row.Css + (Selected == row.Room.Id ? " active" : ""))" href="@row.Href" title="@row.Label" aria-label="@row.Label" draggable="false" @onclick="(() => Select.InvokeAsync(row.Room.Id))" @onclick:preventDefault>@ImageSlot(row.Room)<span class="room-link-name">@row.Text</span></a>
+        }
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public SidebarGroupView Model { get; set; } = default!;
+    [Parameter] public bool Opened { get; set; }
+    [Parameter] public bool Searching { get; set; }
+    [Parameter] public bool Locked { get; set; }
+    [Parameter] public bool EditorLoading { get; set; }
+    [Parameter] public Guid? Selected { get; set; }
+    [Parameter] public string? Pending { get; set; }
+    [Parameter] public EventCallback<Guid> ToggleGroup { get; set; }
+    [Parameter] public EventCallback<Guid> OpenEditor { get; set; }
+    [Parameter] public EventCallback<Guid?> CreateRoom { get; set; }
+    [Parameter] public EventCallback AutoMatch { get; set; }
+    [Parameter] public EventCallback<Guid> Select { get; set; }
+    private Guid? Id => Model.Index.Key.Id;
+    private Task Toggle() => ToggleGroup.InvokeAsync(Id!.Value);
+    private Task Edit() => OpenEditor.InvokeAsync(Id!.Value);
+    private Task Create() => CreateRoom.InvokeAsync(Id);
+
+    // Explicit admission, independent of Blazor's conservative custom-parameter diff.
+    // Callbacks always target the same App owner and resolve against its current state.
+    private sealed record RenderState(SidebarGroupView Model, bool Opened, bool Searching,
+        bool Locked, bool EditorLoading, Guid? Selected, string? Pending);
+    private RenderState? rendered;
+    private RenderState Current => new(Model, Opened, Searching, Locked, EditorLoading, Selected, Pending);
+    protected override bool ShouldRender() => rendered is null || !ReferenceEquals(rendered.Model, Model)
+        || rendered.Opened != Opened || rendered.Searching != Searching || rendered.Locked != Locked
+        || rendered.EditorLoading != EditorLoading || rendered.Selected != Selected || rendered.Pending != Pending;
+    protected override void OnAfterRender(bool firstRender) => rendered = Current;
+
+    private RenderFragment Icon(bool spin, string icon) => @<span class="v3-icon-slot" aria-hidden="true"><i class="fa-solid @(spin ? "fa-spinner fa-spin" : icon)"></i></span>;
+    private RenderFragment ImageSlot(Room room) => @<span class="room-image-slot @(room.ImageState == ImageState.Disabled ? "room-image-disabled" : room.ImageState == ImageState.NonstandardScale ? "room-image-warning" : "room-image-danger")" aria-hidden="true">
+        @if (Pending == $"room:{room.Id}") { <i class="fa-solid fa-spinner fa-spin"></i> }
+        else if (room.ImageState != ImageState.None) { <i class="fa-solid fa-image"></i>@if (room.ImageState != ImageState.Disabled) { <i class="fa-solid fa-triangle-exclamation room-image-warning-mark"></i> } }
+    </span>;
+}

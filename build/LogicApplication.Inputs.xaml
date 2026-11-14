@@ -1,0 +1,11 @@
+<ProjectSchemaDefinitions xmlns="http://schemas.microsoft.com/build/2009/properties">
+  <!-- Hidden dependency-only source items. No file extension association, build
+       action on authored files, or compiler/analyzer payload is introduced. -->
+  <ContentType Name="LogicApplicationInput" DisplayName="Application build dependency" ItemType="LogicApplicationInput" />
+  <ItemType Name="LogicApplicationInput" DisplayName="Application build dependency" UpToDateCheckInput="true" />
+  <Rule Name="LogicApplicationInput" DisplayName="Application build dependency" PageTemplate="generic" Order="1000">
+    <Rule.DataSource>
+      <DataSource Persistence="ProjectFile" ItemType="LogicApplicationInput" SourceOfDefaultValue="AfterContext" />
+    </Rule.DataSource>
+  </Rule>
+</ProjectSchemaDefinitions>

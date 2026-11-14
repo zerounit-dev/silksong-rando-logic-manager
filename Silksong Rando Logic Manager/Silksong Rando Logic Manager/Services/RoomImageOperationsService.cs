@@ -16,11 +16,13 @@ public sealed record RoomImageRegenerationResult(int Generated, int Failed, bool
 
 /// <summary>Explicit slow integrity/lifecycle operations. Never called by hot scene/sidebar loaders.</summary>
 public sealed class RoomImageOperationsService(IDbContextFactory<LogicDbContext> contexts, SceneImageFileService files,
-    SceneImageCaptureService capture, ILogger<RoomImageOperationsService> logger)
+    SceneImageCaptureService capture, ILogger<RoomImageOperationsService> logger, SharedPublicationCoordinator publications, Authentication.LiveAccess access)
 {
     public async Task<RoomImageScan> ScanAsync()
     {
         using var admission = await files.AcquireLifecycleAsync();
+        using var publication = await publications.AcquireAsync();
+        await access.RequireAsync(Authentication.AccessPolicies.Author);
         await using var db = await contexts.CreateDbContextAsync();
         var rooms = await db.Rooms.AsNoTracking().Select(x => new { x.Id, x.SceneImageOriginalHash, x.SceneImageCropHash }).ToDictionaryAsync(x => x.Id);
         List<UnusedRoomImage> candidates = [];
@@ -38,6 +40,9 @@ public sealed class RoomImageOperationsService(IDbContextFactory<LogicDbContext>
                 if (!Path.GetExtension(path).Equals(extension, StringComparison.OrdinalIgnoreCase) ||
                     !Guid.TryParseExact(Path.GetFileNameWithoutExtension(path), "D", out var roomId)) continue;
                 if (Path.GetFileName(path) != $"{roomId:D}{extension}") continue;
+                // Each file is an independent operation, not one atomic batch.
+                // Admission denial must escape ordinary per-file continuation.
+                var historyActor = HistoryActor.From(await access.RequireAsync(Authentication.AccessPolicies.Author));
                 try
                 {
                     var hash = SceneImageFileService.Hash(path);
@@ -46,8 +51,14 @@ public sealed class RoomImageOperationsService(IDbContextFactory<LogicDbContext>
                     if (expected == hash) continue;
                     candidates.Add(new(roomId, kind, hash, new FileInfo(path).Length));
                     if (kind == RoomImageAssetKind.Crop && room is not null)
-                        await db.Rooms.Where(x => x.Id == roomId && x.SceneImageCropHash == expected)
+                    {
+                        await using var transaction = await LogicWriteScope.BeginAsync(db, publication, historyActor, CancellationToken.None);
+                        var affected = await db.Rooms.Where(x => x.Id == roomId && x.SceneImageCropHash == expected && !x.IsSceneImageStale)
                             .ExecuteUpdateAsync(set => set.SetProperty(x => x.IsSceneImageStale, true));
+                        await transaction.FinalizeAsync(CancellationToken.None);
+                        var prepared = publication.PrepareAdvance(affected != 0, false);
+                        await transaction.CommitAsync(() => publication.PublishCommitted(prepared));
+                    }
                 }
                 catch (Exception ex) { logger.LogError(ex, "Room image integrity scan failed for {Path}", path); complete = false; }
             }
@@ -59,6 +70,8 @@ public sealed class RoomImageOperationsService(IDbContextFactory<LogicDbContext>
     {
         if (!confirmed.Complete || confirmed.Candidates.Count == 0) return new(0, 0, []);
         using var admission = await files.AcquireLifecycleAsync();
+        using var publication = await publications.AcquireAsync();
+        await access.RequireAsync(Authentication.AccessPolicies.Author);
         await using var db = await contexts.CreateDbContextAsync();
         var ids = confirmed.Candidates.Select(x => x.RoomId).Distinct().ToArray();
         var rooms = await db.Rooms.AsNoTracking().Where(x => ids.Contains(x.Id))
@@ -67,6 +80,7 @@ public sealed class RoomImageOperationsService(IDbContextFactory<LogicDbContext>
         foreach (var candidate in confirmed.Candidates)
         {
             var path = candidate.Kind == RoomImageAssetKind.Original ? files.GetOriginalPath(candidate.RoomId) : files.GetRoomImagePath(candidate.RoomId);
+            var historyActor = HistoryActor.From(await access.RequireAsync(Authentication.AccessPolicies.Author));
             try
             {
                 if (!File.Exists(path)) continue;
@@ -77,8 +91,14 @@ public sealed class RoomImageOperationsService(IDbContextFactory<LogicDbContext>
                 var size = new FileInfo(path).Length;
                 File.Delete(path); deleted++; bytes += size;
                 if (candidate.Kind == RoomImageAssetKind.Crop && room is not null)
-                    await db.Rooms.Where(x => x.Id == candidate.RoomId && x.SceneImageCropHash == expected)
+                {
+                    await using var transaction = await LogicWriteScope.BeginAsync(db, publication, historyActor, CancellationToken.None);
+                    var affected = await db.Rooms.Where(x => x.Id == candidate.RoomId && x.SceneImageCropHash == expected && !x.IsSceneImageStale)
                         .ExecuteUpdateAsync(set => set.SetProperty(x => x.IsSceneImageStale, true));
+                    await transaction.FinalizeAsync(CancellationToken.None);
+                    var prepared = publication.PrepareAdvance(affected != 0, false);
+                    await transaction.CommitAsync(() => publication.PublishCommitted(prepared));
+                }
             }
             catch (Exception ex) { logger.LogError(ex, "Unused room image deletion failed for {RoomId}/{Kind}", candidate.RoomId, candidate.Kind); failures.Add(ex); }
         }
@@ -87,12 +107,18 @@ public sealed class RoomImageOperationsService(IDbContextFactory<LogicDbContext>
 
     public async Task<RoomImageRegenerationResult> RegenerateAsync(SceneImageRebuildMode mode, IProgress<SceneImageRebuildProgress> progress)
     {
+        await access.RequireAsync(Authentication.AccessPolicies.Author);
         await using var db = await contexts.CreateDbContextAsync();
         var rooms = await db.Rooms.AsNoTracking().Where(x => !x.IsArchived).OrderBy(x => x.SortOrder).ThenBy(x => x.Id)
             .Select(x => new { x.Id, x.FriendlyName }).ToArrayAsync();
         var names = rooms.ToDictionary(x => x.Id, x => x.FriendlyName);
         SceneImageRebuildResult result; Exception? interruption = null;
         try { result = await capture.RebuildPackageRoomsAsync(new(rooms.Select(x => x.Id).ToArray(), mode), progress: progress); }
+        catch (SceneImageRebuildInterruptedException ex) when (ex.InnerException is Authentication.AccessDeniedException)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex.InnerException!).Throw();
+            throw;
+        }
         catch (SceneImageRebuildInterruptedException ex) { result = ex.Result; interruption = ex; }
         List<RoomImageBlocker> blockers = [];
         foreach (var item in result.Items)

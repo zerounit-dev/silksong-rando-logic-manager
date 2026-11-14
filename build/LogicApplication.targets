@@ -1,0 +1,107 @@
+<Project>
+  <PropertyGroup>
+    <LogicSourceRoot>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\'))</LogicSourceRoot>
+    <LogicGeneratedRoot>$(IntermediateOutputPath)logic-application\</LogicGeneratedRoot>
+    <!-- BundledVersions.props belongs to the SDK actually selected by this caller.
+         The SDKless coordinator must never infer that SDK from MSBuildToolsPath. -->
+    <_LogicNativeTaskHost Condition="'$(MSBuildRuntimeType)' == 'Core'">net10.0</_LogicNativeTaskHost>
+    <_LogicNativeTaskHost Condition="'$(_LogicNativeTaskHost)' == ''">net472</_LogicNativeTaskHost>
+    <LogicNativeTasksAssembly>$([System.IO.Path]::GetDirectoryName('$(BundledRuntimeIdentifierGraphFile)'))\Sdks\Microsoft.NET.Sdk.StaticWebAssets\tasks\$(_LogicNativeTaskHost)\Microsoft.NET.Sdk.StaticWebAssets.Tasks.dll</LogicNativeTasksAssembly>
+    <LogicModuleInterop Condition="'$(MSBuildProjectName)' == 'SilksongRandoLogicManager.Contracts' Or '$(MSBuildProjectName)' == 'SilksongRandoLogicManager.SceneProcessing'">false</LogicModuleInterop>
+    <LogicModuleInterop Condition="'$(LogicModuleInterop)' == ''">true</LogicModuleInterop>
+  </PropertyGroup>
+  <!-- Every identity consumer must be admitted when ANY application input changes.
+       These are timestamp/item-set dependencies, not a content-derived identity or
+       a second build orchestrator. In particular, do not exclude Authentication
+       source or Assets/Publishing by matching private directory names anywhere. -->
+  <PropertyGroup>
+    <_LogicServerSource>$(LogicSourceRoot)Silksong Rando Logic Manager\Silksong Rando Logic Manager\</_LogicServerSource>
+    <_LogicClientSource>$(LogicSourceRoot)SilksongRandoLogicManager.Client\</_LogicClientSource>
+    <_LogicContractsSource>$(LogicSourceRoot)SilksongRandoLogicManager.Contracts\</_LogicContractsSource>
+    <_LogicAuditSource>$(LogicSourceRoot)SilksongRandoLogicManager.Audit\</_LogicAuditSource>
+    <_LogicSceneSource>$(LogicSourceRoot)SilksongRandoLogicManager.SceneProcessing\</_LogicSceneSource>
+    <!-- Literal Include patterns: item transforms retain wildcard item specs. -->
+    <_LogicApplicationInputPatterns>$(_LogicServerSource)**\*.cs;$(_LogicServerSource)**\*.razor;$(_LogicServerSource)**\*.cshtml;$(_LogicServerSource)**\*.resx;$(_LogicServerSource)*.csproj;$(_LogicServerSource)wwwroot\**;$(_LogicServerSource)Assets\**;
+      $(_LogicClientSource)**\*.cs;$(_LogicClientSource)**\*.razor;$(_LogicClientSource)**\*.cshtml;$(_LogicClientSource)**\*.resx;$(_LogicClientSource)*.csproj;$(_LogicClientSource)wwwroot\**;$(_LogicClientSource)Assets\**;
+      $(_LogicContractsSource)**\*.cs;$(_LogicContractsSource)**\*.razor;$(_LogicContractsSource)**\*.cshtml;$(_LogicContractsSource)**\*.resx;$(_LogicContractsSource)*.csproj;$(_LogicContractsSource)wwwroot\**;$(_LogicContractsSource)Assets\**;
+      $(_LogicAuditSource)**\*.cs;$(_LogicAuditSource)**\*.razor;$(_LogicAuditSource)**\*.cshtml;$(_LogicAuditSource)**\*.resx;$(_LogicAuditSource)*.csproj;$(_LogicAuditSource)wwwroot\**;$(_LogicAuditSource)Assets\**;
+      $(_LogicSceneSource)**\*.cs;$(_LogicSceneSource)**\*.razor;$(_LogicSceneSource)**\*.cshtml;$(_LogicSceneSource)**\*.resx;$(_LogicSceneSource)*.csproj;$(_LogicSceneSource)wwwroot\**;$(_LogicSceneSource)Assets\**</_LogicApplicationInputPatterns>
+    <_LogicApplicationInputPatterns>$(_LogicApplicationInputPatterns);$(_LogicServerSource)**\*.js;$(_LogicServerSource)**\*.mjs;$(_LogicServerSource)**\*.wasm;$(_LogicServerSource)**\*.css;
+      $(_LogicClientSource)**\*.js;$(_LogicClientSource)**\*.mjs;$(_LogicClientSource)**\*.wasm;$(_LogicClientSource)**\*.css;
+      $(_LogicContractsSource)**\*.js;$(_LogicContractsSource)**\*.mjs;$(_LogicContractsSource)**\*.wasm;$(_LogicContractsSource)**\*.css;
+      $(_LogicAuditSource)**\*.js;$(_LogicAuditSource)**\*.mjs;$(_LogicAuditSource)**\*.wasm;$(_LogicAuditSource)**\*.css;
+      $(_LogicSceneSource)**\*.js;$(_LogicSceneSource)**\*.mjs;$(_LogicSceneSource)**\*.wasm;$(_LogicSceneSource)**\*.css</_LogicApplicationInputPatterns>
+  </PropertyGroup>
+  <ItemGroup>
+    <_LogicApplicationInputCandidate Include="$(_LogicApplicationInputPatterns)"
+                            Exclude="$(LogicSourceRoot)**\bin\**;$(LogicSourceRoot)**\obj\**;$(_LogicManagerPrivateGlobs)" />
+    <_LogicApplicationInputCandidate Include="$(LogicSourceRoot)Directory.Build.*;$(MSBuildThisFileDirectory)*.cs;$(MSBuildThisFileDirectory)*.targets;$(MSBuildThisFileDirectory)*.proj;$(MSBuildThisFileDirectory)*.xaml;$(LogicSourceRoot)Silksong Rando Logic Manager\Silksong Rando Logic Manager\Config\appsettings.json;$(LogicSourceRoot)Silksong Rando Logic Manager\Silksong Rando Logic Manager\Config\appsettings.Development.json" />
+    <LogicApplicationInput Include="@(_LogicApplicationInputCandidate->Distinct())" />
+    <LogicApplicationInput Update="@(LogicApplicationInput)" Visible="false" />
+    <!-- A CPS source item type also tracks additions/removals. Explicit
+         UpToDateCheckInput alone tracks timestamps, not the persisted item hash. -->
+    <PropertyPageSchema Include="$(MSBuildThisFileDirectory)LogicApplication.Inputs.xaml" Context="File" />
+    <CustomAdditionalCompileInputs Include="@(LogicApplicationInput)" />
+    <UpToDateCheckOutput Include="$(LogicGeneratedRoot)ApplicationBuild.g.cs" />
+  </ItemGroup>
+  <!-- Like SDK-generated assembly source, generated C# is a compiler input but
+       NOT an evaluated source item: writing it during Build must not invalidate
+       the next IDE no-op check. A clean design-time build has no file to include
+       and must not create one; the declared missing output admits a real Build. -->
+  <Target Name="IncludeLogicApplicationSource" BeforeTargets="CoreCompile">
+    <ItemGroup>
+      <Compile Include="$(LogicGeneratedRoot)ApplicationBuild.g.cs" Condition="Exists('$(LogicGeneratedRoot)ApplicationBuild.g.cs') Or '$(DesignTimeBuild)' != 'true'" />
+    </ItemGroup>
+  </Target>
+  <UsingTask TaskName="GetLogicBuildGlobals" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <CoordinatorRemovals ParameterType="System.String" Output="true" />
+    </ParameterGroup>
+    <Task>
+      <Code Type="Fragment" Language="cs"><![CDATA[
+        var coordinator = new System.Collections.Generic.List<string>();
+        foreach (var name in ((Microsoft.Build.Framework.IBuildEngine6)BuildEngine).GetGlobalProperties().Keys) {
+          if (string.Equals(name, "Configuration", System.StringComparison.OrdinalIgnoreCase)) continue;
+          if (!string.Equals(name, "LogicApplicationStamp", System.StringComparison.OrdinalIgnoreCase)
+              && !string.Equals(name, "LogicBuildEvidenceRoot", System.StringComparison.OrdinalIgnoreCase)) coordinator.Add(name);
+        }
+        CoordinatorRemovals = string.Join(";", coordinator);
+      ]]></Code>
+    </Task>
+  </UsingTask>
+  <UsingTask TaskName="EmitLogicApplicationSource" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+    <Task>
+      <Reference Include="$(LogicNativeTasksAssembly)" />
+      <Code Type="Class" Language="cs" Source="$(MSBuildThisFileDirectory)LogicApplication.cs" />
+    </Task>
+  </UsingTask>
+  <Target Name="PrepareLogicApplicationBuild" Condition="'$(DesignTimeBuild)' != 'true' And '$(NoBuild)' != 'true'">
+    <GetLogicBuildGlobals>
+      <Output TaskParameter="CoordinatorRemovals" PropertyName="_LogicCoordinatorRemovals" />
+    </GetLogicBuildGlobals>
+    <!-- Do not inherit RID, reference-specific or IDE globals: all callers must
+         address the same build-local project instance, not per-project clocks. -->
+    <Error Condition="!Exists('$(LogicNativeTasksAssembly)')" Text="Selected SDK native static-asset tasks are missing: $(LogicNativeTasksAssembly)" />
+    <MSBuild Projects="$(MSBuildThisFileDirectory)LogicApplication.Stamp.proj" Targets="GetLogicApplicationBuild" RemoveProperties="$(_LogicCoordinatorRemovals)" Properties="Configuration=$(Configuration);LogicApplicationStamp=$(LogicApplicationStamp);LogicBuildEvidenceRoot=$(LogicBuildEvidenceRoot);LogicNativeTasksAssembly=$(LogicNativeTasksAssembly)" BuildInParallel="false">
+      <Output TaskParameter="TargetOutputs" ItemName="_LogicSharedBuild" />
+    </MSBuild>
+    <ItemGroup>
+      <_LogicBuildStamp Include="@(_LogicSharedBuild)" Condition="'%(_LogicSharedBuild.LogicResultKind)' == 'Stamp'" />
+      <_LogicModules Include="@(_LogicSharedBuild)" Condition="'%(_LogicSharedBuild.LogicResultKind)' == 'Module'" />
+      <_LogicLinkedAssets Include="@(_LogicSharedBuild)" Condition="'%(_LogicSharedBuild.LogicResultKind)' == 'Asset'" />
+      <_LogicLinkedEndpoints Include="@(_LogicSharedBuild)" Condition="'%(_LogicSharedBuild.LogicResultKind)' == 'Endpoint'" />
+      <_LogicSourceAssets Include="@(_LogicSharedBuild)" Condition="'%(_LogicSharedBuild.LogicResultKind)' == 'Source'" />
+    </ItemGroup>
+  </Target>
+  <!-- BeforeBuild is part of the admitted Build lifecycle, before reference
+       resolution, compilation and native discovery. GetTargetPath/static asset
+       getters/Compile design-time work must only consume completed outputs. -->
+  <Target Name="GenerateLogicApplicationBuild" BeforeTargets="BeforeBuild" DependsOnTargets="PrepareLogicApplicationBuild" Condition="'$(DesignTimeBuild)' != 'true' And '$(NoBuild)' != 'true'">
+    <EmitLogicApplicationSource OutputRoot="$(LogicGeneratedRoot)" Identity="@(_LogicBuildStamp)" Modules="@(_LogicModules)" ProjectName="$(MSBuildProjectName)" Interop="$(LogicModuleInterop)" />
+    <ItemGroup>
+      <Content Remove="@(_LogicSourceAssets)" MatchOnMetadata="FullPath" MatchOnMetadataOptions="PathLike" Condition="'$(MSBuildProjectName)' == 'SilksongRandoLogicManager.Client'" />
+      <StaticWebAsset Include="@(_LogicLinkedAssets)" Condition="'$(MSBuildProjectName)' == 'SilksongRandoLogicManager.Client'" />
+      <StaticWebAssetEndpoint Include="@(_LogicLinkedEndpoints)" Condition="'$(MSBuildProjectName)' == 'SilksongRandoLogicManager.Client'" />
+    </ItemGroup>
+  </Target>
+</Project>

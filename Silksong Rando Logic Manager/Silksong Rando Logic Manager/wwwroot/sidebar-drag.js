@@ -13,7 +13,7 @@ export function mount(root, callback, ownerId) {
     const version = () => root.dataset.sidebarView;
     const searching = () => root.dataset.sidebarSearch === "true"
         || [...root.querySelectorAll(".nav-header .search-entry")].some(input => input.value.replace(whitespace, "").length > 0);
-    const available = () => !disposed && root.isConnected && !pending && !searching();
+    const available = () => !disposed && root.isConnected && !pending && !searching() && root.dataset.sidebarBusy !== "true" && root.dataset.sidebarAuthoringAllowed === "true";
     const syncSources = () => {
         if (disposed) return;
         const enabled = available();
@@ -61,7 +61,7 @@ export function mount(root, callback, ownerId) {
         }
         cancel();
         if (!available() || source.draggable !== true || !event.dataTransfer
-            || target.closest("button, input, textarea, select")) {
+            || target.closest("button, input, textarea, select") && !target.closest("[data-sidebar-group-grip]")) {
             event.preventDefault();
             return;
         }
@@ -101,7 +101,7 @@ export function mount(root, callback, ownerId) {
         // Rejections after disconnect/disposal are consumed. Service failures are
         // presented by NavMenu's existing diagnostic path, never retried here.
         void Promise.resolve().then(() => {
-            if (disposed || !root.isConnected || version() !== source.version || searching()) return;
+            if (disposed || !root.isConnected || version() !== source.version || searching() || root.dataset.sidebarAuthoringAllowed !== "true") return;
             return callback.invokeMethodAsync("SubmitSidebarMoveAsync", {
                 owner: ownerId, viewVersion: Number(source.version), family: source.family,
                 sourceId: source.id, groupId: target.groupId, index: target.index
@@ -130,10 +130,14 @@ export function mount(root, callback, ownerId) {
     window.addEventListener("blur", cancel);
     const viewObserver = new MutationObserver(() => { cancel(); syncSources(); });
     viewObserver.observe(root, { childList: true, subtree: true, attributes: true,
-        attributeFilter: ["data-sidebar-view", "data-sidebar-search"] });
+        attributeFilter: ["data-sidebar-view", "data-sidebar-search", "data-sidebar-busy", "data-sidebar-authoring-allowed"] });
     const removalObserver = new MutationObserver(() => { if (!root.isConnected) api.dispose(); });
     removalObserver.observe(document, { childList: true, subtree: true });
     const api = {
+        hasClientUpdateWork() {
+            if (disposed || !root.isConnected) throw new Error("The sidebar drag owner is unavailable.");
+            return pending || drag !== null;
+        },
         dispose() {
             if (disposed) return;
             disposed = true;

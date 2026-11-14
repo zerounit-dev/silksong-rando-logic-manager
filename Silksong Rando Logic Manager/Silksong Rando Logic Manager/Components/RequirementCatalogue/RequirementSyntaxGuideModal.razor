@@ -1,3 +1,5 @@
+@using Silksong_Rando_Logic_Manager.Services
+
 <div class="confirmation-backdrop requirement-syntax-guide-backdrop" role="presentation" @onclick="Close">
     <section id="@DialogId" class="confirmation-modal requirement-syntax-guide-modal" role="dialog" aria-modal="true" aria-labelledby="v2-page-modal-title" tabindex="-1" @onclick:stopPropagation="true" @onkeydown="KeyDown">
         <RequirementSyntaxGuideContent Reference="Reference" Manage="Manage" Close="Close" />

@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Silksong Logic Manager</title>
+    <base href="/" />
+    <link rel="preload" id="webassembly" />
+    <link rel="stylesheet" href="/app.css" />
+    <link rel="stylesheet" href="/archipelago.css" />
+    <style id="archipelago-status"></style>
+    <style id="room-context-preferences">
+        :root { --room-map-context-ratio-term: 9; }
+        .room-editor-v2 .room-map-context-height-host { display: block; }
+        .room-editor-v2 .room-map-context-toggle-show { display: none; }
+        .room-editor-v2 .room-map-context-toggle-hide { display: inline-block; }
+        .room-editor-v2 .room-map-context > .room-context-zone-pane { display: flex; }
+        .room-editor-v2 .room-map-context > .room-context-divider { display: block; }
+        .room-editor-v2 .room-map-context > .room-context-scene-pane { flex-basis: 0; }
+        .map-wireframe .map-overlay-image, .map-wireframe [data-map-owner="unlinked"] { display: inline; }
+        .map-wireframe[data-has-overlay="true"] [data-map-owner="linked"] { fill: transparent; stroke: transparent; pointer-events: all; cursor: pointer; }
+        .map-wireframe[data-has-overlay="true"] [data-map-owner="linked"]:is(:hover, :focus) { stroke: rgb(255 255 255 / 35%); stroke-width: 1px; }
+    </style>
+    <link rel="stylesheet" href="/lib/fontawesome/css/all.min.css" />
+    <link rel="stylesheet" href="catalogue.css" />
+    <link rel="stylesheet" href="landing.css" />
+    <link rel="stylesheet" href="audit.css" />
+    <link rel="stylesheet" href="SilksongRandoLogicManager.Client.styles.css" />
+    <script src="logic-code/map-support#[.{fingerprint}].js"></script>
+    <script src="logic-code/editor#[.{fingerprint}].js"></script>
+    <script src="logic-code/requirement-catalogue#[.{fingerprint}].js"></script>
+    <script src="logic-code/map-navigation#[.{fingerprint}].js"></script>
+    <script type="importmap"></script>
+</head>
+<body>
+    <div id="app">
+        <div class="load-ui1 load-ui1-neutral">
+            <div class="load-ui1-stack">
+                <div class="load-ui1-graphic" aria-hidden="true">
+                    <i class="load-ui1-server fa-solid fa-server"></i>
+                    <span class="load-ui1-link load-ui1-to-cache"><span></span><span></span><span></span></span>
+                    <i class="load-ui1-cache fa-solid fa-database"></i>
+                    <span class="load-ui1-link load-ui1-to-app"><span></span><span></span><span></span></span>
+                    <i class="load-ui1-window fa-solid fa-window-maximize"></i>
+                </div>
+                <p class="load-ui1-status" role="status" aria-live="polite" aria-atomic="true">Loading Silksong Logic Manager…</p>
+                <div class="load-ui1-below"><p class="load-ui1-failure danger" role="alert"></p></div>
+            </div>
+        </div>
+    </div>
+    <div id="archipelago-modal" class="confirmation-backdrop archipelago-backdrop" hidden>
+        <section class="confirmation-modal archipelago-modal" role="dialog" aria-modal="true" aria-labelledby="archipelago-title" tabindex="-1">
+            <header><h2 id="archipelago-title">archipelago</h2><button type="button" class="archipelago-close" aria-label="Close archipelago" title="Close"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button></header>
+            <p id="archipelago-warning" class="archipelago-warning" role="alert" hidden></p>
+            <form autocomplete="off">
+                <div class="archipelago-endpoint"><label>server<input id="archipelago-server" type="text" autocomplete="off" spellcheck="false" /></label><label class="archipelago-port">port<input id="archipelago-port" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" /></label></div>
+                <label>slot name<input id="archipelago-slot" type="text" autocomplete="off" spellcheck="false" /></label>
+                <label>password<input id="archipelago-password" type="password" autocomplete="off" /></label>
+                <label class="archipelago-auto"><input id="archipelago-follow" type="checkbox" /> follow current room</label>
+                <footer><label class="archipelago-auto"><input id="archipelago-auto" type="checkbox" /> auto-reconnect</label><button id="archipelago-connect" type="submit">connect</button></footer>
+            </form>
+        </section>
+    </div>
+    <script>
+        // Own only this static host until the managed loading owner claims startup.
+        // Keep a failure across root replacement, including the gap before claim.
+        window.logicInitialLoading = (() => {
+            const host = document.querySelector('#app > .load-ui1');
+            let owner = null, failed = false, closed = false, started = false;
+            function fail(error) {
+                console.error(error);
+                if (closed || failed) return;
+                failed = true;
+                if (owner) {
+                    owner.invokeMethodAsync('BootstrapFailed').catch(error => console.error(error));
+                } else if (host.isConnected && host.parentElement === document.getElementById('app')) {
+                    host.classList.add('load-ui1-failed');
+                    host.querySelector('.load-ui1-failure').textContent = 'Unable to start. Try refreshing.';
+                }
+            }
+            return {
+                claim(callback) { if (!closed) owner = callback; return failed; },
+                release() { closed = true; owner = null; },
+                fail,
+                start() {
+                    if (started || closed || failed) return;
+                    started = true;
+                    try { Blazor.start().catch(fail); }
+                    catch (error) { fail(error); }
+                }
+            };
+        })();
+    </script>
+    <script src="_framework/blazor.webassembly#[.{fingerprint}].js" autostart="false" onload="logicInitialLoading.start()" onerror="logicInitialLoading.fail(event)"></script>
+    <script id="archipelago-script" src="logic-code/archipelago#[.{fingerprint}].js"></script>
+</body>
+</html>

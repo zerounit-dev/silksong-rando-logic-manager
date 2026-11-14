@@ -1,0 +1,17 @@
+@page "/tools/diagnostics"
+@layout ToolsLayout
+@rendermode InteractiveServer
+
+<PageTitle>Diagnostics | Silksong Logic Manager</PageTitle>
+<DiagnosticErrorBoundary>
+    <ChildContent>
+        <main class="room-import-tool tools-body">
+            <h1 class="tool-title">debug diagnostics</h1>
+            <DebugDiagnosticControls />
+        </main>
+    </ChildContent>
+    <ErrorContent>
+        <div class="diagnostic-boundary-fallback" role="alert">Debug diagnostics could not be displayed.<pre>@context.ToString()</pre></div>
+    </ErrorContent>
+</DiagnosticErrorBoundary>
+<DiagnosticModal />

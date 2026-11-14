@@ -1,0 +1,145 @@
+@page "/requirements"
+@page "/requirements/{Kind}"
+@using Silksong_Rando_Logic_Manager.Services
+@using Microsoft.AspNetCore.Components.Forms
+@using SilksongRandoLogicManager.Client.Components.RequirementCatalogue
+@implements IAsyncDisposable
+@inject HttpClient Http
+@inject IJSRuntime JS
+
+@if (routeKind >= 0)
+{
+    <PageTitle>@(Kind is null ? "Requirements | Silksong Logic Manager" : $"{Labels[routeKind]} | Requirements | Silksong Logic Manager")</PageTitle>
+}
+@if (routeKind < 0)
+{
+    <NotFound />
+}
+else if (lists is null)
+{
+    @if (!loadFailed) { <div class="rc-loading" role="status" aria-label="Loading requirement catalogue">@Icon(true, "")</div> }
+    else { <p>Requirement catalogue could not be loaded.</p> }
+}
+else
+{
+    <article class="content rc-content">
+    <section class="requirement-catalogue-page rc-page" @ref="root">
+        <h1 tabindex="-1">requirement catalogue</h1>
+        <div class="requirement-catalogue-actions" aria-label="Catalogue commands">
+          <div class="requirement-catalogue-context-actions">
+            <button id="rc-guide-launcher" type="button" class="requirement-catalogue-action" disabled="@ActionsBlocked" @onclick="OpenGuideAsync">@if (modal == "guide-loading") { @Icon(true, "") } else { <i class="fa-solid fa-book" aria-hidden="true"></i> }syntax guide</button>
+            <label class="button requirement-catalogue-action rc-file-control" aria-disabled="@AuthoringActionsBlocked.ToString().ToLowerInvariant()">@Icon(pending == "import", "fa-file-import")import catalogue
+                <InputFile @key="pickerGeneration" OnChange="ChooseImportAsync" accept=".json,application/json" disabled="@AuthoringActionsBlocked" />
+            </label>
+            <button type="button" class="requirement-catalogue-action" disabled="@ActionsBlocked" @onclick="ExportAsync">@Icon(pending == "export", "fa-file-export")export catalogue</button>
+          </div>
+          <div class="requirement-catalogue-context-actions">
+            <button type="button" class="requirement-catalogue-action" disabled="@AuthoringActionsBlocked" @onclick="RecheckAsync">@Icon(pending == "recheck", "fa-rotate")recheck all room requirements</button>
+            @if (ActionsBlocked) { <button class="requirement-catalogue-action" disabled><i class="fa-solid fa-diagram-project" aria-hidden="true"></i>export room graph</button> }
+            else { <a class="button requirement-catalogue-action" href="/tools/graph-export" target="_blank" rel="noopener noreferrer" data-enhance-nav="false" title="Room graph export (opens in a new tab)"><i class="fa-solid fa-diagram-project" aria-hidden="true"></i>export room graph</a> }
+          </div>
+        </div>
+        @if (feedback is not null) { <p class="danger" role="alert">@feedback</p> }
+        @if (counts is not null) { <p>@counts.Successful successful, @counts.Failed failed, @counts.Unknown unknown.</p> }
+        <div class="requirement-catalogue-tabs" role="tablist" aria-label="Requirement catalogues">
+            @for (var i = 0; i < Kinds.Length; i++)
+            {
+                var tab = i;
+                <a id="rc-tab-@Kinds[tab]" href="@($"requirements/{Kinds[tab]}")" role="tab" aria-controls="rc-panel" aria-selected="@((active == tab).ToString().ToLowerInvariant())" aria-disabled="@ActionsBlocked.ToString().ToLowerInvariant()" class="@(active == tab ? "selected" : null)" @onclick:preventDefault="ActionsBlocked">@Labels[tab]</a>
+            }
+        </div>
+      <section id="rc-panel" role="tabpanel" aria-labelledby="rc-tab-@Kinds[active]">
+        <div class="requirement-catalogue-toolbar">
+            <label>search <input aria-label="Search current requirement catalogue" value="@searches[active]" @oninput="SearchChanged" /></label>
+            @if (Filtered) { <span class="secondary">clear search to reorder</span> }
+            <div class="requirement-catalogue-content-actions"><button type="button" class="requirement-catalogue-action" disabled="@AuthoringActionsBlocked" @onclick="(() => OpenEditorAsync(null))">@Icon(false, "fa-plus")add @Singular[active]</button></div>
+        </div>
+        <table class="requirement-catalogue-table rc-table">
+            <thead><tr><th>drag</th><th>Name</th><th>Category</th><th>@(active == 0 ? "Input Syntax / aliases" : "Aliases")</th><th>@(active == 0 ? "Output Syntax" : "Output Value")</th><th>actions</th></tr></thead>
+            <tbody>
+                @foreach (var row in VisibleRows)
+                {
+                     <tr @key="row.Id" data-rc-row="@row.Id" class="@DropClass(row.Id)" @ondragenter="(() => DragOver(row.Id))" @ondragover:preventDefault @ondrop="(() => DropAsync(row.Id))">
+                         <td class="reorder-cell"><button type="button" class="reorder-handle catalogue-drag-handle" data-rc-grip="@row.Id" draggable="@(CanReorder ? "true" : "false")" disabled="@(!CanReorder)" @ondragstart="(() => StartDrag(row.Id))" @ondragend="ClearDrag" title="@(Filtered ? "clear search to reorder" : "drag to reorder")" aria-label="Reorder @row.Name">@Icon(moving == row.Id, "fa-grip-vertical")</button></td>
+                         <td><div class="requirement-catalogue-name">@row.Name</div><div class="requirement-catalogue-notes">@row.Notes</div></td>
+                         <td class="requirement-catalogue-single-line">@row.Category</td>
+                        <td>
+                            @if (active == 0)
+                            {
+                                 <div class="catalogue-monospace requirement-predicate-input-syntax">@row.InputSyntax!.Replace("{predicate}", row.ParsedAliases.FirstOrDefault() ?? "{predicate}", StringComparison.Ordinal)</div>
+                                 @if (row.ParsedAliases.Count > 1) { <div class="requirement-predicate-additional-aliases">alternatives: @string.Join(", ", row.ParsedAliases.Skip(1))</div> }
+                            }
+                            else { @row.Aliases }
+                        </td>
+                         <td class="catalogue-monospace requirement-catalogue-single-line">@row.Output</td>
+                         <td class="row-actions catalogue-row-actions">
+                            <button type="button" class="icon-button" disabled="@AuthoringActionsBlocked" title="Edit @row.Name" aria-label="Edit @row.Name" @onclick="(() => OpenEditorAsync(row))"><i class="fa-solid fa-pen" aria-hidden="true"></i></button>
+                            <button type="button" class="icon-button" disabled="@AuthoringActionsBlocked" title="Delete @row.Name" aria-label="Delete @row.Name" @onclick="(() => OpenDeleteAsync(row))"><i class="fa-solid fa-trash" aria-hidden="true"></i></button>
+                        </td>
+                    </tr>
+                }
+                @if (!VisibleRows.Any()) { <tr><td colspan="6">@(lists[active].Count == 0 ? "No definitions." : "No matching definitions.")</td></tr> }
+                <tr class="catalogue-drop-tail @DropClass(null)" @ondragenter="(() => DragOver(null))" @ondragover:preventDefault @ondrop="(() => DropAsync(null))"><td colspan="6"></td></tr>
+            </tbody>
+        </table>
+      </section>
+    </section>
+    <div class="rc-refresh"><button type="button" class="catalogue-modal-action" disabled="@(ActionsBlocked || readPending)" @onclick="(() => RequestFreshnessAsync(true))" aria-label="Refresh requirement catalogue" title="Refresh requirement catalogue">@Icon(readPending, "fa-rotate-right")</button></div>
+    </article>
+}
+@if (modal == "guide" && guide is { } reference)
+{
+    <RequirementSyntaxGuideModal Reference="reference" DialogId="rc-syntax-guide" Close="CloseModalAsync" Manage="CloseModalAsync" />
+}
+<dialog @ref="dialog" class="confirmation-modal @(modal == "edit" ? "requirement-definition-modal" : null) v3-dialog rc-dialog" aria-labelledby="rc-dialog-title" @oncancel="CloseModalAsync" @oncancel:preventDefault>
+    @if (modal is "edit" or "delete" or "import")
+    {
+        <h2 id="rc-dialog-title">@DialogTitle</h2>
+        <fieldset class="v3-fields" disabled="@busy">
+          <div class="rc-dialog-content">
+            @if (modal == "edit" && draft is not null)
+            {
+                <div class="requirement-definition-form-content">
+                    <div class="requirement-definition-field"><label>Name<input data-rc-first value="@draft.Name" @oninput="NameChanged" autocomplete="off" /></label>@LocalIssues("Name")</div>
+                    <div class="requirement-definition-field"><label>Category<input @bind:get="draft.Category" @bind:set="value => ChangeDraft(d => d.Category = value)" @bind:event="oninput" list="rc-categories" autocomplete="off" /></label></div>
+                    <datalist id="rc-categories">@foreach (var category in Categories) { <option value="@category"></option> }</datalist>
+                    @if (active == 0)
+                    {
+                        <div class="requirement-definition-field requirement-definition-field-full"><label>Input Syntax
+                            <select @bind:get="draft.Syntax" @bind:set="value => ChangeDraft(d => d.Syntax = value ?? string.Empty)">
+                                @if (!RequirementCatalogueLanguage.TryParsePersistedValue(draft.Syntax, out _)) { <option value="@draft.Syntax" disabled>Unsupported — @draft.Syntax</option> }
+                                @foreach (var group in RequirementCatalogueLanguage.InputSyntaxOptions.GroupBy(x => x.Group))
+                                {
+                                    <optgroup label="@group.Key">@foreach (var option in group) { <option value="@option.PersistedValue">@option.DisplayLabel — @option.PersistedValue</option> }</optgroup>
+                                }
+                            </select></label>@LocalIssues("InputSyntax")
+                        </div>
+                        <div class="requirement-definition-field requirement-definition-field-full"><label>Output Syntax<input @bind:get="draft.Output" @bind:set="value => ChangeDraft(d => d.Output = value ?? string.Empty)" @bind:event="oninput" autocomplete="off" /></label>@LocalIssues("OutputSyntax")</div>
+                    }
+                    <div class="requirement-definition-field requirement-definition-field-full"><label>Aliases<input class="requirement-definition-alias-editor" value="@draft.Aliases" @oninput="AliasesChanged" autocomplete="off" /></label>@LocalIssues("Aliases")</div>
+                    @if (active != 0) { <div class="requirement-definition-field requirement-definition-field-full"><label>Output Value<input @bind:get="draft.Output" @bind:set="value => ChangeDraft(d => d.Output = value ?? string.Empty)" @bind:event="oninput" autocomplete="off" /></label>@LocalIssues("OutputValue")</div> }
+                    <div class="requirement-definition-field requirement-definition-field-full"><label>Notes<textarea class="requirement-definition-notes" @bind:get="draft.Notes" @bind:set="value => ChangeDraft(d => d.Notes = value ?? string.Empty)" @bind:event="oninput"></textarea></label></div>
+                </div>
+            }
+            else if (modal == "delete")
+            {
+                <p>Delete <strong>@deleteRow?.Name</strong> permanently? Its stored aliases will also be deleted.</p>
+                <p>Existing authored requirements are not changed, but they may become unrecognized until another matching definition is added.</p>
+            }
+            else if (modal == "import")
+            {
+                <p>This permanently replaces all Predicates, Crests, Methods, Items, Countables, and Souls in the requirement catalogue, including aliases. Existing requirement text is kept, but may be interpreted differently.</p>
+            }
+            @if (modalFeedback is not null) { <p class="danger" role="alert">@modalFeedback</p> }
+            @foreach (var issue in remoteIssues)
+            {
+                <p class="danger" role="alert">@IssueText(issue)</p>
+            }
+          </div>
+            <div class="requirement-catalogue-modal-footer"><div class="requirement-catalogue-modal-alternatives"></div><div class="requirement-catalogue-modal-commit-group">
+                <button type="button" class="catalogue-modal-action catalogue-modal-cancel" @onclick="CloseModalAsync">Cancel</button>
+                <button type="button" class="catalogue-modal-action @(modal == "edit" ? "catalogue-modal-apply" : "catalogue-modal-destructive")" disabled="@(modal == "edit" && !DraftValid)" @onclick="SubmitAsync">@Icon(busy, "")@(modal == "edit" ? "Apply" : modal == "delete" ? "delete" : "Replace")</button>
+            </div></div>
+        </fieldset>
+    }
+</dialog>

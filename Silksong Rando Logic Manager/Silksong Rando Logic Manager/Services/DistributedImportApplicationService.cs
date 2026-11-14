@@ -6,11 +6,22 @@ namespace Silksong_Rando_Logic_Manager.Services;
 
 // Stateless import orchestration. Callers hold only DistributedImportOrchestrationState
 // and shaped comparison evidence; every durable operation has its own transaction.
-public sealed class DistributedImportApplicationService(IDbContextFactory<LogicDbContext> contexts, TimeProvider timeProvider, SceneImageFileService sceneImages, ILogger<DistributedImportApplicationService> logger)
+public sealed class DistributedImportApplicationService(IDbContextFactory<LogicDbContext> contexts, TimeProvider timeProvider,
+    SceneImageFileService sceneImages, ILogger<DistributedImportApplicationService> logger, SharedPublicationCoordinator publications, Authentication.LiveAccess access)
 {
+    private string? preparationOwner;
+    private async Task<HistoryActor> GuardAsync(CancellationToken token)
+    {
+        var actor = await access.RequireAsync(Authentication.AccessPolicies.Author, token);
+        if (preparationOwner is not null && preparationOwner != actor.Owner)
+            throw new Authentication.AccessDeniedException("not_found", 404, "This import belongs to another account.");
+        preparationOwner ??= actor.Owner;
+        return HistoryActor.From(actor);
+    }
     // Read-only admission for the complete selection before Start is enabled.
     public async Task<DistributedImportOutcome> PrepareAsync(DistributedImportPackage package, CancellationToken ct = default)
     {
+        await GuardAsync(ct);
         var errors = await ValidateAgainstDatabaseAsync(package, ct);
         return errors.Count == 0 ? new DistributedImportPrepared(new(package.ExportVersion, package.IsPartialRoomDump,
             package.AreaMap?.Maps.Count ?? 0, package.RoomGroupings?.Groups.Count ?? 0, package.Rooms.Count,
@@ -25,6 +36,7 @@ public sealed class DistributedImportApplicationService(IDbContextFactory<LogicD
     // The caller owns this transient state only for the open wizard instance.
     public async Task<DistributedImportOutcome> StartAsync(DistributedImportStartRequest request, DistributedImportOrchestrationState? priorState, CancellationToken ct = default)
     {
+        await GuardAsync(ct);
         var errors = await ValidateAgainstDatabaseAsync(request.Package, ct);
         if (errors.Count != 0) return new DistributedImportRejected(errors);
         if (priorState is { RoomGroupingStageCompleted: true, ReviewRoomIds: not null })
@@ -54,6 +66,7 @@ public sealed class DistributedImportApplicationService(IDbContextFactory<LogicD
 
     public async Task<DistributedImportOutcome> PrepareRoomsAsync(DistributedImportOrchestrationState state, CancellationToken ct = default)
     {
+        await GuardAsync(ct);
         if (!ReadyForRooms(state, out var rejected)) return rejected;
         if (state.ReviewRoomIds is not null) return new DistributedImportStarted(state, state.AreaMapOutcome, state.RoomGroupingOutcome);
         return new DistributedImportStarted(await CreateReadyStateAsync(state.Package, state.AreaMapOutcome, state.RoomGroupingOutcome, ct), state.AreaMapOutcome, state.RoomGroupingOutcome);
@@ -61,6 +74,7 @@ public sealed class DistributedImportApplicationService(IDbContextFactory<LogicD
 
     public async Task<DistributedImportOutcome> PrepareRoomAsync(DistributedImportOrchestrationState state, Guid roomId, CancellationToken ct = default)
     {
+        await GuardAsync(ct);
         if (!ReadyForRooms(state, out var rejected)) return rejected;
         var incoming = state.Package.Rooms.SingleOrDefault(x => x.Id == roomId);
         if (incoming is null) return new DistributedImportRejected(["The requested room is not in the package."]);
@@ -72,6 +86,7 @@ public sealed class DistributedImportApplicationService(IDbContextFactory<LogicD
 
     public async Task<DistributedImportOutcome> DecideRoomAsync(DistributedImportOrchestrationState state, DistributedRoomDecisionIntent intent, DistributedRoomComparison reviewed, CancellationToken ct = default)
     {
+        await GuardAsync(ct);
         if (!ReadyForRooms(state, out var rejected)) return rejected;
         var incoming = state.Package.Rooms.SingleOrDefault(x => x.Id == intent.RoomId);
         if (incoming is null || reviewed.RoomId != intent.RoomId) return new DistributedImportRejected(["The room decision does not match this package comparison."]);
@@ -103,6 +118,7 @@ public sealed class DistributedImportApplicationService(IDbContextFactory<LogicD
 
     public async Task<DistributedImportOutcome> PrepareSweepAsync(DistributedImportOrchestrationState state, CancellationToken ct = default)
     {
+        await GuardAsync(ct);
         if (!ReadyForRooms(state, out var rejected)) return rejected;
         if (state.PendingRoomIds.Count != 0) return new DistributedImportRejected(["Every new or changed room requires an explicit decision before final omitted-room review."]);
         if (state.Package.IsPartialRoomDump != false) return new DistributedImportSweepPrepared([], new([]));
@@ -115,19 +131,24 @@ public sealed class DistributedImportApplicationService(IDbContextFactory<LogicD
 
     public async Task<DistributedImportOutcome> DecideSweepAsync(DistributedImportOrchestrationState state, DistributedImportSweepReview review, bool archive, CancellationToken ct = default)
     {
+        await GuardAsync(ct);
         if (!ReadyForRooms(state, out var rejected)) return rejected;
         if (state.PendingRoomIds.Count != 0) return new DistributedImportRejected(["Every new or changed room requires an explicit decision before final omitted-room review."]);
         if (state.Package.IsPartialRoomDump != false || !archive) return new DistributedImportSweepCompleted(false);
         try
         {
+            using var publication = await publications.AcquireAsync(ct);
+            var historyActor = await GuardAsync(ct);
             await using var db = await contexts.CreateDbContextAsync(ct);
-            await using var tx = await db.Database.BeginTransactionAsync(ct);
+            await using var tx = await LogicWriteScope.BeginAsync(db, publication, historyActor, ct);
             var reviewedIds = review.RoomIds.ToHashSet();
             var rows = await db.Rooms.Where(x => !x.IsArchived && reviewedIds.Contains(x.Id)).ToListAsync(ct);
             var now = timeProvider.GetUtcNow().UtcDateTime;
             foreach (var row in rows) { row.IsArchived = true; row.ArchivedUtc = now; row.UpdatedUtc = now; }
             using (db.SuppressAuditMetadata()) await db.SaveChangesAsync(ct);
-            await tx.CommitAsync(ct);
+            await tx.FinalizeAsync(ct);
+            var prepared = publication.PrepareAdvance(tx.FinalEffects.RoomFactsChanged, false);
+            await tx.CommitAsync(() => publication.PublishCommitted(prepared), ct);
             return new DistributedImportSweepCompleted(true);
         }
         catch (DbUpdateException ex) { return new DistributedImportFailed("final-sweep", ex.Message, state); }
@@ -137,8 +158,10 @@ public sealed class DistributedImportApplicationService(IDbContextFactory<LogicD
     private async Task<DistributedImportOutcome> ApplyReviewedRoomAsync(DistributedRoomDocument incoming, DistributedRoomComparison reviewed, DistributedRoomChildPlan? childPlan, DistributedImageChoice? imageChoice, DistributedOriginalChoice? originalChoice, CancellationToken ct)
     {
         using var imageAdmission = await sceneImages.AcquireLifecycleAsync(ct);
+        using var publication = await publications.AcquireAsync(ct);
+        var historyActor = await GuardAsync(ct);
         await using var db = await contexts.CreateDbContextAsync(ct);
-        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await using var tx = await LogicWriteScope.BeginAsync(db, publication, historyActor, ct);
         var fresh = await CompareAsync(db, incoming, ct);
         if (!SameComparison(reviewed, fresh))
             return fresh.Kind == DistributedRoomComparisonKind.Identical
@@ -190,7 +213,10 @@ public sealed class DistributedImportApplicationService(IDbContextFactory<LogicD
         else
             await ReconcileSelectedChildrenAsync(db, room.Id, incoming, childPlan!, operationUtc, ct);
         using (db.SuppressAuditMetadata()) { await db.SaveChangesAsync(ct); await new LogicReferenceResolver(db).ResolveAsync(ct); }
-        await tx.CommitAsync(ct);
+        await tx.FinalizeAsync(ct);
+        var prepared = publication.PrepareAdvance(tx.FinalEffects.RoomFactsChanged, false);
+        await tx.CommitAsync(() => publication.PublishCommitted(prepared), ct);
+        publication.Dispose();
         List<Exception> cleanupFailures = [];
         if (removeOriginal)
         {
@@ -215,7 +241,9 @@ public sealed class DistributedImportApplicationService(IDbContextFactory<LogicD
     {
         try
         {
-            await using var db = await contexts.CreateDbContextAsync(ct); await using var tx = await db.Database.BeginTransactionAsync(ct);
+            using var publication = await publications.AcquireAsync(ct);
+            var historyActor = await GuardAsync(ct);
+            await using var db = await contexts.CreateDbContextAsync(ct); await using var tx = await LogicWriteScope.BeginAsync(db, publication, historyActor, ct);
             var current = await db.RoomGroups.ToDictionaryAsync(x => x.Id, ct); var incomingIds = snapshot.Groups.Select(x => x.Id).ToHashSet();
             foreach (var source in snapshot.Groups)
             {
@@ -233,7 +261,10 @@ public sealed class DistributedImportApplicationService(IDbContextFactory<LogicD
                 db.RoomGroups.RemoveRange(current.Values.Where(x => removed.Contains(x.Id)));
             }
             using (db.SuppressAuditMetadata()) { await db.SaveChangesAsync(ct); await new LogicReferenceResolver(db).ResolveAsync(ct); }
-            await tx.CommitAsync(ct); return new("room-groupings", true, false, null);
+            await tx.FinalizeAsync(ct);
+            var prepared = publication.PrepareAdvance(tx.FinalEffects.RoomFactsChanged, false);
+            await tx.CommitAsync(() => publication.PublishCommitted(prepared), ct);
+            return new("room-groupings", true, false, null);
         }
         catch (DbUpdateException ex) { return new("room-groupings", false, false, "failed:" + ex.Message); }
     }
@@ -242,7 +273,9 @@ public sealed class DistributedImportApplicationService(IDbContextFactory<LogicD
     {
         try
         {
-            await using var db = await contexts.CreateDbContextAsync(ct); await using var tx = await db.Database.BeginTransactionAsync(ct);
+            using var publication = await publications.AcquireAsync(ct);
+            var historyActor = await GuardAsync(ct);
+            await using var db = await contexts.CreateDbContextAsync(ct); await using var tx = await LogicWriteScope.BeginAsync(db, publication, historyActor, ct);
             var maps = await db.Maps.ToDictionaryAsync(x => x.Id, ct); var zones = await db.MapZones.ToDictionaryAsync(x => x.Id, ct); var scenes = await db.MapScenes.ToDictionaryAsync(x => x.Id, ct);
             var chunks = await db.MapChunks.ToDictionaryAsync(x => x.Id, ct); var overlays = await db.MapOverlays.ToDictionaryAsync(x => x.Id, ct);
             var mapIds = snapshot.Maps.Select(x => x.Id).ToHashSet(); var zoneIds = snapshot.Maps.SelectMany(x => x.Zones).Select(x => x.Id).ToHashSet();
@@ -280,7 +313,10 @@ public sealed class DistributedImportApplicationService(IDbContextFactory<LogicD
                 }
             }
             using (db.SuppressAuditMetadata()) { await db.SaveChangesAsync(ct); await new LogicReferenceResolver(db).ResolveAsync(ct); }
-            await tx.CommitAsync(ct); return new("area-map", true, false, null);
+            await tx.FinalizeAsync(ct);
+            var prepared = publication.PrepareAdvance(tx.FinalEffects.RoomFactsChanged, false);
+            await tx.CommitAsync(() => publication.PublishCommitted(prepared), ct);
+            return new("area-map", true, false, null);
         }
         catch (DbUpdateException ex) { return new("area-map", false, false, "failed:" + ex.Message); }
     }

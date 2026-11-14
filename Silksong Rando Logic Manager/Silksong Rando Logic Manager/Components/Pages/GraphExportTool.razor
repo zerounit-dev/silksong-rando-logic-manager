@@ -1,0 +1,153 @@
+@page "/tools/graph-export"
+@layout ToolsLayout
+@rendermode InteractiveServer
+@implements IDisposable
+@inject IRoomGraphExportService RoomGraphExport
+@inject IJSRuntime JS
+@inject ILogger<GraphExportTool> Logger
+@inject DiagnosticState Diagnostics
+@inject Silksong_Rando_Logic_Manager.Authentication.LiveAccess Access
+
+<PageTitle>Export room graph | Silksong Logic Manager</PageTitle>
+
+<DiagnosticErrorBoundary>
+    <ChildContent>
+        <main class="requirement-catalogue-page tools-body" aria-busy="@exportingRoomGraph">
+            <h1 class="tool-title" tabindex="-1">export room graph</h1>
+            <div class="requirement-catalogue-actions graph-export-actions" aria-label="Graph commands">
+                    <button type="button" class="requirement-catalogue-action tool-action" @onclick="ExportRoomGraphAsync" disabled="@(disposed || exportingRoomGraph || roomGraphFailures is not null)"><i class="fa-solid fa-diagram-project" aria-hidden="true"></i>@(exportingRoomGraph ? "exporting room graph…" : "export room graph")</button>
+            </div>
+            @if (!string.IsNullOrWhiteSpace(message)) { <p class="requirement-catalogue-message tool-progress" role="status">@message</p> }
+        @if (roomGraphFailures is not null)
+        {
+                <section class="room-graph-report" aria-busy="@exportingRoomGraph" aria-labelledby="room-graph-failure-title">
+                    <h2 class="@(roomGraphFailures.Count == 0 ? "tool-warning" : "tool-error")" id="room-graph-failure-title">@(roomGraphFailures.Count == 0 ? "room graph export has issues" : "room graph export failed")</h2>
+                    <div class="room-graph-failure-content">
+                        @if (roomGraphFailures.Count != 0 && roomGraphWarnings.Count != 0) { <h3>blocking failures</h3> }
+                        @if (roomGraphFailures.Any(x => x.RoomRecordId is null))
+                        {
+                            <h3>global configuration</h3>
+                            <ul>@foreach (var failure in roomGraphFailures.Where(x => x.RoomRecordId is null)) { <li>@failure.Cause</li> }</ul>
+                        }
+                        @foreach (var group in roomGraphFailures.Where(x => x.RoomRecordId is not null).GroupBy(x => x.RoomRecordId))
+                        {
+                            var first = group.First();
+                            <h3>@first.RoomName@if (!string.IsNullOrWhiteSpace(first.RoomId)) { <span class="room-graph-failure-room-id"> (@first.RoomId)</span> } <a href="@($"/rooms/{first.RoomRecordId}")" target="_blank" rel="noopener noreferrer">[navigate]</a></h3>
+                            <ul>
+                                @foreach (var failure in group)
+                                {
+                                    <li>@if (!string.IsNullOrWhiteSpace(failure.ChildKind)) { <strong>@failure.ChildKind@if (!string.IsNullOrWhiteSpace(failure.ChildName)) { <text> “@failure.ChildName”</text> }<text>: </text></strong> }@failure.Cause</li>
+                                }
+                            </ul>
+                        }
+                        @if (roomGraphWarnings.Count != 0)
+                        {
+                            <h3>nonblocking location warnings</h3>
+                            <p>These locations will be exported under the unassigned node but will not be usable in the graph, even if their requirements translate successfully.</p>
+                            @foreach (var group in roomGraphWarnings.GroupBy(x => x.RoomRecordId))
+                            {
+                                var first = group.First();
+                                <h3>@first.RoomName@if (!string.IsNullOrWhiteSpace(first.RoomId)) { <span class="room-graph-failure-room-id"> (@first.RoomId)</span> }@if (first.RoomRecordId is { } roomRecordId) { <text> </text><a href="@($"/rooms/{roomRecordId}")" target="_blank" rel="noopener noreferrer">[navigate]</a> }</h3>
+                                <ul>
+                                    @foreach (var warning in group)
+                                    {
+                                        <li><strong>@warning.ChildKind “@warning.ChildName”: </strong>@warning.Cause</li>
+                                    }
+                                </ul>
+                            }
+                        }
+                    </div>
+                    <div class="requirement-catalogue-modal-footer"><div class="requirement-catalogue-modal-alternatives"></div><div class="requirement-catalogue-modal-commit-group">
+                        <button type="button" class="catalogue-modal-action catalogue-modal-close tool-action" @onclick="CloseRoomGraphFailures" disabled="@exportingRoomGraph">clear results</button>
+                        @if (roomGraphFailures.Count == 0)
+                        {
+                            <button type="button" class="catalogue-modal-action catalogue-modal-apply tool-action tool-primary" @onclick="ConfirmRoomGraphExportAsync" disabled="@(exportingRoomGraph || pendingRoomGraphContent is null)">export anyway</button>
+                        }
+                    </div></div>
+                </section>
+        }
+        </main>
+    </ChildContent>
+    <ErrorContent>
+        <div class="diagnostic-boundary-fallback" role="alert">Room graph export could not be displayed.<pre>@context.ToString()</pre></div>
+    </ErrorContent>
+</DiagnosticErrorBoundary>
+<DiagnosticModal />
+
+@code {
+    private bool exportingRoomGraph, disposed;
+    private string message = "";
+    private IReadOnlyList<RoomGraphExportFailure>? roomGraphFailures;
+    private IReadOnlyList<RoomGraphExportWarning> roomGraphWarnings = [];
+    private byte[]? pendingRoomGraphContent;
+
+    private async Task ExportRoomGraphAsync()
+    {
+        if (disposed || roomGraphFailures is not null || exportingRoomGraph) return;
+        exportingRoomGraph = true;
+        message = "Generating room graph…";
+        try
+        {
+            await Access.RequireAsync();
+            if (disposed) return;
+            var result = await RoomGraphExport.GenerateAsync();
+            if (disposed) return;
+            if (result.Succeeded)
+            {
+                message = "";
+                if (result.Warnings.Count == 0) await JS.InvokeVoidAsync("downloadFileFromBytes", RoomGraphExportResult.FileName, result.Content!);
+                else
+                {
+                    roomGraphFailures = result.Failures;
+                    roomGraphWarnings = result.Warnings;
+                    pendingRoomGraphContent = result.Content;
+                }
+            }
+            else if (result.Content is null && result.Failures.Count > 0)
+            {
+                message = "";
+                roomGraphFailures = result.Failures;
+                roomGraphWarnings = result.Warnings;
+                pendingRoomGraphContent = null;
+            }
+            else throw new InvalidOperationException("Unknown room graph export outcome.");
+        }
+        catch (Exception exception)
+        {
+            Logger.LogError(exception, "Unexpected room graph export failure.");
+            if (!disposed) Diagnostics.Show(exception.ToString());
+        }
+        finally { exportingRoomGraph = false; }
+    }
+
+    private async Task ConfirmRoomGraphExportAsync()
+    {
+        if (disposed || exportingRoomGraph || roomGraphFailures is not { Count: 0 } || pendingRoomGraphContent is not { } content) return;
+        exportingRoomGraph = true;
+        pendingRoomGraphContent = null;
+        try
+        {
+            await Access.RequireAsync();
+            if (!disposed) await JS.InvokeVoidAsync("downloadFileFromBytes", RoomGraphExportResult.FileName, content);
+        }
+        catch (Exception exception)
+        {
+            Logger.LogError(exception, "Unexpected room graph export download failure.");
+            if (!disposed) Diagnostics.Show(exception.ToString());
+        }
+        finally
+        {
+            exportingRoomGraph = false;
+            if (!disposed) CloseRoomGraphFailures();
+        }
+    }
+
+    private void CloseRoomGraphFailures()
+    {
+        if (exportingRoomGraph) return;
+        roomGraphFailures = null;
+        roomGraphWarnings = [];
+        pendingRoomGraphContent = null;
+    }
+    public void Dispose() { disposed = true; pendingRoomGraphContent = null; roomGraphFailures = null; roomGraphWarnings = []; }
+}

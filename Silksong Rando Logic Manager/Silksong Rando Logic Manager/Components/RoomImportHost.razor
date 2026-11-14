@@ -1,0 +1,60 @@
+@implements IDisposable
+@inject IJSRuntime JS
+@inject DiagnosticState Diagnostics
+@inject ILogger<RoomImportHost> Logger
+
+<DiagnosticErrorBoundary>
+    <ChildContent>
+        @if (ShowPickerButton)
+        {
+        <button class="room-import-picker tool-action" type="button" disabled="@(!CanOpenPicker)" aria-busy="@((!interactiveReady || openingPicker).ToString().ToLowerInvariant())" @onclick="OpenPickerAsync">
+            <span class="room-import-icon-slot" aria-hidden="true"><i class="fa-solid @(!interactiveReady || openingPicker ? "fa-spinner fa-spin" : "fa-file-import")"></i></span>
+            select JSON files
+        </button>
+        }
+        <DistributedImportWizard @ref="wizard" OnReset="OnReset" OnPickerStateChanged="PickerStateChanged" />
+    </ChildContent>
+    <ErrorContent>
+        <div class="diagnostic-boundary-fallback" role="alert">Room import could not be displayed.<pre>@context.ToString()</pre></div>
+    </ErrorContent>
+</DiagnosticErrorBoundary>
+<DiagnosticModal />
+
+@code {
+    [CascadingParameter] public Silksong_Rando_Logic_Manager.Authentication.ExecutionIdentity? Identity { get; set; }
+    [Parameter] public EventCallback OnReset { get; set; }
+    [Parameter] public bool ShowPickerButton { get; set; } = true;
+    [Parameter] public EventCallback OnReady { get; set; }
+    [Parameter] public EventCallback OnOpenPicker { get; set; }
+    private bool CanAuthor => Identity?.CanAuthor == true;
+    private DistributedImportWizard? wizard;
+    private bool interactiveReady, openingPicker, disposed;
+    public bool CanOpenPicker => CanAuthor && interactiveReady && !openingPicker && !disposed && wizard?.CanSelectFiles == true;
+    private void PickerStateChanged() { if (!disposed) StateHasChanged(); }
+
+    public Task<bool> RequestResetAsync() => disposed || openingPicker || wizard is null
+        ? Task.FromResult(false) : wizard.RequestResetAsync();
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && !disposed) { interactiveReady = true; StateHasChanged(); await OnReady.InvokeAsync(); }
+    }
+
+    public async Task OpenPickerAsync()
+    {
+        if (!CanOpenPicker) return;
+        openingPicker = true;
+        try
+        {
+            if (OnOpenPicker.HasDelegate) await OnOpenPicker.InvokeAsync();
+            else await JS.InvokeVoidAsync("openSceneUploadPicker", "distributed-import-input");
+        }
+        catch (Exception exception)
+        {
+            Logger.LogError(exception, "Unable to open the distributed room import picker.");
+            if (!disposed) Diagnostics.Show(exception.ToString());
+        }
+        finally { openingPicker = false; }
+    }
+    public void Dispose() => disposed = true;
+}

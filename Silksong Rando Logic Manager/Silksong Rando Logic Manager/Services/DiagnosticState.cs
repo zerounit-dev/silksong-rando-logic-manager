@@ -1,5 +1,6 @@
 namespace Silksong_Rando_Logic_Manager.Services;
 
+/// <summary>Local interactive-circuit error presentation, never a process-wide inbox.</summary>
 public sealed class DiagnosticState
 {
     private readonly object sync = new();

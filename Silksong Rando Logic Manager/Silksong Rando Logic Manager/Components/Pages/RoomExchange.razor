@@ -1,0 +1,240 @@
+@page "/tools/room-exchange"
+@layout ToolsLayout
+@rendermode InteractiveServer
+@implements IAsyncDisposable
+@using Silksong_Rando_Logic_Manager.Authentication
+@inject IJSRuntime JS
+@inject LiveAccess Access
+@inject ILogger<RoomExchange> Logger
+
+<PageTitle>Room exchange | Silksong Logic Manager</PageTitle>
+<main class="room-exchange tools-body">
+    <h1 class="tool-title">room exchange</h1>
+    <div class="exchange-actions" @ref="actions">
+        @if (Identity?.CanAuthor == true)
+        {
+            <button class="tool-action" type="button" disabled="@(!ready || blocked || exportBusy || errorOpen || selectingWorkflow)" @onclick="OpenImportAsync"><i class="fa-solid fa-file-import" aria-hidden="true"></i> import rooms</button>
+        }
+        else
+        {
+            <button class="tool-action" type="button" disabled><i class="fa-solid fa-file-import" aria-hidden="true"></i> import rooms</button>
+        }
+        <button class="tool-action" type="button" disabled="@(!ready || blocked || exportBusy || errorOpen || selectingWorkflow)" @onclick="OpenExportAsync"><i class="fa-solid fa-file-export" aria-hidden="true"></i> export rooms</button>
+    </div>
+    <p class="tool-error" @ref="lifetimeMessage" role="alert">@blockingMessage</p>
+    <div hidden="@(!importOpen)">
+        <RoomImportHost @ref="importHost" ShowPickerButton="false" OnReady="ImportHostReady" OnOpenPicker="OpenOwnedImportPickerAsync" OnReset="ImportReset" />
+    </div>
+<section @ref="exportBody" hidden="@(!exportOpen)" class="exchange-export-body" aria-labelledby="exchange-export-title">
+    <h2 class="tool-section-title" id="exchange-export-title">export complete catalogue</h2>
+    <fieldset disabled="@(exportBusy || errorOpen || blocked || selectingWorkflow)" class="exchange-fields">
+        <label class="sidebar-export-map-option tool-label"><input type="checkbox" @bind="includeAreaMap" /> include area map <span class="tool-metadata">(Recommended only when sharing the master catalogue.)</span></label>
+        @if (exportFeedback is not null) { <p class="danger" role="alert">@exportFeedback</p> }
+        <div class="confirmation-actions">
+            <button class="tool-action" type="button" @onclick="CloseExportAsync">cancel</button>
+            <button class="tool-action" type="button" @onclick="DownloadCompleteAsync" aria-busy="@exportBusy.ToString().ToLowerInvariant()"><span class="exchange-icon-slot" aria-hidden="true"><i class="fa-solid @(exportBusy ? "fa-spinner fa-spin" : "fa-file-export")"></i></span> download complete catalogue</button>
+        </div>
+    </fieldset>
+ </section>
+@if (errorOpen)
+{
+<section class="exchange-feedback" role="alert" aria-labelledby="exchange-error-title">
+    <h2 class="tool-section-title" id="exchange-error-title">an unexpected error occurred</h2>
+    <p class="tool-error">@errorMessage</p>
+    <div class="confirmation-actions"><button class="tool-action" type="button" @onclick="CloseErrorAsync">close</button></div>
+</section>
+}
+</main>
+
+@code {
+    [CascadingParameter] public ExecutionIdentity? Identity { get; set; }
+    private ElementReference exportBody, lifetimeMessage, actions;
+    private RoomImportHost? importHost;
+    private bool importOpen;
+    private bool selectingWorkflow;
+    private bool? requestedImport;
+    private bool importPickerPending;
+    private IJSObjectReference? module, owner;
+    private DotNetObjectReference<RoomExchange>? callback;
+    private bool ready, disposed, blocked, exportOpen, exportBusy, errorOpen, includeAreaMap;
+    private string? exportFeedback, errorMessage, blockingMessage;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (disposed) return;
+        try
+        {
+            if (firstRender)
+            {
+                var imported = await ApplicationModules.ImportAsync(JS, "room-exchange.js");
+                if (disposed) { await imported.DisposeAsync(); return; }
+                module = imported;
+                callback = DotNetObjectReference.Create(this);
+                owner = await module.InvokeAsync<IJSObjectReference>("mount", exportBody, actions, lifetimeMessage, callback, ApplicationBuild.Version);
+                if (disposed) { await ReleaseOwnerAsync(); return; }
+                ready = true;
+                StateHasChanged();
+            }
+            if (importPickerPending && ready && !blocked && importOpen && importHost?.CanOpenPicker == true)
+            {
+                importPickerPending = false;
+                await importHost.OpenPickerAsync();
+            }
+        }
+        catch (Exception exception)
+        {
+            Logger.LogError(exception, "Room Exchange presentation could not be initialized or displayed.");
+            if (!disposed)
+            {
+                blocked = true;
+                importPickerPending = false; requestedImport = null;
+                blockingMessage = "Room Exchange could not be initialized. Reload or reopen this page before trying again.";
+                StateHasChanged();
+            }
+        }
+    }
+
+    private Task OpenImportAsync() => SelectWorkflowAsync(true);
+    private Task OpenExportAsync() => SelectWorkflowAsync(false);
+    private void ImportHostReady() { if (!disposed) StateHasChanged(); }
+    private async Task OpenOwnedImportPickerAsync()
+    {
+        if (disposed || blocked || !importOpen || owner is null) return;
+        await owner.InvokeVoidAsync("openImportPicker");
+    }
+    private async Task SelectWorkflowAsync(bool importing)
+    {
+        if (disposed || !ready || blocked || errorOpen || exportBusy || selectingWorkflow || owner is null || (importing && Identity?.CanAuthor != true)) return;
+        selectingWorkflow = true;
+        try
+        {
+            if (!await AdmitCircuitCallbackAsync() || disposed || blocked) return;
+            if (importOpen && importHost is not null)
+            {
+                requestedImport = importing;
+                if (!await importHost.RequestResetAsync()) requestedImport = null;
+                return;
+            }
+            SelectWorkflow(importing);
+        }
+        catch (Exception exception) { PresentationFailure(exception); }
+        finally { selectingWorkflow = false; }
+    }
+
+    private void SelectWorkflow(bool importing)
+    {
+        importOpen = importing; exportOpen = !importing;
+        importPickerPending = importing;
+        includeAreaMap = false; exportFeedback = null;
+    }
+    private void ImportReset()
+    {
+        if (disposed || blocked) { requestedImport = null; importPickerPending = false; return; }
+        importOpen = false;
+        importPickerPending = false;
+        if (requestedImport is { } importing) SelectWorkflow(importing);
+        requestedImport = null;
+    }
+    private void CloseExportAsync()
+    {
+        if (disposed || blocked || exportBusy || selectingWorkflow || errorOpen || !exportOpen || owner is null) return;
+        exportOpen = false; exportFeedback = null;
+    }
+
+    private async Task DownloadCompleteAsync()
+    {
+        if (disposed || blocked || !exportOpen || exportBusy || selectingWorkflow || errorOpen || owner is null) return;
+        exportBusy = true; exportFeedback = null;
+        var submittedMap = includeAreaMap;
+        StateHasChanged();
+        try
+        {
+            // Fresh operation admission, not a cached presentation capability.
+            var actor = await Access.RequireAsync();
+            if (disposed || blocked) return;
+            var result = await owner.InvokeAsync<ExportDelivery>("download", submittedMap, actor.WorkspaceKey);
+            if (disposed || blocked || result.Kind == "disposed") return;
+            if (result.Denial is { } denial)
+            {
+                errorMessage = denial.Message;
+                errorOpen = true;
+            }
+            else if (result.Kind == "handed-off")
+            {
+                exportOpen = false;
+            }
+            else if (result.Kind == "type-correction" && !string.IsNullOrWhiteSpace(result.Detail)) exportFeedback = result.Detail;
+            else throw new InvalidOperationException("Export delivery did not complete.");
+        }
+        catch (AccessDeniedException denial)
+        {
+            if (!disposed && !blocked) { errorMessage = denial.Message; errorOpen = true; }
+        }
+        catch (Exception exception)
+        {
+            Logger.LogError(exception, "Complete catalogue download failed.");
+            if (!disposed && !blocked)
+            {
+                errorMessage = "The complete catalogue could not be prepared for download. Consult the logs when contacting the developer.";
+                errorOpen = true;
+            }
+        }
+        finally
+        {
+            exportBusy = false;
+            if (!disposed) StateHasChanged();
+        }
+    }
+
+    private void CloseErrorAsync()
+    {
+        if (disposed || blocked || owner is null) return;
+        errorOpen = false;
+    }
+
+    private void PresentationFailure(Exception exception)
+    {
+        Logger.LogError(exception, "Room Exchange workflow interaction failed.");
+        if (disposed) return;
+        blocked = true;
+        importPickerPending = false; requestedImport = null;
+        blockingMessage = "Room Exchange could not continue. Reload or reopen this page before trying again.";
+        exportFeedback = errorMessage = blockingMessage;
+    }
+
+    [JSInvokable]
+    public Task ApplicationVersionRejected(string? serverVersion)
+    {
+        if (disposed) return Task.CompletedTask;
+        blocked = true;
+        importPickerPending = false; requestedImport = null;
+        blockingMessage = "The application changed. Reload or reopen this page before exporting rooms.";
+        return InvokeAsync(StateHasChanged);
+    }
+
+    private async Task ReleaseOwnerAsync()
+    {
+        var current = owner; owner = null;
+        if (current is null) return;
+        try { await current.InvokeVoidAsync("dispose"); }
+        finally { await current.DisposeAsync(); }
+    }
+    public async ValueTask DisposeAsync()
+    {
+        disposed = true;
+        importPickerPending = false; requestedImport = null;
+        try { await ReleaseOwnerAsync(); }
+        catch (JSDisconnectedException) { }
+        catch (Exception exception) { Logger.LogError(exception, "Room Exchange download cleanup failed."); }
+        finally
+        {
+            callback?.Dispose();
+            if (module is not null)
+            {
+                try { await module.DisposeAsync(); }
+                catch (JSDisconnectedException) { }
+            }
+        }
+    }
+    private sealed record ExportDelivery(string Kind, string? Detail, SilksongRandoLogicManager.Contracts.AccessDenial? Denial);
+}

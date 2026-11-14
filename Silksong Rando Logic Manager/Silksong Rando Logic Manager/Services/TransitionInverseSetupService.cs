@@ -3,10 +3,13 @@ using Silksong_Rando_Logic_Manager.Data;
 
 namespace Silksong_Rando_Logic_Manager.Services;
 
-public sealed class TransitionInverseSetupService(IDbContextFactory<LogicDbContext> dbContextFactory)
+public sealed partial class TransitionInverseSetupService(IDbContextFactory<LogicDbContext> dbContextFactory,
+    SharedPublicationCoordinator publications, ILogger<TransitionInverseSetupService> logger,
+    SceneImageFileService sceneImages, Authentication.LiveAccess access)
 {
     public async Task<TransitionInverseSetupDraft?> GetDraftAsync(Guid sourceTransitionId, CancellationToken cancellationToken = default)
     {
+        await access.RequireAsync(Authentication.AccessPolicies.Author, cancellationToken);
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         var rooms = await db.Rooms.AsNoTracking().ToListAsync(cancellationToken);
         var transitions = await db.RoomTransitions.AsNoTracking().ToListAsync(cancellationToken);
@@ -15,8 +18,10 @@ public sealed class TransitionInverseSetupService(IDbContextFactory<LogicDbConte
 
     public async Task<bool> ApplyAsync(Guid sourceTransitionId, CancellationToken cancellationToken = default)
     {
+        using var publication = await publications.AcquireAsync(cancellationToken);
+        var historyActor = HistoryActor.From(await access.RequireAsync(Authentication.AccessPolicies.Author, cancellationToken));
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
-        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        await using var transaction = await LogicWriteScope.BeginAsync(db, publication, historyActor, cancellationToken);
         var rooms = await db.Rooms.ToListAsync(cancellationToken);
         var transitions = await db.RoomTransitions.ToListAsync(cancellationToken);
         var source = transitions.SingleOrDefault(x => x.Id == sourceTransitionId);
@@ -39,7 +44,9 @@ public sealed class TransitionInverseSetupService(IDbContextFactory<LogicDbConte
 
         await db.SaveChangesAsync(cancellationToken);
         await new LogicReferenceResolver(db).ResolveAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+        await transaction.FinalizeAsync(cancellationToken);
+        var prepared = publication.PrepareAdvance(transaction.FinalEffects.RoomFactsChanged, false);
+        await transaction.CommitAsync(() => publication.PublishCommitted(prepared), cancellationToken);
         return true;
     }
 

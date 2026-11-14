@@ -46,14 +46,20 @@ public sealed class BulkEnemyIngestService
     private readonly string databasePath;
     private readonly BulkEnemyContextFactory contexts;
     private readonly SceneImportService importer;
+    // This class is composed only by the standalone bulk command, not the web
+    // application. Its local services share this one process-workflow admission;
+    // it does not observe or invalidate a separately running server.
+    private readonly SharedPublicationCoordinator publications = SharedPublicationCoordinator.CreateStandalone();
     private BulkEnemyPlan? preparedPlan;
     private bool firstWriteChecked;
 
-    public BulkEnemyIngestService(string databasePath, ILogger<RequirementValidationService> validationLogger)
+    public BulkEnemyIngestService(string databasePath, ILogger<RequirementValidationService> validationLogger,
+        ILogger<SceneImportService> importLogger)
     {
         this.databasePath = Path.GetFullPath(databasePath);
         contexts = new(this.databasePath);
-        importer = new(contexts, new RequirementValidationService(contexts, validationLogger));
+        importer = SceneImportService.CreateForStandaloneBulkImport(contexts,
+            RequirementValidationService.CreateForStandaloneBulkImport(contexts, validationLogger, publications), publications, importLogger);
     }
 
     public static byte[] PlanBytes(BulkEnemyPlan plan) => JsonSerializer.SerializeToUtf8Bytes(plan, ArtifactJson);
@@ -240,8 +246,9 @@ public sealed class BulkEnemyIngestService
         var plan = preparedPlan ?? throw new InvalidOperationException("Verified backup and plan preparation required.");
         if (!plan.Placeholders.Contains(unit)) throw new InvalidOperationException("Placeholder is not an approved unit.");
         await BeforeFirstWriteAsync(token);
+        using var publication = await publications.AcquireAsync(token);
         await using var db = contexts.CreateDbContext();
-        await using var transaction = await db.Database.BeginTransactionAsync(token);
+        await using var transaction = await LogicWriteScope.BeginAsync(db, publication, HistoryActor.StandaloneOperator, token);
         var rooms = await db.Rooms.AsNoTracking().Where(r => !r.IsArchived)
             .Select(r => new RoomIdentity(r.Id, r.FriendlyName, r.InGameId)).ToListAsync(token);
         var matching = rooms.Where(r => Matches(r.InGameId, unit.SceneName)).ToArray();
@@ -253,7 +260,8 @@ public sealed class BulkEnemyIngestService
             throw new InvalidOperationException("Placeholder recognition changed; no authored fields were overwritten.");
         if (namesakes.Count == 1)
         {
-            await transaction.CommitAsync(token);
+            await transaction.FinalizeAsync(token);
+            await transaction.CommitAsync(token: token);
             return new(0, 0, 1, [namesakes[0].Id]);
         }
         var next = (await db.CheckLocations.Where(c => c.RoomId == unit.RoomId && !c.IsArchived)
@@ -268,7 +276,8 @@ public sealed class BulkEnemyIngestService
         await new LogicReferenceResolver(db).ResolveAsync(token);
         // Blank Requirements have the normal null validation result; no authored timestamp rewrite.
         using (db.SuppressAuditMetadata()) await db.SaveChangesAsync(token);
-        await transaction.CommitAsync(token);
+        await transaction.FinalizeAsync(token);
+        await transaction.CommitAsync(token: token);
         return new(1, 0, 0, [row.Id]);
     }
 
@@ -300,6 +309,15 @@ public sealed class BulkEnemyIngestService
         await using var transaction = connection.BeginTransaction(deferred: true);
         if (BulkEnemyDatabase.Fingerprint(connection, transaction, token) != plan.DatabaseFingerprint)
             throw new BulkEnemyBaselineException("Database changed after backup; regenerate plan.");
+        // Offline operator-owned workflow only: initialize the same permanent scope
+        // from this verified snapshot, without changing any database value or adding
+        // a commit stage. This private coordinator never observes a running server.
+        using var publication = await publications.AcquireAsync(token);
+        await using var db = BulkEnemyDatabase.Context(connection);
+        await db.Database.UseTransactionAsync(transaction, token);
+        var completion = await LogicCompletionMaintenance.ReadIndexAsync(db, token);
+        var schema = await LogicCacheSql.ReadSchemaAsync(connection, transaction, token);
+        publication.InitializeCache(schema, completion);
         firstWriteChecked = true;
     }
 

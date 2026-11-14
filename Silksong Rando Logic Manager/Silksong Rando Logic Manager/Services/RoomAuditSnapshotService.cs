@@ -1,29 +1,29 @@
 using Microsoft.EntityFrameworkCore;
 using System.Collections.Immutable;
 using Silksong_Rando_Logic_Manager.Data;
+using SilksongRandoLogicManager.Contracts;
 
 namespace Silksong_Rando_Logic_Manager.Services;
 
-public sealed class RoomAuditSnapshotService(IDbContextFactory<LogicDbContext> contexts, ISceneLayoutLoader scenes)
+public sealed class RoomAuditSnapshotService(IDbContextFactory<LogicDbContext> contexts, ISceneLayoutLoader scenes,
+    Authentication.LiveAccess access, SceneImageFileService images, SharedPublicationCoordinator publications)
 {
-    public async Task<AuditRoomCatalogue> LoadCatalogueAsync(CancellationToken token)
+    internal async Task<CacheResult<AuditSnapshotResponse>> LoadAsync(Guid roomId, LogicCacheCheckpoint? known, CancellationToken token)
     {
-        await using var db = await contexts.CreateDbContextAsync(token);
-        var rooms = await db.Rooms.AsNoTracking().Where(room => !room.IsArchived)
-            .Select(room => new AuditRoomCatalogueEntry(room.Id, room.FriendlyName, room.InGameId,
-                room.RoomGroupId, room.RoomGroup == null ? null : room.RoomGroup.FriendlyName,
-                room.RoomGroup == null ? 0 : room.RoomGroup.SortOrder, room.SortOrder)).ToArrayAsync(token);
-        token.ThrowIfCancellationRequested();
-        return new(rooms.OrderBy(room => room.GroupId.HasValue)
-            .ThenBy(room => room.GroupSortOrder).ThenBy(room => room.GroupName, StringComparer.Ordinal)
-            .ThenBy(room => room.GroupId).ThenBy(room => room.SortOrder)
-            .ThenBy(room => room.FriendlyName, StringComparer.Ordinal).ThenBy(room => room.Id).ToImmutableArray());
-    }
-
-    public async Task<RoomAuditSnapshot?> LoadAsync(Guid roomId, CancellationToken token)
-    {
+        // Pin semantic source AND complete cache coverage in the same admitted SQL
+        // snapshot. A later catch-up cannot certify what this pinned analysis read.
+        using var lifecycle = await images.AcquireLifecycleAsync(token);
+        using var publication = await publications.AcquireAsync(token);
+        await access.RequireAsync(token: token);
         await using var db = await contexts.CreateDbContextAsync(token);
         await using var read = await db.Database.BeginTransactionAsync(token);
+        var snapshot = await LoadSnapshotAsync(db, roomId, token);
+        var cache = await LogicCacheTransfer.ReadAdmittedAsync(db, publication, known, token);
+        return new(new(snapshot), cache);
+    }
+
+    private async Task<RoomAuditSnapshot?> LoadSnapshotAsync(LogicDbContext db, Guid roomId, CancellationToken token)
+    {
         var room = await db.Rooms.AsNoTracking().Where(x => x.Id == roomId && !x.IsArchived)
             .Select(x => new { x.Id, x.FriendlyName }).SingleOrDefaultAsync(token);
         if (room is null) return null;

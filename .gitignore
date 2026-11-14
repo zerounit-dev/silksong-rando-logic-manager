@@ -30,6 +30,27 @@ BenchmarkDotNet.Artifacts/
 *.log
 
 # Local configuration and secrets
+/Silksong Rando Logic Manager/Silksong Rando Logic Manager/Config/*
+!/Silksong Rando Logic Manager/Silksong Rando Logic Manager/Config/appsettings.json
+!/Silksong Rando Logic Manager/Silksong Rando Logic Manager/Config/appsettings.Development.json
+/Silksong Rando Logic Manager/Silksong Rando Logic Manager/Storage/*
+!/Silksong Rando Logic Manager/Silksong Rando Logic Manager/Storage/.gitkeep
+# Deliberate public seed/image families only; private stores and rollback stay ignored.
+!/Silksong Rando Logic Manager/Silksong Rando Logic Manager/Storage/silksong-rando-logic.db
+!/Silksong Rando Logic Manager/Silksong Rando Logic Manager/Storage/scenes/
+/Silksong Rando Logic Manager/Silksong Rando Logic Manager/Storage/scenes/*
+!/Silksong Rando Logic Manager/Silksong Rando Logic Manager/Storage/scenes/*.webp
+!/Silksong Rando Logic Manager/Silksong Rando Logic Manager/Storage/scene-originals/
+/Silksong Rando Logic Manager/Silksong Rando Logic Manager/Storage/scene-originals/*
+!/Silksong Rando Logic Manager/Silksong Rando Logic Manager/Storage/scene-originals/*.image
+!/Silksong Rando Logic Manager/Silksong Rando Logic Manager/Storage/scene-source/
+/Silksong Rando Logic Manager/Silksong Rando Logic Manager/Storage/scene-source/*
+!/Silksong Rando Logic Manager/Silksong Rando Logic Manager/Storage/scene-source/preview.webp
+!/Silksong Rando Logic Manager/Silksong Rando Logic Manager/Storage/scene-source/build.json
+!/Silksong Rando Logic Manager/Silksong Rando Logic Manager/Storage/scene-source/tiles/
+/Silksong Rando Logic Manager/Silksong Rando Logic Manager/Storage/scene-source/tiles/*
+!/Silksong Rando Logic Manager/Silksong Rando Logic Manager/Storage/scene-source/tiles/*.webp
+!/Silksong Rando Logic Manager/Silksong Rando Logic Manager/Storage/scene-source/tiles/ATTRIBUTION.md
 .opencode/
 AGENTS.md
 opencode.json
@@ -43,6 +64,13 @@ opencode.json
 *.pubxml
 
 # Runtime and generated development state
+**/[Dd]ata/authentication.json
+**/[Dd]ata/accounts.db*
+**/[Dd]ata/authentication/
+**/[Dd]ata/scene-image-staging/
+**/[Dd]ata/Publishing/
+**/[Dd]ata/history/
+**/[Dd]ata/logs/
 **/Data/backups/
 **/data/backups/
 *.db-wal

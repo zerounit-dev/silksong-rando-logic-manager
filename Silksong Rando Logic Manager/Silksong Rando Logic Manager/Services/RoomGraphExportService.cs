@@ -4,9 +4,23 @@ using System.Globalization;
 
 namespace Silksong_Rando_Logic_Manager.Services;
 
-public sealed class RoomGraphExportService(IDbContextFactory<LogicDbContext> contexts) : IRoomGraphExportService
+public sealed class RoomGraphExportService(IDbContextFactory<LogicDbContext> contexts,
+    SharedPublicationCoordinator publications, Authentication.LiveAccess access) : IRoomGraphExportService
 {
     public async Task<RoomGraphExportResult> GenerateAsync(CancellationToken cancellationToken = default)
+    {
+        using var publication = await publications.AcquireAsync(cancellationToken);
+        await access.RequireAsync(token: cancellationToken);
+        return await GenerateAsync(contexts, publication, cancellationToken);
+    }
+
+    // Only the publishing copy already acquired under live admission can use this
+    // entry. Rendering an immutable prepared database must not block live writes.
+    internal static Task<RoomGraphExportResult> GeneratePreparedAsync(Publishing.PublishingSnapshotFactory contexts,
+        CancellationToken cancellationToken = default) => GenerateAsync(contexts, null, cancellationToken);
+
+    private static async Task<RoomGraphExportResult> GenerateAsync(IDbContextFactory<LogicDbContext> contexts,
+        SharedPublicationCoordinator.Admission? publication, CancellationToken cancellationToken)
     {
         await using var db = await contexts.CreateDbContextAsync(cancellationToken);
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
@@ -24,6 +38,7 @@ public sealed class RoomGraphExportService(IDbContextFactory<LogicDbContext> con
         var methods = await db.RequirementMethods.AsNoTracking().OrderBy(x => x.SortOrder).ThenBy(x => x.Id)
             .Select(x => new ItemRow(x.Id, x.Name, x.Category, x.OutputValue, x.Aliases, x.Notes, x.SortOrder)).ToListAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        publication?.Dispose();
 
         var globalFailures = new List<RoomGraphExportFailure>();
         var typeLegend = RoomExportStructure.BuildTypeLegend(globalFailures);

@@ -1,0 +1,84 @@
+@implements IDisposable
+@inject ILogger<AuditGateFocus> Logger
+@{
+    var result = Evaluation.Rows[(Row.Kind, Row.Id)];
+}
+@if (ShowCurrentStatus)
+{
+@if (Comparisons.Count > 1)
+{
+    @foreach (var comparison in Comparisons)
+    { <p><span class="audit-comparison-origin">From: @comparison.Label</span> @RoomAuditEvaluator.GateStatus(Row, comparison.Evaluation.Rows[(Row.Kind, Row.Id)])</p> }
+}
+else
+{ <p>@RoomAuditEvaluator.GateStatus(Row, Comparisons.Count == 1 ? Comparisons[0].Evaluation.Rows[(Row.Kind, Row.Id)] : result)</p> }
+}
+@if (analyzing) { <p role="status">Analyzing requirement sets…</p><button type="button" @onclick="Cancel">Cancel</button> }
+else if (failure is not null) { <p role="status">@failure</p><button type="button" @onclick="(() => Host.Blocked ? Task.CompletedTask : AnalyzeAsync())">Retry</button> }
+else if (answer is not null && preparation?.Requirements == Evaluation.Facts.Requirements)
+{
+<AuditSemanticRequirements View="preparation!" Context="Evaluation.Facts" Comparisons="Comparisons" />
+@foreach (var note in notices.Concat(result.Leaves.SelectMany(x => x.Notices ?? [])).Distinct())
+{ <p class="audit-help">@note</p> }
+@foreach (var issue in answer.Unresolved)
+{ <p class="audit-unresolved">? Incomplete alternative: @issue.Reason</p> }
+@if (answer.Empty && answer.Unresolved.Length == 0)
+{ <p>✕ No sufficient requirement set.</p> }
+@if (answer.Impassable.Length > 0)
+{ <details><summary>Blocked alternatives</summary>@foreach (var issue in answer.Impassable) { <p>@issue.Reason</p> }</details> }
+}
+@code {
+    [CascadingParameter] public AuditHost Host { get; set; } = null!;
+    [Parameter, EditorRequired] public AuditRow Row { get; set; } = null!;
+    [Parameter, EditorRequired] public RoomAuditEvaluator Evaluator { get; set; } = null!;
+    [Parameter, EditorRequired] public AuditEvaluation Evaluation { get; set; } = null!;
+    [Parameter] public IReadOnlyList<AuditOriginComparison> Comparisons { get; set; } = [];
+    [Parameter] public bool ShowCurrentStatus { get; set; } = true;
+    private RoomAuditEvaluator? owner;
+    private AuditRow? row;
+    private AuditRequirementsContext requirements;
+    private sealed record Outcome(bool Empty, System.Collections.Immutable.ImmutableArray<AuditAnalysisIssue> Unresolved,
+        System.Collections.Immutable.ImmutableArray<AuditAnalysisIssue> Impassable);
+    private Outcome? answer;
+    private PreparedAuditRequirementView? preparation;
+    private IReadOnlyList<string> notices = [];
+    private CancellationTokenSource? cancellation;
+    private long revision;
+    private bool analyzing, disposed;
+    private string? failure;
+    protected override Task OnParametersSetAsync()
+    {
+        if (disposed || owner == Evaluator && row == Row && requirements == Evaluation.Facts.Requirements) return Task.CompletedTask;
+        owner = Evaluator; row = Row; requirements = Evaluation.Facts.Requirements;
+        return AnalyzeAsync();
+    }
+    private async Task AnalyzeAsync()
+    {
+        if (disposed) return;
+        Stop(); var version = revision; var evaluator = Evaluator; var current = Row; var mode = requirements;
+        cancellation = new(); var token = cancellation.Token;
+        answer = null; preparation = null; notices = []; failure = null; analyzing = true;
+        try
+        {
+            var result = await Host.ExecuteAsync(() =>
+            {
+                var prepared = evaluator.PrepareOwnRequirements(current, mode, token);
+                token.ThrowIfCancellationRequested(); return (Gate: new Outcome(prepared.Empty, prepared.Unresolved, prepared.Impassable), Prepared: prepared, Notes: prepared.Notices);
+            }, token);
+            if (Current())
+            { answer = result.Gate; preparation = result.Prepared; notices = result.Notes; }
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+        catch (Exception exception)
+        {
+            Logger.LogError(exception, "Room audit requirement analysis failed");
+            if (Current()) failure = "Requirements could not be analyzed. Retry.";
+        }
+        finally { if (Current()) analyzing = false; }
+        bool Current() => !disposed && !token.IsCancellationRequested && version == revision && owner == evaluator &&
+            row == current && requirements == mode && Evaluation.Facts.Requirements == mode;
+    }
+    private void Stop() { revision++; cancellation?.Cancel(); cancellation?.Dispose(); cancellation = null; analyzing = false; }
+    private void Cancel() { if (Host.Blocked) return; Stop(); answer = null; preparation = null; notices = []; failure = "Analysis canceled. No requirement conclusion was made."; }
+    public void Dispose() { disposed = true; Stop(); }
+}

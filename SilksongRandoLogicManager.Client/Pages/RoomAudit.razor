@@ -1,0 +1,10 @@
+@page "/rooms/{RoomId:guid}/audit"
+@using Silksong_Rando_Logic_Manager.Components.RoomAudit
+@using SilksongRandoLogicManager.Client.Components
+<AuditErrorBoundary><CascadingValue Value="host" IsFixed="true"><AuditWorkspace RoomId="RoomId" ExternalBlocked="App.GeneralErrorOpen" /></CascadingValue></AuditErrorBoundary>
+@code {
+    [Parameter] public Guid RoomId { get; set; }
+    [CascadingParameter] public App App { get; set; } = null!;
+    private AuditHost host = null!;
+    protected override void OnInitialized() => host = App.CreateAuditHost();
+}

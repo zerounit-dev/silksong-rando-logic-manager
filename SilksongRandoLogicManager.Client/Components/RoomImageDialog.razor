@@ -1,0 +1,166 @@
+@using System.Globalization
+@using Silksong_Rando_Logic_Manager.Services
+@using Silksong_Rando_Logic_Manager.Components.RoomEditorV2
+@using Silksong_Rando_Logic_Manager.Components.RoomEditorV2.Contracts
+@using SilksongRandoLogicManager.Contracts
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
+<h2 id="v2-page-modal-title">scene bounds and image</h2>
+<div class="scene-image-capture-body">
+<div class="scene-image-capture-viewer">
+    <svg @ref="preview" class="scene-image-capture-preview" data-v2-scene-capture-preview="true" data-pending-upload="@PendingUpload.ToString().ToLowerInvariant()" data-source-width="@N(View.SourceWidth)" data-source-height="@N(View.SourceHeight)" data-base-viewbox="@ViewBox" viewBox="@ViewBox" role="img" aria-label="Scene bounds and image preview">
+        @if (UseImage && View.PreviewUrl is not null) { <image class="scene-image-capture-source" data-v2-scene-capture-source="true" href="@View.PreviewUrl" preserveAspectRatio="none" /> }
+        <rect class="scene-layout-room-bounds" data-v2-scene-capture-reference="true" pointer-events="none" />
+        @foreach (var marker in Markers)
+        {
+            var y = -marker.Y;
+            <g class="@($"scene-layout-marker scene-layout-{marker.Kind}{(marker.IsEnemy ? " scene-layout-enemy" : "")}")" data-v2-scene-capture-marker="@marker.Kind">
+                @if (marker.Kind == "check") { <circle cx="@N(marker.X)" cy="@N(y)" r="1.5" /> }
+                else { <rect x="@N(marker.X-5.25)" y="@N(y-3)" width="10.5" height="6" rx=".6" /><svg:text x="@N(marker.X)" y="@N(y)" text-anchor="middle" dominant-baseline="central">@marker.Label</svg:text> }
+            </g>
+        }
+        <line data-v2-scene-minimum="x" stroke="#00ffff" stroke-width="3" vector-effect="non-scaling-stroke" style="cursor:ew-resize" />
+        <line data-v2-scene-minimum="y" stroke="#00ffff" stroke-width="3" vector-effect="non-scaling-stroke" style="cursor:ns-resize" />
+        <line data-v2-scene-minimum-hit="x" stroke="transparent" stroke-width="16" vector-effect="non-scaling-stroke" pointer-events="stroke" style="cursor:ew-resize" />
+        <line data-v2-scene-minimum-hit="y" stroke="transparent" stroke-width="16" vector-effect="non-scaling-stroke" pointer-events="stroke" style="cursor:ns-resize" />
+    </svg>
+    <div class="scene-image-capture-preview-controls">
+        <p class="scene-image-capture-legend">wheel: zoom | drag: inspect @if (UseImage) { <span>| cyan edges: minima</span> } @if (AlignmentVisible) { <span>| Ctrl+wheel: scale | Ctrl+drag: position image</span> }</p>
+        <button @ref="annotationToggle" type="button" class="icon-button" disabled="@Disabled" aria-pressed="true" aria-label="Hide annotations" title="Hide annotations"><i class="fa-solid fa-layer-group" aria-hidden="true"></i></button>
+    </div>
+</div>
+<div @ref="numericFields" class="scene-image-capture-options">
+    <div class="scene-image-source-controls">
+        <label>Source <select value="@View.Source" @onchange="SelectSourceAsync" disabled="@(Disabled || UploadUncertain)"><option value="Uploaded">Uploaded image</option><option value="ScriptersWar">ScriptersWar crop</option><option value="None">None</option></select></label>
+        @if (UseImage && View.Source == RoomSceneImageSource.Uploaded)
+        {
+            <label class="scene-image-upload">Choose or drop PNG, JPEG or WebP (up to 256 MiB)<InputFile OnChange="UploadAsync" accept="image/png,image/jpeg,image/webp" aria-label="Choose or drop an uploaded room image" disabled="@(Disabled || UploadUncertain)" /></label>
+        }
+        @if (Preparing) { <span role="status">Preparing image source…</span> }
+        @if (UploadUncertain) { <button type="button" disabled="@Disabled" @onclick="RecoverUpload">check upload</button> }
+    </div>
+    <input @ref="useSceneImage" type="checkbox" checked="@UseImage" hidden tabindex="-1" aria-hidden="true" />
+    <div class="scene-image-capture-fields">
+        <div class="scene-image-capture-field-group" hidden="@(!UseImage)"><h3>scene bounds</h3><div class="scene-image-capture-field-row">
+            <div class="scene-image-capture-axis-pair"><label>min X <input @ref="minX" type="number" step="any" aria-label="Scene minimum X" value="@View.Values.MinX" @oninput="ChangedAsync" disabled="@(Disabled || !UseImage)" /></label><label>min Y <input @ref="minY" type="number" step="any" aria-label="Scene minimum Y" value="@View.Values.MinY" @oninput="ChangedAsync" disabled="@(Disabled || !UseImage)" /></label></div>
+            <div class="scene-image-capture-axis-pair"><label>max X <input @ref="maxX" type="number" step="any" aria-label="Scene maximum X" value="@View.Values.MaxX" @oninput="ChangedAsync" disabled="@(Disabled || !UseImage)" /></label><label>max Y <input @ref="maxY" type="number" step="any" aria-label="Scene maximum Y" value="@View.Values.MaxY" @oninput="ChangedAsync" disabled="@(Disabled || !UseImage)" /></label></div>
+        </div></div>
+        <div class="scene-image-capture-field-group" hidden="@(!PendingUpload)"><h3>upload preparation (once)</h3>
+            <label>Interpretation <select @ref="interpretation" value="@(View.Values.NativeUpload ? "native" : "advanced")" @onchange="ChangedAsync" disabled="@(Disabled || !PendingUpload)"><option value="native">Native (64 pixels/unit)</option><option value="advanced">Advanced</option></select></label>
+            <label>Resolution <select @ref="resolution" value="@View.Values.UploadResolution" @onchange="ChangedAsync" disabled="@(Disabled || !PendingUpload)"><option value="recommended">Recommended</option><option value="keep">Keep input resolution</option><option value="32">32 pixels/unit</option><option value="16">16 pixels/unit</option><option value="8">8 pixels/unit</option><option value="custom">Custom target</option></select></label>
+            <label hidden="@(View.Values.UploadResolution != "custom")">Target pixels/unit <input @ref="customTarget" type="number" step="any" value="@View.Values.UploadCustomTarget" @oninput="ChangedAsync" disabled="@(Disabled || !PendingUpload || View.Values.UploadResolution != "custom")" /></label>
+            <output @ref="preparationSummary" class="scene-image-preparation-summary" aria-live="polite"></output>
+        </div>
+        <div class="scene-image-capture-field-group" hidden="@(!AlignmentVisible)"><h3>@(PendingUpload ? "input calibration / retained-pixel pan" : "image mapping")</h3><div class="scene-image-capture-field-row">
+            <div class="scene-image-capture-axis-pair"><label>@(PendingUpload ? "input pixels/unit X" : "pixels/unit X") <input @ref="scaleX" type="number" step="0.1" aria-label="Scene image pixels per unit X" value="@View.Values.PixelsPerUnitX" @oninput="ChangedAsync" disabled="@(Disabled || !AlignmentVisible)" /></label><label>@(PendingUpload ? "input pixels/unit Y" : "pixels/unit Y") <input @ref="scaleY" type="number" step="0.1" aria-label="Scene image pixels per unit Y" value="@View.Values.PixelsPerUnitY" @oninput="ChangedAsync" disabled="@(Disabled || !AlignmentVisible)" /></label></div>
+            <div class="scene-image-capture-axis-pair"><label>pixel offset X <input @ref="offsetX" type="number" step="0.1" aria-label="Scene image pixel offset X in retained pixels" value="@DisplayedOffset(true)" @oninput="ChangedAsync" disabled="@(Disabled || !AlignmentVisible)" /></label><label>pixel offset Y <input @ref="offsetY" type="number" step="0.1" aria-label="Scene image pixel offset Y in retained pixels" value="@DisplayedOffset(false)" @oninput="ChangedAsync" disabled="@(Disabled || !AlignmentVisible)" /></label></div>
+        </div></div>
+    </div>
+    @if (!string.IsNullOrWhiteSpace(View.Information)) { <p class="text-secondary" role="status">@View.Information</p> }
+    @if (Feedback is not null) { <p class="danger" role="alert">@Feedback</p> }
+    <div class="v2-modal-footer scene-image-capture-actions">
+        @if (Submitting) { <span data-scene-image-generation-progress="true" role="status">applying scene bounds and image...</span> }
+        else
+        {
+            @if (AlignmentVisible) { <div class="scene-image-capture-alternatives"><button type="button" class="compact-control" disabled="@Disabled" @onclick="ResetAsync">@(View.Source == RoomSceneImageSource.Uploaded ? "reset pan" : "reset recommendation")</button></div> }
+            <div class="scene-image-capture-action-row"><button type="button" class="compact-control" disabled="@(Disabled || Correction)" @onclick="Clear">clear bounds</button><div class="scene-image-capture-commit"><button type="button" class="compact-control" disabled="@CancelDisabled" @onclick="Cancel">cancel</button><button type="button" class="compact-control" disabled="@Disabled" @onclick="ApplyAsync">apply</button></div></div>
+        }
+    </div>
+</div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public Draft View { get; set; } = null!;
+    [Parameter] public IReadOnlyList<Marker> Markers { get; set; } = [];
+    [Parameter] public SceneViewportBounds InitialViewport { get; set; } = new(0, 0, 1, 1);
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public bool CancelDisabled { get; set; }
+    [Parameter] public bool Preparing { get; set; }
+    [Parameter] public bool Submitting { get; set; }
+    [Parameter] public bool UploadUncertain { get; set; }
+    [Parameter] public bool Correction { get; set; }
+    [Parameter] public string? Feedback { get; set; }
+    [Parameter] public long CorrectionFocusVersion { get; set; }
+    [Parameter] public EventCallback<Values> DraftChanged { get; set; }
+    [Parameter] public EventCallback<RoomSceneImageSource> SourceChanged { get; set; }
+    [Parameter] public EventCallback<InputFileChangeEventArgs> Upload { get; set; }
+    [Parameter] public EventCallback RecoverUpload { get; set; }
+    [Parameter] public EventCallback Reset { get; set; }
+    [Parameter] public EventCallback Clear { get; set; }
+    [Parameter] public EventCallback Cancel { get; set; }
+    [Parameter] public EventCallback Apply { get; set; }
+    [Parameter, EditorRequired] public Func<Exception, string, Task> ReportError { get; set; } = null!;
+    public sealed record Values(string MinX, string MinY, string MaxX, string MaxY, string PixelsPerUnitX, string PixelsPerUnitY, string PixelOffsetX, string PixelOffsetY, bool UseSceneImage)
+    {
+        public bool NativeUpload { get; init; } = true;
+        public string UploadResolution { get; init; } = "recommended";
+        public string UploadCustomTarget { get; init; } = "";
+    }
+    public sealed record Draft(RoomSceneImageSource Source, Values Values, double SourceWidth, double SourceHeight, string? PreviewUrl, string? Information, bool PendingUpload, long ResetVersion);
+    public sealed record Marker(string Kind, string Label, double X, double Y, bool IsEnemy = false);
+    private ElementReference preview, annotationToggle, numericFields, minX, minY, maxX, maxY, scaleX, scaleY, offsetX, offsetY, useSceneImage, interpretation, resolution, customTarget, preparationSummary;
+    private IJSObjectReference? focusOwner;
+    private bool initialized, disposed;
+    private long resetVersion, focusVersion;
+    private bool UseImage => View.Source != RoomSceneImageSource.None;
+    private bool PendingUpload => UseImage && View.Source == RoomSceneImageSource.Uploaded && View.PendingUpload;
+    private bool AlignmentVisible => UseImage && (!PendingUpload || !View.Values.NativeUpload);
+    private string ViewBox => $"{N(InitialViewport.X)} {N(InitialViewport.Y)} {N(InitialViewport.Width)} {N(InitialViewport.Height)}";
+    private static string N(double value) => value.ToString("R", CultureInfo.InvariantCulture);
+    public async Task<bool> ReconcileAsync()
+    {
+        if (disposed || !initialized) return false;
+        try
+        {
+            var values = await JS.InvokeAsync<Values?>("readV2SceneImageCapturePreview", preview);
+            if (disposed || values is null) return false;
+            await DraftChanged.InvokeAsync(values); return true;
+        }
+        catch (Exception exception) { if (!disposed) await ReportError(exception, "The image dialog could not read its browser values. Existing numeric drafts and saved image have been retained."); return false; }
+    }
+    private async Task ChangedAsync(ChangeEventArgs _) { if (!Disabled && !disposed) await ReconcileAsync(); }
+    private async Task SelectSourceAsync(ChangeEventArgs args) { if (Disabled || disposed || !Enum.TryParse<RoomSceneImageSource>(args.Value?.ToString(), out var source)) return; if (await ReconcileAsync() && !disposed) await SourceChanged.InvokeAsync(source); }
+    private async Task UploadAsync(InputFileChangeEventArgs args) { if (Disabled || disposed) return; if (await ReconcileAsync() && !disposed) await Upload.InvokeAsync(args); }
+    private async Task ApplyAsync() { if (Disabled || disposed) return; if (await ReconcileAsync() && !disposed) await Apply.InvokeAsync(); }
+    private async Task ResetAsync() { if (Disabled || disposed) return; if (await ReconcileAsync() && !disposed) await Reset.InvokeAsync(); }
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        try { await ReconcileBrowserAsync(); }
+        catch (Exception exception) { if (!disposed) await ReportError(exception, "The image dialog could not update its browser controls. Existing numeric drafts and saved image have been retained."); }
+    }
+    private async Task ReconcileBrowserAsync()
+    {
+        if (disposed) return;
+        if (focusOwner is null) focusOwner = await JS.InvokeAsync<IJSObjectReference?>("createV2SceneCaptureFocusOwner", numericFields, minX, minY, maxX, maxY, scaleX, scaleY, offsetX, offsetY, customTarget);
+        if (disposed) { if (focusOwner is not null) { await focusOwner.InvokeVoidAsync("dispose"); await focusOwner.DisposeAsync(); focusOwner = null; } return; }
+        if (!Disabled && focusOwner is not null && CorrectionFocusVersion > focusVersion) { focusVersion = CorrectionFocusVersion; await focusOwner.InvokeVoidAsync("restore"); }
+        if (!initialized)
+        {
+            await JS.InvokeVoidAsync("initializeV2SceneImageCapturePreview", preview, minX, minY, maxX, maxY, scaleX, scaleY, offsetX, offsetY, useSceneImage, annotationToggle, interpretation, resolution, customTarget, preparationSummary, View.Values);
+            if (disposed) { await JS.InvokeVoidAsync("disposeV2SceneImageCapturePreview", preview); return; }
+            initialized = true; resetVersion = View.ResetVersion;
+        }
+        if (resetVersion != View.ResetVersion) { await JS.InvokeVoidAsync("resetV2SceneImageCapturePreview", preview, View.Values); resetVersion = View.ResetVersion; }
+        await JS.InvokeVoidAsync("reconcileV2SceneImageCapturePreview", preview, Disabled, annotationToggle, Preparing);
+    }
+    private string DisplayedOffset(bool x)
+    {
+        var input = x ? View.Values.PixelOffsetX : View.Values.PixelOffsetY;
+        if (!PendingUpload) return input;
+        double? Number(string text) => double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var n) && double.IsFinite(n) ? n : null;
+        try
+        {
+            var values = View.Values;
+            var size = SceneImageUploadMath.Calculate((uint)View.SourceWidth, (uint)View.SourceHeight, Number(values.PixelsPerUnitX), Number(values.PixelsPerUnitY), new(values.NativeUpload, values.UploadResolution, Number(values.UploadCustomTarget)), Number(values.MinX) ?? double.NaN, Number(values.MinY) ?? double.NaN, Number(values.MaxX), Number(values.MaxY), false);
+            return Number(input) is { } n ? N(n * (x ? size.RatioX : size.RatioY)) : input;
+        }
+        catch (InvalidOperationException) { return ""; }
+    }
+    public async ValueTask DisposeAsync()
+    {
+        if (disposed) return; disposed = true;
+        try { if (focusOwner is not null) { await focusOwner.InvokeVoidAsync("dispose"); await focusOwner.DisposeAsync(); focusOwner = null; } if (initialized) await JS.InvokeVoidAsync("disposeV2SceneImageCapturePreview", preview); }
+        catch (JSDisconnectedException) { }
+    }
+}

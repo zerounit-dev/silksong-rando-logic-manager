@@ -1,0 +1,77 @@
+@page "/rooms/{Id:guid}"
+@using SilksongRandoLogicManager.Client.Components
+@implements IDisposable
+@inject NavigationManager Navigation
+
+@if (visit?.Entry is null || visit.Map is null)
+{
+    <PageTitle>Room | Silksong Logic Manager</PageTitle>
+}
+@if (visit?.Entry is { } entry && visit.Map is { } map)
+{
+    <article class="content" aria-busy="@(switching?.Pending == true ? "true" : null)" aria-label="@SwitchLabel" title="@SwitchLabel"><RoomWorkspaceEditor @ref="editor" @key="entry.Owner" Entry="entry" MapContext="map" EntryStarted="visit.EntryStarted" Switch="switching" /></article>
+}
+else if (visit is not null)
+{
+    <article class="v3-summary"><h1>Room no longer available</h1><p>The selected room is missing from the current catalogue.</p></article>
+}
+else if (failed)
+{
+    <div class="v3-initial"><p>The room could not be loaded.</p><button type="button" disabled="@Shell.GeneralErrorOpen" @onclick="LoadAsync">Retry</button></div>
+}
+else
+{
+    <div class="v3-initial" role="status" aria-label="Loading room"><i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i></div>
+}
+
+@code {
+    [Parameter] public Guid Id { get; set; }
+    [CascadingParameter] public App Shell { get; set; } = null!;
+    private App.RoomVisitLoad? visit;
+    private RoomWorkspaceEditor? editor;
+    private App.RoomSwitch? switching;
+    private string? SwitchLabel => switching?.Pending == true ? $"Opening room {switching.Destination:D}" : null;
+    private Guid? requested;
+    private long generation;
+    private bool disposed, failed;
+    private readonly CancellationTokenSource lifetime = new();
+    protected override async Task OnParametersSetAsync()
+    {
+        if (requested == Id) return;
+        requested = Id; failed = false;
+        var initial = Shell.TakeArrivingRoom(Id) ?? Shell.TakeInitialRoom(Id);
+        if (initial is not null) { visit = initial; return; }
+        await LoadAsync();
+    }
+    private async Task LoadAsync()
+    {
+        var room = Id; var read = ++generation;
+        App.RoomSwitch? ownedSwitch = null;
+        bool Owns() => !disposed && read == generation && Id == room && App.RoomRoute(Navigation.ToBaseRelativePath(Navigation.Uri)) == room;
+        failed = false;
+        try
+        {
+            if (visit?.Entry is not null && editor is not null)
+            {
+                switching = ownedSwitch = Shell.BeginRoomSwitch(room);
+                await editor.RetirePresentationAsync(ownedSwitch);
+                if (!Owns()) return;
+            }
+            else visit = null;
+            var value = await Shell.LoadRoomVisitAsync(this, room, Owns, lifetime.Token);
+            if (Owns())
+            {
+                if (value?.Entry is { } target && ownedSwitch is not null) Shell.BindRoomSwitch(ownedSwitch, target);
+                else Shell.EndRoomSwitch(ownedSwitch);
+                visit = value; failed = value is null;
+            }
+        }
+        catch (OperationCanceledException) when (!Owns()) { }
+        catch (Exception exception)
+        {
+            if (Owns()) { visit = null; failed = true; Shell.EndRoomSwitch(ownedSwitch); await Shell.ReportRoomErrorAsync(exception, "The room and its context could not be loaded. No editing workspace has been opened."); }
+        }
+        finally { if (!Owns()) Shell.EndRoomSwitch(ownedSwitch); }
+    }
+    public void Dispose() { disposed = true; generation++; Shell.EndRoomSwitch(switching); lifetime.Cancel(); lifetime.Dispose(); }
+}

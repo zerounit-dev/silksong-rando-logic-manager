@@ -1,12 +1,13 @@
 @using System.Globalization
+@using Silksong_Rando_Logic_Manager.Components.RoomEditorV2
 @using Microsoft.JSInterop
 @using Silksong_Rando_Logic_Manager.Components.RoomEditorV2.Contracts
 @implements IAsyncDisposable
 @inject IJSRuntime JS
 
-<div class="room-context-scene-pane" aria-label="Scene layout pane" data-scene-selected-kind="@(SelectedItem is { } selectedIntent ? KindText(selectedIntent.Kind) : null)" data-scene-selected-id="@SelectedItem?.EntityId">
-    @{ var scene = View ?? new SceneLayoutView(false, 0, 0, null, null, [], []); var viewport = SceneViewportMath.Initial(scene); }
-    <svg @ref="canvas" class="@($"scene-layout {(placement is null ? "" : "scene-layout-placement-armed")}")" viewBox="@Box(viewport)" role="img" aria-label="Scene layout canvas" data-scene-layout-canvas="true" data-scene-initial-viewbox="@Box(viewport)" data-scene-viewport-key="@RoomId" data-scene-owner-generation="@ownerGeneration" data-scene-min-x="@N(scene.SceneMinX)" data-scene-min-y="@N(scene.SceneMinY)" data-scene-max-x="@N(scene.SceneMaxX ?? 0)" data-scene-max-y="@N(scene.SceneMaxY ?? 0)" data-scene-placement-armed="@(placement is null ? null : "true")" tabindex="0">
+<div class="room-context-scene-pane" aria-label="Scene layout pane" data-scene-authoring-allowed="@AuthoringAllowed.ToString().ToLowerInvariant()" data-scene-selected-kind="@(SelectedItem is { } selectedIntent ? KindText(selectedIntent.Kind) : null)" data-scene-selected-id="@SelectedItem?.EntityId">
+    @{ var scene = View ?? new SceneLayoutView(false, 0, 0, null, null, [], []); var viewport = SceneViewportMath.Initial(scene); if (UseCurrentViewportBasis && mountedViewport is null && BrowserSetupAdmitted) mountedViewport = viewport; var viewFrame = UseCurrentViewportBasis ? mountedViewport ?? viewport : viewport; }
+    <svg @ref="canvas" class="@($"scene-layout {(placement is null ? "" : "scene-layout-placement-armed")}")" viewBox="@Box(viewFrame)" role="img" aria-label="Scene layout canvas" data-scene-layout-canvas="true" data-scene-initial-viewbox="@Box(viewport)" data-scene-viewport-key="@RoomId" data-scene-owner-generation="@ownerGeneration" data-scene-min-x="@N(scene.SceneMinX)" data-scene-min-y="@N(scene.SceneMinY)" data-scene-max-x="@N(scene.SceneMaxX ?? 0)" data-scene-max-y="@N(scene.SceneMaxY ?? 0)" data-scene-placement-armed="@(placement is null ? null : "true")" tabindex="0">
         @if (scene.HasValidBounds && scene.Image?.IsAvailable == true && scene.SceneUnitWidth is double imageWidth && scene.SceneUnitHeight is double imageHeight) { <image class="scene-layout-image" data-scene-layout-image="true" href="@($"/data/scenes/{RoomId:D}.webp?v={scene.Image.ImageVersion}")" x="@N(scene.SceneMinX)" y="@N(-scene.SceneMaxY!.Value)" width="@N(imageWidth)" height="@N(imageHeight)" preserveAspectRatio="none" /> }
         @if (scene.HasValidBounds && scene.SceneUnitWidth is double width && scene.SceneUnitHeight is double height)
         {
@@ -24,10 +25,10 @@
         </g>
     </svg>
     @{ var fallbackStatus = !scene.HasValidBounds ? "scene dimensions unavailable" : placement is { } armed ? (armed.Kind == "subroom" ? "draw subroom rectangle; drag to the opposite corner, or press Escape to cancel" : $"place {armed.Kind} annotation; click the scene, or press Escape to cancel") : scene.Image?.IsStale == true ? "needs recapture" : ""; var actionBox = ActionBox ?? new V2SceneActionBoxView(false, false, false, false, false, "re-arm placement", "reset annotation to game position", "clear annotation geometry", "show annotation", "dismiss scene interaction", false, fallbackStatus, false); var statusText = !scene.HasValidBounds ? "scene dimensions unavailable" : actionBox.StatusText; }
-    <div class="scene-layout-status" data-scene-status="true" role="status"><div class="scene-annotation-action-box" data-scene-annotation-action-box="true"><button type="button" data-scene-action="rearm" title="@actionBox.RearmLabel" aria-label="@actionBox.RearmLabel" disabled="@(!actionBox.RearmEnabled)" @onclick="()=>RequestAction(V2SceneAction.Rearm)"><i class="fa-solid @(SelectedItem?.Kind == V2SceneSelectedItemKind.Subroom ? "fa-expand" : "fa-crosshairs") fa-fw" aria-hidden="true"></i></button><button type="button" class="@(actionBox.AnnotationMatchesGamePosition ? "scene-annotation-game-aligned" : null)" data-scene-action="reset" title="@actionBox.ResetLabel" aria-label="@actionBox.ResetLabel" disabled="@(!actionBox.ResetEnabled)" @onclick="()=>RequestAction(V2SceneAction.Reset)"><i class="fa-solid fa-gamepad fa-fw" aria-hidden="true"></i></button><button type="button" data-scene-action="clear" title="@actionBox.ClearLabel" aria-label="@actionBox.ClearLabel" disabled="@(!actionBox.ClearEnabled)" @onclick="()=>RequestAction(V2SceneAction.Clear)"><i class="fa-solid fa-eraser fa-fw" aria-hidden="true"></i></button><button type="button" data-scene-action="visibility" title="@actionBox.VisibilityLabel" aria-label="@actionBox.VisibilityLabel" disabled="@(!actionBox.VisibilityEnabled)" @onclick="()=>RequestAction(V2SceneAction.ToggleVisibility)"><i class="fa-solid @(actionBox.AnnotationIsVisible ? "fa-eye-slash" : "fa-eye") fa-fw" aria-hidden="true"></i></button><button type="button" data-scene-action="dismiss" title="@actionBox.DismissLabel" aria-label="@actionBox.DismissLabel" disabled="@(!actionBox.DismissEnabled)" @onclick="()=>RequestAction(V2SceneAction.Dismiss)"><i class="fa-solid fa-xmark fa-fw" aria-hidden="true"></i></button></div><div class="scene-status-message"><span class="scene-status-text" data-scene-status-text="true" title="@statusText">@statusText</span><button type="button" data-scene-marker-retry="true" hidden><i class="fa-solid fa-rotate-right" aria-hidden="true"></i> retry marker save</button></div></div>
+    <div class="scene-layout-status" data-scene-status="true" role="status"><div class="scene-annotation-action-box" data-scene-annotation-action-box="true"><button type="button" data-scene-action="rearm" title="@actionBox.RearmLabel" aria-label="@actionBox.RearmLabel" disabled="@(!actionBox.RearmEnabled)" @onclick="()=>RequestAction(V2SceneAction.Rearm)"><i class="fa-solid @(SelectedItem?.Kind == V2SceneSelectedItemKind.Subroom ? "fa-expand" : "fa-crosshairs") fa-fw" aria-hidden="true"></i></button><button type="button" class="@(actionBox.AnnotationMatchesGamePosition ? "scene-annotation-game-aligned" : null)" data-scene-action="reset" title="@actionBox.ResetLabel" aria-label="@actionBox.ResetLabel" disabled="@(!actionBox.ResetEnabled)" @onclick="()=>RequestAction(V2SceneAction.Reset)"><i class="fa-solid fa-gamepad fa-fw" aria-hidden="true"></i></button><button type="button" data-scene-action="clear" title="@actionBox.ClearLabel" aria-label="@actionBox.ClearLabel" disabled="@(!actionBox.ClearEnabled)" @onclick="()=>RequestAction(V2SceneAction.Clear)"><i class="fa-solid fa-eraser fa-fw" aria-hidden="true"></i></button><button type="button" data-scene-action="visibility" title="@actionBox.VisibilityLabel" aria-label="@actionBox.VisibilityLabel" disabled="@(!actionBox.VisibilityEnabled)" @onclick="()=>RequestAction(V2SceneAction.ToggleVisibility)"><i class="fa-solid @(actionBox.AnnotationIsVisible ? "fa-eye-slash" : "fa-eye") fa-fw" aria-hidden="true"></i></button><button type="button" data-scene-action="dismiss" title="@actionBox.DismissLabel" aria-label="@actionBox.DismissLabel" disabled="@(!actionBox.DismissEnabled)" @onclick="()=>RequestAction(V2SceneAction.Dismiss)"><i class="fa-solid fa-xmark fa-fw" aria-hidden="true"></i></button></div><div class="scene-status-message"><span class="scene-status-text" data-scene-status-text="true" title="@statusText">@statusText</span><button type="button" data-scene-marker-retry="true" hidden @onclick="@(SettleKeyboardNudges ? EventCallback.Factory.Create(this, RetryKeyboardAsync) : default)"><i class="fa-solid fa-rotate-right" aria-hidden="true"></i> retry marker save</button></div></div>
     <div class="scene-layout-actions" aria-label="Scene layout actions"><div data-scene-actions-left="true">
         <button class="scene-layout-zone-toggle" type="button" data-scene-zone-toggle="true" aria-pressed="true" aria-label="Hide zone map" title="Hide zone map"><i class="fa-solid fa-chevron-left" aria-hidden="true"></i></button>
-        <button id="scene-image-capture" class="@(scene.Image?.BoundsImageSeverity switch { V2Severity.Danger => "scene-bounds-image-danger", V2Severity.Warning => "scene-bounds-image-warning", _ => null })" type="button" data-scene-capture="true" @onclick="CaptureRequested" aria-label="Scene bounds and image"><i class="fa-solid fa-camera" aria-hidden="true"></i> bounds and image</button>
+        <button id="scene-image-capture" class="@(scene.Image?.BoundsImageSeverity switch { V2Severity.Danger => "scene-bounds-image-danger", V2Severity.Warning => "scene-bounds-image-warning", _ => null })" type="button" data-scene-capture="true" disabled="@(!CanRequestCapture)" @onclick="CaptureRequested" aria-label="Scene bounds and image"><i class="fa-solid fa-camera" aria-hidden="true"></i> bounds and image</button>
     </div><div data-scene-actions-right="true">
         <button type="button" data-scene-annotation-toggle="true" aria-pressed="true" aria-label="Hide annotations" title="Hide annotations"><i class="fa-solid fa-layer-group" aria-hidden="true"></i></button>
         <button type="button" data-scene-layer-toggle="subroom" aria-pressed="true" aria-label="Hide subrooms" title="Hide subrooms"><svg class="scene-layer-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M3 11h18M11 11v10M15 3v8" /></svg></button>
@@ -39,7 +40,28 @@
 </div>
 
 @code {
+    // Hosts supply their interaction owner. WASM checks its mounted visit here;
+    // actual commands retain live HTTP/service admission. Missing composition
+    // denies callbacks. Retiring V2 composition remains independently owned.
+    [Parameter] public Func<Task<bool>>? InteractionAdmission { get; set; }
+    private Task<bool> AdmitInteractionAsync() => InteractionAdmission?.Invoke() ?? Task.FromResult(false);
+    [Parameter] public bool AuthoringAllowed { get; set; }
     [Parameter] public SceneLayoutView? View { get; set; }
+    // Permanent V3 host capability; default preserves retained V2 execution.
+    [Parameter] public bool UseCurrentViewportBasis { get; set; }
+    // Independent, default-off input capability. Retained V2 still commits per key.
+    [Parameter] public bool SettleKeyboardNudges { get; set; }
+    public sealed record NudgeDraft(long Burst, long Revision, string Kind, Guid EntityId, double X, double Y, double? Width, double? Height,
+        string State, long? Sequence = null, Guid? OperationId = null);
+    public sealed record NudgeSnapshot(Guid RoomId, long OwnerGeneration, NudgeDraft[] Drafts);
+    public sealed record NudgeAdmission(string State, long? Sequence = null, Guid? OperationId = null);
+    public sealed record NudgeTake(string State, NudgeDraft? Draft = null);
+    [Parameter] public Func<Guid, long, NudgeDraft, bool>? NudgeCaptured { get; set; }
+    [Parameter] public Func<Guid, long, NudgeDraft, NudgeAdmission>? NudgeAdmitted { get; set; }
+    [Parameter] public Func<Guid, long, Task>? NudgeRetryRequested { get; set; }
+    private Task RetryKeyboardAsync() => !viewportDisposed && !presentationRetired && SettleKeyboardNudges
+        ? NudgeRetryRequested?.Invoke(mountedRoomId, ownerGeneration) ?? Task.CompletedTask : Task.CompletedTask;
+    private SceneViewportBounds? mountedViewport;
     [Parameter] public Guid RoomId { get; set; }
     [Parameter] public SceneAnnotationPlacementRequest? Placement { get; set; }
     [Parameter] public Func<Guid, long, SceneAnnotationPlacementRequest, bool>? TakePlacementFocus { get; set; }
@@ -47,6 +69,20 @@
     [Parameter] public V2SceneActionBoxView? ActionBox { get; set; }
     [Parameter] public Func<Guid, long, V2SceneAction, Task>? ActionRequested { get; set; }
     [Parameter] public Func<Guid, long, Task>? OwnerMounted { get; set; }
+    [Parameter] public Func<Guid, long, Task>? OwnerReady { get; set; }
+    [Parameter] public Func<Guid, long, Exception, Task>? OwnerFailed { get; set; }
+    [Parameter] public Func<bool>? BrowserSetupAllowed { get; set; }
+    // Setup is view reconciliation, not authoring. Retained V2 has no supplied
+    // predicate; the WASM host supplies current-owner/general-error admission.
+    private bool BrowserSetupAdmitted => !viewportDisposed && !presentationRetired && (BrowserSetupAllowed?.Invoke() ?? true);
+    protected override bool ShouldRender() => BrowserSetupAdmitted;
+    private bool browserSetupActive;
+    public bool IsReadyOwner(Guid room, long generation) => viewportInitialized && !viewportDisposed && !presentationRetired && room == mountedRoomId && generation == ownerGeneration;
+    private long reportedReadyGeneration;
+    private bool presentationRetired;
+    private bool nativeInitializationAttempted;
+    private readonly List<Task> initializationFlights = [];
+    private Task? retirementFlight;
     [Parameter] public Func<Guid, long, V2SceneSelectedItemKind, bool, Task>? LayerVisibilityChanged { get; set; }
     [Parameter] public Func<V2SceneSelectionCallback, Task>? SelectionChanged { get; set; }
     [Parameter] public Func<Guid, long, SceneAnnotationPlacementRequest, double, double, Task<bool>>? PlacementCommitted { get; set; }
@@ -64,51 +100,159 @@
     private SceneAnnotationPlacementRequest? lastPlacementParameter;
     private V2SceneSelectedItem? lastSelectionParameter;
     private long placementRevision, selectionRevision;
-    protected override void OnParametersSet() { if (!ReferenceEquals(lastPlacementParameter, Placement)) { lastPlacementParameter = Placement; placementRevision++; } if (lastSelectionParameter != SelectedItem) { lastSelectionParameter = SelectedItem; selectionRevision++; } placement = Placement; if (mountedRoomId != RoomId) { mountedRoomId = RoomId; ownerGeneration = Interlocked.Increment(ref nextOwnerGeneration); renderedSelection = null; } }
-    private Task CaptureRequested() => Capture.InvokeAsync();
-    private Task RequestAction(V2SceneAction action) => ActionRequested?.Invoke(mountedRoomId, ownerGeneration, action) ?? Task.CompletedTask;
-    protected override async Task OnAfterRenderAsync(bool firstRender)
+    protected override void OnParametersSet() { if (!BrowserSetupAdmitted) return; if (!ReferenceEquals(lastPlacementParameter, Placement)) { lastPlacementParameter = Placement; placementRevision++; } if (lastSelectionParameter != SelectedItem) { lastSelectionParameter = SelectedItem; selectionRevision++; } placement = Placement; if (mountedRoomId != RoomId) { mountedRoomId = RoomId; ownerGeneration = Interlocked.Increment(ref nextOwnerGeneration); renderedSelection = null; mountedViewport = null; } }
+    private bool CanRequestCapture => AuthoringAllowed && !viewportDisposed && !presentationRetired;
+    private Task CaptureRequested() => CanRequestCapture ? Capture.InvokeAsync() : Task.CompletedTask;
+    private Task RequestAction(V2SceneAction action) => !viewportDisposed && !presentationRetired ? ActionRequested?.Invoke(mountedRoomId, ownerGeneration, action) ?? Task.CompletedTask : Task.CompletedTask;
+    protected override Task OnAfterRenderAsync(bool firstRender)
     {
-        if (viewportDisposed) return;
+        var flight = ReconcileBrowserReportedAsync();
+        initializationFlights.RemoveAll(x => x.IsCompleted);
+        initializationFlights.Add(flight);
+        return flight;
+    }
+    private async Task ReconcileBrowserReportedAsync()
+    {
+        var admission = BrowserSetupAllowed;
+        if (!BrowserSetupAdmitted || admission is not null && browserSetupActive) return;
+        var gated = admission is not null;
+        var room = mountedRoomId; var generation = ownerGeneration;
+        try
+        {
+            // Serialize Room's attempt, not its error dialog lifetime. The Room
+            // opens its existing error guard before reporting can render again.
+            if (gated) browserSetupActive = true;
+            try { await ReconcileBrowserAsync(); }
+            finally { if (gated) browserSetupActive = false; }
+        }
+        catch (Exception exception)
+        {
+            if (OwnerFailed is null) throw;
+            if (BrowserSetupAdmitted && room == mountedRoomId && generation == ownerGeneration)
+                await OwnerFailed(room, generation, exception);
+        }
+    }
+    private async Task ReconcileBrowserAsync()
+    {
+        if (!BrowserSetupAdmitted) return;
         var room = mountedRoomId; var generation = ownerGeneration; var renderedCanvas = canvas;
+        bool StillAdmitted() => BrowserSetupAdmitted && room == mountedRoomId && generation == ownerGeneration;
         var armRevision = placementRevision; var itemRevision = selectionRevision;
         placementCallback ??= DotNetObjectReference.Create(this);
         await (OwnerMounted?.Invoke(room, generation) ?? Task.CompletedTask);
-        if (viewportDisposed || room != mountedRoomId || generation != ownerGeneration) return;
-        await JS.InvokeVoidAsync("initializeV2SceneViewport", renderedCanvas, room.ToString("N"), generation, placementCallback);
-        if (viewportDisposed || room != mountedRoomId || generation != ownerGeneration)
+        if (!StillAdmitted()) return;
+        nativeInitializationAttempted = true;
+        if (SettleKeyboardNudges || UseCurrentViewportBasis)
+            await JS.InvokeVoidAsync("initializeV2SceneViewport", renderedCanvas, room.ToString("N"), generation, placementCallback, UseCurrentViewportBasis, SettleKeyboardNudges);
+        else
+            await JS.InvokeVoidAsync("initializeV2SceneViewport", renderedCanvas, room.ToString("N"), generation, placementCallback);
+        if (viewportDisposed || presentationRetired || room != mountedRoomId || generation != ownerGeneration)
         {
             await JS.InvokeVoidAsync("disposeV2SceneViewport", renderedCanvas, generation);
             return;
         }
+        if (!StillAdmitted()) return;
         viewportInitialized = true;
+        if (reportedReadyGeneration != generation)
+        {
+            reportedReadyGeneration = generation;
+            if (OwnerReady is not null) await OwnerReady(room, generation);
+        }
+        if (!StillAdmitted()) return;
         if (armRevision != placementRevision || itemRevision != selectionRevision) return;
         if (placement is { } armed)
         {
             // Only the page can consume a new explicit arm intent. A retained
             // request (including on a replacement pane) is reconciliation, not focus.
             var acquireFocus = TakePlacementFocus?.Invoke(room, generation, armed) == true;
+            if (!StillAdmitted() || armRevision != placementRevision || itemRevision != selectionRevision) return;
             await JS.InvokeVoidAsync("armV2ScenePlacement", renderedCanvas, armed.Kind, armed.EntityId.ToString("N"), acquireFocus, generation, armRevision);
         }
         else await JS.InvokeVoidAsync("clearV2ScenePlacement", renderedCanvas, generation, armRevision);
-        if (viewportDisposed || room != mountedRoomId || generation != ownerGeneration || armRevision != placementRevision || itemRevision != selectionRevision) return;
-        if (SelectedItem is { } selected && IsRendered(selected)) { if (renderedSelection != selected) await JS.InvokeVoidAsync("selectV2SceneLayoutItem", renderedCanvas, selected.EntityId.ToString("D"), generation, itemRevision); if (!viewportDisposed && room == mountedRoomId && generation == ownerGeneration && itemRevision == selectionRevision) renderedSelection = selected; }
-        else { renderedSelection = null; await JS.InvokeVoidAsync("clearV2SceneLayoutSelection", renderedCanvas, generation, itemRevision); }
+        if (!StillAdmitted() || armRevision != placementRevision || itemRevision != selectionRevision) return;
+        if (SelectedItem is { } selected && IsRendered(selected))
+        {
+            if (renderedSelection != selected) await JS.InvokeVoidAsync("selectV2SceneLayoutItem", renderedCanvas, selected.EntityId.ToString("D"), generation, itemRevision);
+            if (StillAdmitted() && armRevision == placementRevision && itemRevision == selectionRevision) renderedSelection = selected;
+        }
+        else
+        {
+            await JS.InvokeVoidAsync("clearV2SceneLayoutSelection", renderedCanvas, generation, itemRevision);
+            if (StillAdmitted() && armRevision == placementRevision && itemRevision == selectionRevision) renderedSelection = null;
+        }
     }
-    [JSInvokable] public async Task CommitPlacementAsync(string ownerRoomId, long callbackGeneration, string kind, string entityId, double x, double y) { if (!OwnsMountedOwner(ownerRoomId, callbackGeneration) || placement is not { } armed || armed.Kind != kind || !Guid.TryParse(entityId, out var id) || id != armed.EntityId) return; if (await (PlacementCommitted?.Invoke(mountedRoomId, ownerGeneration, armed, x, y) ?? Task.FromResult(false)) && OwnsMountedOwner(ownerRoomId, callbackGeneration) && ReferenceEquals(placement, armed)) { placement = null; await InvokeAsync(StateHasChanged); } }
+    [JSInvokable] public async Task CommitPlacementAsync(string ownerRoomId, long callbackGeneration, string kind, string entityId, double x, double y) { if (!await AdmitInteractionAsync() || !AuthoringAllowed) return; if (!OwnsMountedOwner(ownerRoomId, callbackGeneration) || placement is not { } armed || armed.Kind != kind || !Guid.TryParse(entityId, out var id) || id != armed.EntityId) return; if (await (PlacementCommitted?.Invoke(mountedRoomId, ownerGeneration, armed, x, y) ?? Task.FromResult(false)) && OwnsMountedOwner(ownerRoomId, callbackGeneration) && ReferenceEquals(placement, armed)) { placement = null; await InvokeAsync(StateHasChanged); } }
     public Task CommitPlacementAsync(string kind, string entityId, double x, double y) => CommitPlacementAsync(mountedRoomId.ToString(), ownerGeneration, kind, entityId, x, y);
-    [JSInvokable] public async Task CancelPlacementAsync(string ownerRoomId, long callbackGeneration) { if (!OwnsMountedOwner(ownerRoomId, callbackGeneration) || placement is not { } armed) return; if (await (PlacementCancelled?.Invoke(mountedRoomId, ownerGeneration, armed) ?? Task.FromResult(false)) && OwnsMountedOwner(ownerRoomId, callbackGeneration) && ReferenceEquals(placement, armed)) { placement = null; await InvokeAsync(StateHasChanged); } }
+    [JSInvokable] public async Task CancelPlacementAsync(string ownerRoomId, long callbackGeneration) { if (!await AdmitInteractionAsync()) return; if (!OwnsMountedOwner(ownerRoomId, callbackGeneration) || placement is not { } armed) return; if (await (PlacementCancelled?.Invoke(mountedRoomId, ownerGeneration, armed) ?? Task.FromResult(false)) && OwnsMountedOwner(ownerRoomId, callbackGeneration) && ReferenceEquals(placement, armed)) { placement = null; await InvokeAsync(StateHasChanged); } }
     public Task CancelPlacementAsync() => CancelPlacementAsync(mountedRoomId.ToString(), ownerGeneration);
-    [JSInvokable] public Task SelectSceneItemAsync(string ownerRoomId, long callbackGeneration, string kind, string entityId) => OwnsMountedOwner(ownerRoomId, callbackGeneration) && Guid.TryParse(ownerRoomId, out var roomId) && Guid.TryParse(entityId, out var id) && TryKind(kind, out var selectedKind) ? (SelectionChanged?.Invoke(new(roomId, callbackGeneration, new(selectedKind, id))) ?? Task.CompletedTask) : Task.CompletedTask;
-    [JSInvokable] public Task ClearSceneSelectionAsync(string ownerRoomId, long callbackGeneration) => OwnsMountedOwner(ownerRoomId, callbackGeneration) && Guid.TryParse(ownerRoomId, out var roomId) ? SelectionChanged?.Invoke(new(roomId, callbackGeneration, null)) ?? Task.CompletedTask : Task.CompletedTask;
-    [JSInvokable] public Task SetSceneLayerVisibilityAsync(string ownerRoomId, long callbackGeneration, string kind, bool shown) => OwnsMountedOwner(ownerRoomId, callbackGeneration) && TryKind(kind, out var selectedKind) ? LayerVisibilityChanged?.Invoke(mountedRoomId, callbackGeneration, selectedKind, shown) ?? Task.CompletedTask : Task.CompletedTask;
-    [JSInvokable] public Task<bool> CommitMarkerDragAsync(string ownerRoomId, long callbackGeneration, string kind, string entityId, double x, double y) => !OwnsMountedOwner(ownerRoomId, callbackGeneration) || !Guid.TryParse(entityId, out var id) || kind is not ("exit" or "check" or "connection") ? Task.FromResult(false) : MarkerDragCommitted?.Invoke(mountedRoomId, ownerGeneration, kind, id, x, y) ?? Task.FromResult(false);
+    [JSInvokable] public async Task SelectSceneItemAsync(string ownerRoomId, long callbackGeneration, string kind, string entityId)
+    {
+        if (!await AdmitInteractionAsync()) return;
+        if (OwnsMountedOwner(ownerRoomId, callbackGeneration) && Guid.TryParse(ownerRoomId, out var roomId) && Guid.TryParse(entityId, out var id) && TryKind(kind, out var selectedKind))
+            await (SelectionChanged?.Invoke(new(roomId, callbackGeneration, new(selectedKind, id))) ?? Task.CompletedTask);
+    }
+    [JSInvokable] public async Task ClearSceneSelectionAsync(string ownerRoomId, long callbackGeneration)
+    {
+        if (!await AdmitInteractionAsync()) return;
+        if (OwnsMountedOwner(ownerRoomId, callbackGeneration) && Guid.TryParse(ownerRoomId, out var roomId))
+            await (SelectionChanged?.Invoke(new(roomId, callbackGeneration, null)) ?? Task.CompletedTask);
+    }
+    [JSInvokable] public async Task SetSceneLayerVisibilityAsync(string ownerRoomId, long callbackGeneration, string kind, bool shown)
+    {
+        if (!await AdmitInteractionAsync()) return;
+        if (OwnsMountedOwner(ownerRoomId, callbackGeneration) && TryKind(kind, out var selectedKind))
+            await (LayerVisibilityChanged?.Invoke(mountedRoomId, callbackGeneration, selectedKind, shown) ?? Task.CompletedTask);
+    }
+    [JSInvokable] public async Task<bool> CommitMarkerDragAsync(string ownerRoomId, long callbackGeneration, string kind, string entityId, double x, double y)
+    {
+        if (!await AdmitInteractionAsync() || !AuthoringAllowed) return false;
+        return OwnsMountedOwner(ownerRoomId, callbackGeneration) && Guid.TryParse(entityId, out var id) && kind is ("exit" or "check" or "connection") &&
+            await (MarkerDragCommitted?.Invoke(mountedRoomId, ownerGeneration, kind, id, x, y) ?? Task.FromResult(false));
+    }
     public Task<bool> CommitMarkerDragAsync(string kind, string entityId, double x, double y) => CommitMarkerDragAsync(mountedRoomId.ToString(), ownerGeneration, kind, entityId, x, y);
-    [JSInvokable] public Task<bool> CommitSceneNudgeAsync(string ownerRoomId, long callbackGeneration, string kind, string entityId, double x, double y) => !OwnsMountedOwner(ownerRoomId, callbackGeneration) || !Guid.TryParse(entityId, out var id) || kind is not ("exit" or "check" or "connection" or "subroom") ? Task.FromResult(false) : SceneNudgeCommitted?.Invoke(mountedRoomId, ownerGeneration, kind, id, x, y) ?? Task.FromResult(false);
+    [JSInvokable] public async Task<bool> CommitSceneNudgeAsync(string ownerRoomId, long callbackGeneration, string kind, string entityId, double x, double y)
+    {
+        if (!await AdmitInteractionAsync() || !AuthoringAllowed) return false;
+        return OwnsMountedOwner(ownerRoomId, callbackGeneration) && Guid.TryParse(entityId, out var id) && kind is ("exit" or "check" or "connection" or "subroom") &&
+            await (SceneNudgeCommitted?.Invoke(mountedRoomId, ownerGeneration, kind, id, x, y) ?? Task.FromResult(false));
+    }
     public Task<bool> CommitSceneNudgeAsync(string kind, string entityId, double x, double y) => CommitSceneNudgeAsync(mountedRoomId.ToString(), ownerGeneration, kind, entityId, x, y);
-    [JSInvokable] public Task<bool> CommitSubroomGeometryAsync(string ownerRoomId, long callbackGeneration, string entityId, double x, double y, double width, double height) => !OwnsMountedOwner(ownerRoomId, callbackGeneration) || !Guid.TryParse(entityId, out var id) || width <= 0 || height <= 0 ? Task.FromResult(false) : FrameGeometryCommitted?.Invoke(mountedRoomId, ownerGeneration, id, x, y, width, height) ?? Task.FromResult(false);
+    [JSInvokable] public bool CaptureKeyboardNudge(string ownerRoomId, long callbackGeneration, NudgeDraft draft) =>
+        AuthoringAllowed && SettleKeyboardNudges && OwnsMountedOwner(ownerRoomId, callbackGeneration) && NudgeCaptured?.Invoke(mountedRoomId, callbackGeneration, draft) == true;
+    [JSInvokable] public NudgeAdmission AdmitKeyboardNudge(string ownerRoomId, long callbackGeneration, NudgeDraft draft) =>
+        AuthoringAllowed && SettleKeyboardNudges && OwnsMountedOwner(ownerRoomId, callbackGeneration)
+            ? NudgeAdmitted?.Invoke(mountedRoomId, callbackGeneration, draft) ?? new("prequeueFailed") : new("prequeueFailed");
+    [JSInvokable] public async Task<bool> CommitSubroomGeometryAsync(string ownerRoomId, long callbackGeneration, string entityId, double x, double y, double width, double height)
+    {
+        if (!await AdmitInteractionAsync() || !AuthoringAllowed) return false;
+        return OwnsMountedOwner(ownerRoomId, callbackGeneration) && Guid.TryParse(entityId, out var id) && !(width <= 0 || height <= 0) &&
+            await (FrameGeometryCommitted?.Invoke(mountedRoomId, ownerGeneration, id, x, y, width, height) ?? Task.FromResult(false));
+    }
     public Task<bool> CommitSubroomGeometryAsync(string entityId, double x, double y, double width, double height) => CommitSubroomGeometryAsync(mountedRoomId.ToString(), ownerGeneration, entityId, x, y, width, height);
-    public async ValueTask DisposeAsync() { if (viewportDisposed) return; viewportDisposed = true; try { if (viewportInitialized) await JS.InvokeVoidAsync("disposeV2SceneViewport", canvas); } catch (JSDisconnectedException) { } placementCallback?.Dispose(); }
+    public Task RetirePresentationAsync()
+    {
+        presentationRetired = true;
+        return retirementFlight ??= RetireBrowserAsync();
+    }
+    private async Task RetireBrowserAsync()
+    {
+        var renderedCanvas = canvas; var generation = ownerGeneration;
+        try
+        {
+            try { await Task.WhenAll(initializationFlights.ToArray()); }
+            finally
+            {
+                if (viewportInitialized || nativeInitializationAttempted)
+                {
+                    viewportInitialized = nativeInitializationAttempted = false;
+                    await JS.InvokeVoidAsync("disposeV2SceneViewport", renderedCanvas, generation);
+                }
+            }
+        }
+        catch (JSDisconnectedException) { }
+        finally { placementCallback?.Dispose(); placementCallback = null; }
+    }
+    public async ValueTask DisposeAsync() { if (viewportDisposed) return; viewportDisposed = true; await RetirePresentationAsync(); }
     private static string N(double value) => value.ToString("R", CultureInfo.InvariantCulture); private static string Box(SceneViewportBounds value) => $"{N(value.X)} {N(value.Y)} {N(value.Width)} {N(value.Height)}";
     private static bool ThreadHidden(SceneRelationshipThreadView thread) => thread.MarkerX >= thread.FrameX && thread.MarkerX <= thread.FrameX + thread.FrameWidth && thread.MarkerY >= thread.FrameY && thread.MarkerY <= thread.FrameY + thread.FrameHeight;
     private static double NearestX(SceneRelationshipThreadView thread) => Math.Clamp(thread.MarkerX, thread.FrameX, thread.FrameX + thread.FrameWidth);
@@ -116,6 +260,6 @@
     private static string? ThreadStyle(SceneRelationshipThreadView thread) => ThreadHidden(thread) ? "display:none" : null;
     private static bool TryKind(string kind, out V2SceneSelectedItemKind selectedKind) { selectedKind = kind switch { "subroom" => V2SceneSelectedItemKind.Subroom, "exit" => V2SceneSelectedItemKind.Transition, "check" => V2SceneSelectedItemKind.Check, "connection" => V2SceneSelectedItemKind.Connection, _ => default }; return kind is "subroom" or "exit" or "check" or "connection"; }
     private static string KindText(V2SceneSelectedItemKind kind) => kind == V2SceneSelectedItemKind.Subroom ? "subroom" : kind == V2SceneSelectedItemKind.Transition ? "exit" : kind == V2SceneSelectedItemKind.Check ? "check" : "connection";
-    private bool OwnsMountedOwner(string ownerRoomId, long callbackGeneration) => !viewportDisposed && Guid.TryParse(ownerRoomId, out var roomId) && roomId == mountedRoomId && callbackGeneration == ownerGeneration;
+    private bool OwnsMountedOwner(string ownerRoomId, long callbackGeneration) => !viewportDisposed && !presentationRetired && Guid.TryParse(ownerRoomId, out var roomId) && roomId == mountedRoomId && callbackGeneration == ownerGeneration;
     private bool IsRendered(V2SceneSelectedItem selected) => View is { } scene && (selected.Kind == V2SceneSelectedItemKind.Subroom ? scene.Frames.Any(x => x.EntityId == selected.EntityId) : scene.Markers.Any(x => x.EntityId == selected.EntityId && x.Kind == (selected.Kind == V2SceneSelectedItemKind.Transition ? "exit" : selected.Kind.ToString().ToLowerInvariant())));
 }

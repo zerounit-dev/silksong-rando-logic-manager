@@ -1,0 +1,43 @@
+<Project>
+  <PropertyGroup>
+    <LogicSharedRoot Condition="'$(LogicBuildEvidenceRoot)' == ''">$(MSBuildThisFileDirectory)obj\$(Configuration)\logic-application\</LogicSharedRoot>
+    <LogicSharedRoot Condition="'$(LogicBuildEvidenceRoot)' != ''">$(LogicBuildEvidenceRoot)\shared\logic-application\</LogicSharedRoot>
+  </PropertyGroup>
+  <UsingTask TaskName="GenerateLogicExecutableGraph" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+    <Task>
+      <Reference Include="$(LogicNativeTasksAssembly)" />
+      <Code Type="Class" Language="cs" Source="$(MSBuildThisFileDirectory)LogicApplication.cs" />
+    </Task>
+  </UsingTask>
+  <!-- SDKless and build-local: MSBuild reuses this target result for the same
+       normalized globals throughout one invocation, including direct RCL entries. -->
+  <Target Name="GetLogicApplicationStamp" Returns="@(_LogicApplicationStamp)">
+    <Error Condition="'$(LogicApplicationStamp)' != '' And !$([System.Text.RegularExpressions.Regex]::IsMatch('$(LogicApplicationStamp)', '\Aapp-[0-9]{21}\z'))" Text="LogicApplicationStamp must be app- followed by 21 ASCII digits." />
+    <PropertyGroup>
+      <_Stamp>$(LogicApplicationStamp)</_Stamp>
+      <_Stamp Condition="'$(_Stamp)' == ''">app-$([System.DateTime]::UtcNow.ToString('yyyyMMddHHmmssfffffff', $([System.Globalization.CultureInfo]::GetCultureInfo(''))))</_Stamp>
+    </PropertyGroup>
+    <ItemGroup><_LogicApplicationStamp Include="$(_Stamp)" /></ItemGroup>
+  </Target>
+  <Target Name="GenerateLogicApplicationGraph" DependsOnTargets="GetLogicApplicationStamp">
+    <Error Condition="!Exists('$(LogicNativeTasksAssembly)')" Text="Selected SDK native static-asset tasks are missing: $(LogicNativeTasksAssembly)" />
+    <Message Importance="High" Text="Logic native asset tasks ($(MSBuildRuntimeType)): $(LogicNativeTasksAssembly)" />
+    <GenerateLogicExecutableGraph Root="$(MSBuildThisFileDirectory)..\" OutputRoot="$(LogicSharedRoot)" Identity="@(_LogicApplicationStamp)">
+      <Output TaskParameter="Modules" ItemName="_LogicModules" />
+      <Output TaskParameter="Assets" ItemName="_LogicAssets" />
+      <Output TaskParameter="Endpoints" ItemName="_LogicEndpoints" />
+      <Output TaskParameter="SourceAssets" ItemName="_LogicSources" />
+    </GenerateLogicExecutableGraph>
+  </Target>
+  <Target Name="GetLogicApplicationBuild" DependsOnTargets="GenerateLogicApplicationGraph" Returns="@(_LogicSharedBuild)">
+    <!-- Return the real shared task items, including native metadata, not a
+         mutable runtime manifest or a request for each caller to rebuild them. -->
+    <ItemGroup>
+      <_LogicSharedBuild Include="@(_LogicApplicationStamp)"><LogicResultKind>Stamp</LogicResultKind></_LogicSharedBuild>
+      <_LogicSharedBuild Include="@(_LogicModules)"><LogicResultKind>Module</LogicResultKind></_LogicSharedBuild>
+      <_LogicSharedBuild Include="@(_LogicAssets)"><LogicResultKind>Asset</LogicResultKind></_LogicSharedBuild>
+      <_LogicSharedBuild Include="@(_LogicEndpoints)"><LogicResultKind>Endpoint</LogicResultKind></_LogicSharedBuild>
+      <_LogicSharedBuild Include="@(_LogicSources)"><LogicResultKind>Source</LogicResultKind></_LogicSharedBuild>
+    </ItemGroup>
+  </Target>
+</Project>

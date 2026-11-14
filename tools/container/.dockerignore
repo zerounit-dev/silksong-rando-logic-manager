@@ -1,0 +1,12 @@
+# Deny by default; only sanitized packaging output enters any image layer.
+**
+!Dockerfile
+!.dockerignore
+!entrypoint.sh
+!LICENSE
+!app/
+!app/**
+!seed/
+!seed/**
+!config/
+!config/appsettings.json

@@ -2,6 +2,12 @@ namespace Silksong_Rando_Logic_Manager.Data;
 
 public sealed class Room : ArchivableEntity
 {
+    // Database-owned aggregate observation metadata, never a save baseline.
+    public DateTime CacheFlagUtc { get; private set; }
+
+    // Server-derived canonical summary. Not authored, exchanged or a save baseline.
+    public Services.AppliedRoomStatus CompletionStatus { get; private set; }
+
     public Guid? RoomGroupId { get; set; }
 
     public string ReferenceId { get; set; } = string.Empty;

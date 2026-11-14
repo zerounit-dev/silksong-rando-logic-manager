@@ -417,7 +417,7 @@
     customElements.define("archipelago-launcher", class extends HTMLElement {
         connectedCallback() { queueMicrotask(reconcile); }
     });
-    Blazor.addEventListener("enhancedload", () => { ++valueRevision; reconcile(); });
+    Blazor.addEventListener?.("enhancedload", () => { ++valueRevision; reconcile(); });
     render();
     if (draft.auto && !details().error) start();
 })();

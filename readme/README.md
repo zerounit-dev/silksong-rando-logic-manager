@@ -7,6 +7,23 @@ way to begin a room is by importing information collected by the Scene Dumper.
 
 ## Start the App
 
+Read [authentication setup and recovery](AUTHENTICATION.md) before sharing the
+application. Portable packages deliberately use local **bypass** mode; change to
+required mode before exposing through a tunnel. Source checkouts contain actual nonsecret
+`Config/appsettings.json` and Development defaults; the workspace merge preserves its
+existing explicit mode, while source publication independently generates required-mode
+defaults. Environment/CLI can override the file; no missing-mode default is inferred.
+Keep credentials outside tracked settings using env/CLI or an external config locator.
+See the guide for native base/environment precedence,
+custom roots, transition and build/publication exclusion declarations.
+
+The current V3 interface is at `/` (normally `http://localhost:5000/`). The retained
+server interface is at `/v2/`; its room, catalogue and scene pages are respectively
+`/v2/rooms/{id}`, `/v2/requirements` and `/v2/scene-import`. The authoritative room
+import and map-manifest tools remain `/tools/room-import` and `/tools/map-manifest`.
+The former `/v3/` UI URLs are removed without redirects. API, image and download
+URLs are unchanged; neither interface's feature/manual acceptance is implied.
+
 1. Extract the release archive into a folder. On Windows, extract the
    `win-x64` ZIP. On mainstream glibc Linux, extract the `linux-x64` tarball;
    on an Apple Silicon Mac (including M1), extract the `osx-arm64` tarball:
@@ -17,13 +34,100 @@ way to begin a room is by importing information collected by the Scene Dumper.
 4. Keep the application running while you use the tool. Closing the browser tab
    does not close the application.
 
-The tool stores your work in the `data` folder inside `Silksong Rando Logic
-Manager`. Before upgrading the tool or performing a major import, close the
-application and make a copy of the entire `data` folder. When upgrading, keep
-   your existing `data` folder and replace only the application files. Linux
+The tool defaults to `Storage` for mutable state and `Config/appsettings.json`
+for private writable operator settings, inside `Silksong Rando Logic Manager`.
+Before upgrading or a major import, arrange consistent private backups as described
+in the authentication guide (offline copies require operator-controlled shutdown).
+When upgrading, retain **both Config and Storage**, or their configured locations;
+replace only application files, never retained settings/state with first-install
+bypass settings or a public seed.
+
+Source checkouts now also keep their DBs/backups and scene assets in Storage, with
+C# definitions/migrations left in Data. The build hook consistently backs up the source
+Storage primary DB to Storage/backups, not accounts/keys or external selected roots.
+Linux
    releases target mainstream glibc distributions; Alpine Linux is not supported.
    The Mac release targets Apple Silicon only and is unsigned, so macOS may
    require you to approve it in Privacy & Security after the first launch attempt.
+
+## Private server HTTP logs
+
+Logging normally runs in the background with no operator configuration. The single
+application-wide logging store is `<DataRoot>/logs/logs.db` (default `Storage/logs/logs.db`), including its
+SQLite sidecars. Portable mode uses the executable directory as content root. HTTP
+request/exception tables are the initial producers in this shared store; there is
+no separate per-protocol database. There is no log viewer or download endpoint.
+
+`HttpRequests` records the framework request ID, original method/path/raw query,
+actual UTC entry/terminal timestamps, incoming authentication state (`unobserved`,
+`anonymous`, `account`, `bypass`), nullable canonical account GUID, observed status,
+completed/incomplete outcome and monotonic elapsed milliseconds. `Id` is only local
+row linkage; `RequestId` is not globally unique. `HttpExceptions` links observations
+by request row and ordinal with UTC, type, full message and `ExceptionText`: an
+allowlisted JSON graph of type/message/available stack and all inner/aggregate
+branches. Repeated root objects are deduplicated; different wrappers remain distinct.
+Release builds may not have source line numbers. Exception Data/custom properties,
+formatted logger messages/scopes, bodies, cookies, credential headers, IP and user
+agent are not collected. Publishing's deliberately suppressed native exceptions
+are not reconstructed. Full messages and supplied raw queries can nevertheless
+contain sensitive information: keep this entire directory private, never attach
+real logs to public issues or publish them. No redaction or encryption is promised;
+the operator's filesystem permissions protect local readability.
+
+API requests and generated `/exports` downloads are included, including denials,
+binding/method/missing-route failures. Account HTML, canonical GET draft-image
+previews, routine images/static assets and circuits are excluded. Original raw
+targets preserve escapes, duplicate query keys and a leading `?`; absolute-form
+scheme/authority are removed. If the server supplies no raw target, encoded framework
+PathBase+Path and QueryString are used instead (not a wire-byte-fidelity promise).
+Authentication is sampled once before admission: later sign-in/out or revocation
+does not change the incoming actor. Bypass has no account GUID. Error documents may
+display an Activity ID rather than the persisted framework request ID.
+
+Entry-to-start measures the OnStarting observation, not delivery of headers.
+Entry-to-terminal is total time; start-to-completion is only available for a
+normally completed response with a start observation. Missing boundaries are NULL.
+Abort plus original execution unwind can seal an incomplete row before later
+framework errors; the winning terminal freezes exceptions permanently. Incomplete
+status is only the last safely observed started response, otherwise NULL. Completed
+HTTP500 is still completed. None of these facts proves browser receipt or whether a
+business transaction committed. Hangs, crashes and exceptional finalization can
+leave no row; late exceptions remain in native diagnostics.
+
+The queue holds **256 envelopes plus at most one writer-owned envelope**, not a hard
+byte/memory budget. Full exception detail is not truncated. Requests never wait for
+queue capacity or SQLite. Startup/unavailable/full/capture/write/shutdown losses
+are possible. One background writer creates a new/empty store atomically, validates
+the exact existing schema and writes a request plus all exceptions in one transaction
+(foreign keys ON, DELETE journal, FULL synchronous). Incompatible/corrupt stores are
+unavailable, never automatically repaired, migrated, cleared or replaced. Native
+SQLite journal recovery still applies. Busy timeout is **1 second**, not an OS IO
+deadline. Failed/uncertain envelopes are not retried; an uncertain commit may exist.
+Unavailable queued/new records are dropped, with reopen attempts every **30 seconds**.
+Writer-only stderr summaries at most once per **30 seconds** contain loss reason
+counts/readiness/safe SQLite codes, never dropped payloads. Shutdown closes admission,
+attempts FIFO drain for at most **5 seconds of host wait**, then abandons remaining
+work. Active synchronous IO is not forcibly terminated or cross-thread disposed.
+
+There is **no retention, rotation, pruning, disk limit or automatic log backup**.
+Accumulated growth is unbounded and operator-owned; do not rely on these lossy logs
+for audit/history or recovery. The existing build backup remains logic-DB-only.
+Logs are excluded from source/build/publish/portable artifacts, browser cache,
+logic exchange and record history. Inspect privately with a SQLite client's
+**read-only** connection, for example:
+
+```sql
+SELECT Id, RequestId, Method, Path, QueryString, AuthenticationState, AccountId,
+       ObservedStatusCode, Outcome, TotalElapsedMs,
+       ResponseStartElapsedMs, ResponseCompletionElapsedMs
+FROM HttpRequests ORDER BY Id DESC LIMIT 20;
+SELECT e.* FROM HttpExceptions AS e
+JOIN HttpRequests AS r ON r.Id=e.HttpRequestId
+WHERE r.Id=<selected local request row ID> ORDER BY e.Ordinal;
+```
+
+Do not point a writable tool at the live store or copy only its main file during
+active writes. No automated log-management/recovery workflow is supplied.
 
 ## Create a Room From a Scene Dump
 

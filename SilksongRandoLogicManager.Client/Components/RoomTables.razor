@@ -1,0 +1,352 @@
+@using SilksongRandoLogicManager.Contracts
+@using SilksongRandoLogicManager.Client.RoomEditing
+@using System.Collections.Immutable
+@using System.Text.Json
+@using Microsoft.JSInterop
+@using Silksong_Rando_Logic_Manager.Services
+@implements IAsyncDisposable
+
+@{
+    var navigation = PrepareNavigation();
+    Dictionary<string, object> FieldAttributes(RoomTableRow row, string kind, string field, string label) =>
+        BuildFieldAttributes(navigation, row, kind, field, label);
+}
+
+<section class="document-section subroom-table-presentation"><h2>subrooms</h2>
+@foreach (var archived in Partitions)
+{
+    var rows = Subrooms.Where(x => x.IsArchived == archived).ToArray();
+    if (archived && (!ShowArchived || rows.Length == 0)) continue;
+    if (archived) { <div class="archived-table-label">[archived]</div> }
+    <table class="logic-table subroom-table" data-v2-subroom-table="@(archived ? "archived" : "active")" data-v2-child-count="@rows.Count(x => x.EntityId is not null)">
+        <colgroup><col class="reorder-column" /><col class="subroom-name-column" /><col class="subroom-reference-column" /><col class="subroom-notes-column" /><col class="actions-column" /></colgroup>
+        <thead><tr><th class="reorder-heading"></th><th>name</th><th>reference</th><th>notes</th><th class="actions-heading"></th></tr></thead>
+        <tbody>@for (var n = 0; n < rows.Length; n++) { var row = rows[n];
+            <tr @key="row.ClientId" @attributes='RowAttributes(row, "subroom", n)' class="@RowClass(row)">
+                <td class="reorder-cell">
+                    @if (row.EntityId is not null && !row.IsArchived) {
+                        @if (row.Attention) { <i class="fa-solid fa-circle-xmark danger" role="img" aria-label="Subroom needs attention"></i> }
+                        else { <button type="button" class="reorder-handle" draggable="@(Blocked ? "false" : "true")" data-v2-subroom-grip="true" disabled="@Blocked" title="Reorder subroom" aria-label="Reorder subroom"><i class="fa-solid fa-grip-vertical" aria-hidden="true"></i></button> }
+                    }
+                </td>
+                <td class="@row.FieldClass("name")"><textarea @attributes='FieldAttributes(row, "subroom", "name", "Subroom name")' class="text-editor" rows="1" autocomplete="off" data-v2-child-mirror-target="@(row.LastConfirmed is null && !row.IsArchived ? FieldId(row, "reference") : null)" readonly="@(row.IsArchived || Blocked)">@row.Initial.FriendlyName</textarea></td>
+                <td class="@row.FieldClass("reference")"><input @attributes='FieldAttributes(row, "subroom", "reference", "Subroom reference ID")' class="text-editor" autocomplete="off" value="@row.Initial.ReferenceId" readonly="@(row.IsArchived || Blocked)" /></td>
+                <td class="@row.FieldClass("notes")"><textarea @attributes='FieldAttributes(row, "subroom", "notes", "Subroom notes")' class="detail-editor" rows="1" autocomplete="off" readonly="@(row.IsArchived || Blocked)">@row.Initial.Notes</textarea></td>
+                <td class="row-actions">@if (row.EntityId is { } id) {
+                    <span class="action-slot">@if (!row.IsArchived) { <button type="button" id="v2-subroom-geometry-@id" title="edit scene rectangle" aria-label="edit scene rectangle" disabled="@(Blocked || row.Attention)" @onclick="() => Action(row, RoomOrderSection.Subrooms, RoomRowAction.Geometry)"><i class="fa-solid fa-pen-ruler"></i></button> }</span>
+                    <span class="action-slot">@if (row.IsArchived) { <button type="button" title="restore" aria-label="restore" disabled="@(Blocked || row.Attention)" @onclick="() => Action(row, RoomOrderSection.Subrooms, RoomRowAction.Restore)"><i class="fa-solid fa-rotate-left"></i></button> } else { <button type="button" id="v2-subroom-@row.AnnotationAction-@id" title="@AnnotationTitle(row)" aria-label="@AnnotationTitle(row)" disabled="@(Blocked || row.Attention || !row.CanAnnotate || !SceneActionsAvailable)" @onclick="() => Action(row, RoomOrderSection.Subrooms, RoomRowAction.Annotation)"><span class="annotation-crosshairs @row.AnnotationClass" aria-hidden="true"><i class="fa-solid fa-crosshairs"></i></span></button> }</span>
+                    <span class="action-slot"><button type="button" id="v2-subroom-open-delete-@id" title="@(row.IsArchived ? "delete permanently" : "archive")" aria-label="@(row.IsArchived ? "delete permanently" : "archive")" disabled="@(Blocked || row.Attention)" @onclick="() => Action(row, RoomOrderSection.Subrooms, row.IsArchived ? RoomRowAction.Delete : RoomRowAction.Archive)"><i class="fa-solid @(row.IsArchived ? "fa-trash" : "fa-box-archive")"></i></button></span>
+                }</td>
+            </tr>
+        }</tbody>
+    </table>
+}
+</section>
+
+<section class="document-section transition-table-presentation"><h2>room transitions</h2>
+@foreach (var archived in Partitions)
+{
+    var rows = Transitions.Where(x => x.IsArchived == archived).ToArray();
+    if (archived && (!ShowArchived || rows.Length == 0)) continue;
+    if (archived) { <div class="archived-table-label">[archived]</div> }
+    <table class="logic-table transition-table" data-v2-transition-table="@(archived ? "archived" : "active")" data-v2-child-count="@rows.Count(x => x.EntityId is not null)">
+        <colgroup><col class="reorder-column" /><col class="transition-alias-column" /><col class="transition-text-column" /><col class="transition-text-column" /><col class="transition-text-column" /><col class="transition-destination-alias-column" /><col class="transition-inverse-column" /><col class="checkbox-column" /><col class="transition-text-column" /><col class="transition-text-column" /><col class="checkbox-column" /><col class="verification-column" /><col class="actions-column" /></colgroup>
+        <thead><tr><th></th><th>alias</th><th>name</th><th>from subroom</th><th>destination room</th><th>destination alias</th><th>inverse</th><th title="Arrival here may cause collisions or other problems." aria-label="Arrival here may cause collisions or other problems.">unsafe arrival</th><th>requirements</th><th>notes</th><th>todo</th><th>verify</th><th></th></tr></thead>
+        <tbody>@for (var n = 0; n < rows.Length; n++) { var row = rows[n]; var value = row.Initial;
+            <tr @key="row.ClientId" @attributes='RowAttributes(row, "transition", n)' class="@RowClass(row)">
+                <td class="reorder-cell">
+                    @if (row.EntityId is not null && !row.IsArchived) {
+                        @if (row.Attention) { <i class="fa-solid fa-circle-xmark danger" role="img" aria-label="Transition needs attention"></i> }
+                        else { <button type="button" class="reorder-handle" draggable="@(Blocked ? "false" : "true")" data-v2-transition-grip="true" disabled="@Blocked" title="Reorder transition" aria-label="Reorder transition"><i class="fa-solid fa-grip-vertical" aria-hidden="true"></i></button> }
+                    }
+                </td>
+                <td class="@row.FieldClass("alias")"><input @attributes='FieldAttributes(row, "transition", "alias", "Transition alias")' class="alias-editor" autocomplete="off" value="@value.Alias" readonly="@(row.IsArchived || Blocked)" /></td>
+                <td class="@row.FieldClass("name")"><input @attributes='FieldAttributes(row, "transition", "name", "Transition friendly name")' class="text-editor focus-muted" autocomplete="off" value="@value.FriendlyName" readonly="@(row.IsArchived || Blocked)" /></td>
+                <td class="@row.FieldClass("source")"><input @attributes='FieldAttributes(row, "transition", "source", "Transition source subroom reference")' class="text-editor" autocomplete="off" list="v2-transition-subroom-references" value="@value.SourceSubroomReferenceText" readonly="@(row.IsArchived || Blocked)" /></td>
+                <td class="@row.FieldClass("destination-room")"><input @attributes='FieldAttributes(row, "transition", "destination-room", "Transition destination room")' class="text-editor focus-muted" autocomplete="off" list="v2-transition-room-references" value="@value.DestinationRoomReferenceText" readonly="@(row.IsArchived || Blocked)" /></td>
+                <td class="@row.FieldClass("destination-alias")"><input @attributes='FieldAttributes(row, "transition", "destination-alias", "Transition destination alias")' class="alias-editor focus-muted" autocomplete="off" list="v2-transition-aliases-@row.ClientId" value="@value.DestinationTransitionAliasText" readonly="@(row.IsArchived || Blocked)" /></td>
+                <td class="transition-inverse-state">@if (row.EntityId is not null && !row.IsArchived && row.InverseIcon.Length != 0) {
+                    @if (row.CanPrepareInverse || row.InverseRoomId is not null) { <button type="button" id="v2-transition-inverse-@row.EntityId" title="@row.InverseTitle" aria-label="@row.InverseTitle" disabled="@(row.CanPrepareInverse ? Blocked || row.Attention : InspectionBlocked || row.Attention)" @onclick="() => Action(row, RoomOrderSection.Transitions, row.CanPrepareInverse ? RoomRowAction.Inverse : RoomRowAction.FollowInverse)"><i class="fa-solid @row.InverseIcon @row.InverseClass"></i></button> }
+                    else { <i class="fa-solid @row.InverseIcon @row.InverseClass" title="@row.InverseTitle" aria-label="@row.InverseTitle"></i> }
+                }</td>
+                <td class="checkbox-cell transition-unsafe-arrival-cell" title="Arrival here may cause collisions or other problems."><label class="transition-unsafe-arrival-target" for="@FieldId(row, "unsafe-arrival")"><input @attributes='FieldAttributes(row, "transition", "unsafe-arrival", "Arrival here may cause collisions or other problems.")' type="checkbox" checked="@value.IsUnsafeArrival" disabled="@(row.IsArchived || Blocked)" /></label></td>
+                <td class="requirements-cell @row.FieldClass("requirements")">
+                    @if (row.IsArchived) { <div class="requirements-preview" data-v2-requirements-highlight="">@row.Values.Requirements</div> }
+                    else { <div class="requirements-editor-layer requirements-inline-layer"><div data-v2-requirements-highlight="" aria-hidden="true">@value.Requirements</div><textarea @attributes='FieldAttributes(row, "transition", "requirements", "Transition requirements")' class="detail-editor requirements-editor" rows="1" data-v2-requirements-editor="" data-v2-requirements-room="@RoomId" readonly="@Blocked">@value.Requirements</textarea></div> }
+                </td>
+                <td class="@row.FieldClass("notes")"><textarea @attributes='FieldAttributes(row, "transition", "notes", "Transition notes")' class="detail-editor" rows="1" autocomplete="off" readonly="@(row.IsArchived || Blocked)">@value.Notes</textarea></td>
+                <td class="checkbox-cell @row.FieldClass("todo")"><input @attributes='FieldAttributes(row, "transition", "todo", "Transition is TODO")' type="checkbox" autocomplete="off" checked="@value.IsTodo" disabled="@(row.IsArchived || Blocked)" /></td>
+                <td class="verification-cell @row.FieldClass("verification")"><select @attributes='FieldAttributes(row, "transition", "verification", "Transition verification")' autocomplete="off" disabled="@(row.IsArchived || Blocked)"><option value="false" selected="@(value.IsVerified == false)">not verified</option><option value="" selected="@(value.IsVerified is null)">unknown</option><option value="true" selected="@(value.IsVerified == true)">verified</option></select></td>
+                <td class="row-actions">@if (row.EntityId is { } id) {
+                    <span class="action-slot">@if (!row.IsArchived) { <button type="button" id="v2-transition-metadata-@id" title="edit in-game data" aria-label="edit in-game data" disabled="@(Blocked || row.Attention)" @onclick="() => Action(row, RoomOrderSection.Transitions, RoomRowAction.Metadata)"><i class="fa-solid fa-pen"></i></button> }</span>
+                    <span class="action-slot">@if (row.IsArchived) { <button type="button" title="restore" aria-label="restore" disabled="@(Blocked || row.Attention)" @onclick="() => Action(row, RoomOrderSection.Transitions, RoomRowAction.Restore)"><i class="fa-solid fa-rotate-left"></i></button> } else { <button type="button" id="v2-transition-@row.AnnotationAction-@id" title="@AnnotationTitle(row)" aria-label="@AnnotationTitle(row)" disabled="@(Blocked || row.Attention || !row.CanAnnotate || !SceneActionsAvailable)" @onclick="() => Action(row, RoomOrderSection.Transitions, RoomRowAction.Annotation)"><span class="annotation-crosshairs @row.AnnotationClass" aria-hidden="true"><i class="fa-solid fa-crosshairs"></i></span></button> }</span>
+                    <span class="action-slot"><button type="button" id="v2-transition-open-delete-@id" title="@(row.IsArchived ? "delete permanently" : "archive")" aria-label="@(row.IsArchived ? "delete permanently" : "archive")" disabled="@(Blocked || row.Attention)" @onclick="() => Action(row, RoomOrderSection.Transitions, row.IsArchived ? RoomRowAction.Delete : RoomRowAction.Archive)"><i class="fa-solid @(row.IsArchived ? "fa-trash" : "fa-box-archive")"></i></button></span>
+                }</td>
+            </tr>
+        }</tbody>
+    </table>
+}
+</section>
+
+<section class="document-section connection-table-presentation"><h2>subroom connections</h2>
+@foreach (var archived in Partitions)
+{
+    var rows = Connections.Where(x => x.IsArchived == archived && (x.EntityId is not null || SubroomReferences.Count > 0)).ToArray();
+    if (archived && (!ShowArchived || rows.Length == 0)) continue;
+    if (archived) { <div class="archived-table-label">[archived]</div> }
+    <table class="logic-table connection-table" data-v2-connection-table="@(archived ? "archived" : "active")" data-v2-child-count="@rows.Count(x => x.EntityId is not null)">
+        <colgroup><col class="reorder-column" /><col class="connection-state-column" /><col class="connection-alias-column" /><col class="connection-text-column" /><col class="connection-text-column" /><col class="connection-text-column" /><col class="connection-text-column" /><col class="connection-text-column" /><col class="checkbox-column" /><col class="verification-column" /><col class="actions-column" /></colgroup>
+        <thead><tr><th></th><th>state</th><th>alias</th><th>name</th><th>source</th><th>destination</th><th>requirements</th><th>notes</th><th>todo</th><th>verify</th><th></th></tr></thead>
+        <tbody>@for (var n = 0; n < rows.Length; n++) { var row = rows[n]; var value = row.Initial;
+            <tr @key="row.ClientId" @attributes='RowAttributes(row, "connection", n)' class="@RowClass(row)">
+                <td class="reorder-cell">
+                    @if (row.EntityId is not null && !row.IsArchived) {
+                        @if (row.Attention) { <i class="fa-solid fa-circle-xmark danger" role="img" aria-label="Connection needs attention"></i> }
+                        else { <button type="button" class="reorder-handle" draggable="@(Blocked ? "false" : "true")" data-v2-connection-grip="true" disabled="@Blocked" title="Reorder connection" aria-label="Reorder connection"><i class="fa-solid fa-grip-vertical" aria-hidden="true"></i></button> }
+                    }
+                </td><td class="connection-state @row.PathwayClass" title="@row.PathwayTitle">@if (row.LastConfirmed is not null && !row.IsArchived) { <i class="fa-solid @row.PathwayIcon" role="img" aria-label="@row.PathwayTitle"></i> }</td>
+                <td class="@row.FieldClass("alias")"><input @attributes='FieldAttributes(row, "connection", "alias", "Connection alias")' class="alias-editor" autocomplete="off" value="@value.Alias" readonly="@(row.IsArchived || Blocked)" /></td>
+                <td class="@row.FieldClass("name")"><input @attributes='FieldAttributes(row, "connection", "name", "Connection friendly name")' class="text-editor focus-muted" autocomplete="off" value="@value.FriendlyName" readonly="@(row.IsArchived || Blocked)" /></td>
+                <td class="@row.FieldClass("source")"><input @attributes='FieldAttributes(row, "connection", "source", "Connection source subroom")' class="text-editor" autocomplete="off" list="v2-connection-subroom-references" value="@value.SourceSubroomReferenceText" readonly="@(row.IsArchived || Blocked)" /></td>
+                <td class="@row.FieldClass("destination")"><input @attributes='FieldAttributes(row, "connection", "destination", "Connection destination subroom")' class="text-editor" autocomplete="off" list="v2-connection-subroom-references" value="@value.DestinationSubroomReferenceText" readonly="@(row.IsArchived || Blocked)" /></td>
+                <td class="requirements-cell @row.FieldClass("requirements")">
+                    @if (row.IsArchived) { <div class="requirements-preview" data-v2-requirements-highlight="">@row.Values.Requirements</div> }
+                    else { <div class="requirements-editor-layer requirements-inline-layer"><div data-v2-requirements-highlight="" aria-hidden="true">@value.Requirements</div><textarea @attributes='FieldAttributes(row, "connection", "requirements", "Connection requirements")' class="detail-editor requirements-editor" rows="1" data-v2-requirements-editor="" data-v2-requirements-room="@RoomId" readonly="@Blocked">@value.Requirements</textarea></div> }
+                </td>
+                <td class="@row.FieldClass("notes")"><textarea @attributes='FieldAttributes(row, "connection", "notes", "Connection notes")' class="detail-editor" rows="1" autocomplete="off" readonly="@(row.IsArchived || Blocked)">@value.Notes</textarea></td>
+                <td class="checkbox-cell @row.FieldClass("todo")"><input @attributes='FieldAttributes(row, "connection", "todo", "Connection is TODO")' type="checkbox" autocomplete="off" checked="@value.IsTodo" disabled="@(row.IsArchived || Blocked)" /></td>
+                <td class="verification-cell @row.FieldClass("verification")"><select @attributes='FieldAttributes(row, "connection", "verification", "Connection verification")' autocomplete="off" disabled="@(row.IsArchived || Blocked)"><option value="false" selected="@(value.IsVerified == false)">not verified</option><option value="" selected="@(value.IsVerified is null)">unknown</option><option value="true" selected="@(value.IsVerified == true)">verified</option></select></td>
+                <td class="row-actions">@if (row.EntityId is { } id) {
+                    <span class="action-slot">@if (!row.IsArchived && row.CanScaffoldInverse) { <button type="button" id="v2-connection-inverse-@id" title="scaffold inverse connection" aria-label="scaffold inverse connection" disabled="@(Blocked || row.Attention)" @onclick="() => Action(row, RoomOrderSection.Connections, RoomRowAction.Inverse)"><i class="fa-solid fa-arrow-right-arrow-left"></i></button> }</span>
+                    <span class="action-slot">@if (row.IsArchived) { <button type="button" title="restore" aria-label="restore" disabled="@(Blocked || row.Attention)" @onclick="() => Action(row, RoomOrderSection.Connections, RoomRowAction.Restore)"><i class="fa-solid fa-rotate-left"></i></button> } else { <button type="button" id="v2-connection-@row.AnnotationAction-@id" title="@AnnotationTitle(row)" aria-label="@AnnotationTitle(row)" disabled="@(Blocked || row.Attention || !row.CanAnnotate || !SceneActionsAvailable)" @onclick="() => Action(row, RoomOrderSection.Connections, RoomRowAction.Annotation)"><span class="annotation-crosshairs @row.AnnotationClass" aria-hidden="true"><i class="fa-solid fa-crosshairs"></i></span></button> }</span>
+                    <span class="action-slot"><button type="button" id="v2-connection-open-delete-@id" title="@(row.IsArchived ? "delete permanently" : "archive")" aria-label="@(row.IsArchived ? "delete permanently" : "archive")" disabled="@(Blocked || row.Attention)" @onclick="() => Action(row, RoomOrderSection.Connections, row.IsArchived ? RoomRowAction.Delete : RoomRowAction.Archive)"><i class="fa-solid @(row.IsArchived ? "fa-trash" : "fa-box-archive")"></i></button></span>
+                }</td>
+            </tr>
+        }</tbody>
+    </table>
+}
+</section>
+
+@foreach (var enemies in Partitions)
+{
+    var section = enemies ? RoomOrderSection.Enemies : RoomOrderSection.Checks;
+    <section class="document-section"><h2>@(enemies ? "enemies" : "check locations")</h2>
+    @foreach (var archived in Partitions)
+    {
+        var owner = enemies ? Enemies : CheckLocations;
+        var rows = (archived ? owner.Archived : owner.Active).ToArray();
+        if (archived && (!ShowArchived || rows.Length == 0)) continue;
+        if (archived) { <div class="archived-table-label">[archived]</div> }
+        <table class="logic-table check-table" data-v2-check-section="@(enemies ? "enemies" : "checks")" data-v2-check-table="@(archived ? "archived" : "active")" data-v2-child-count="@rows.Count(x => x.EntityId is not null)">
+            <colgroup><col class="reorder-column" /><col class="check-type-column" /><col class="check-name-column" /><col class="check-subroom-column" /><col class="check-requirements-column" /><col class="check-notes-column" /><col class="checkbox-column" /><col class="verification-column" /><col class="actions-column" /></colgroup>
+            <thead><tr><th class="reorder-heading"></th><th>type</th><th>name</th><th>subroom</th><th>requirements</th><th>notes</th><th>todo</th><th>verify</th><th class="actions-heading"></th></tr></thead>
+            <tbody>@for (var n = 0; n < rows.Length; n++) { var row = rows[n]; var value = row.Initial;
+                <tr @key="row.ClientId" @attributes='RowAttributes(row, "check", n)' class="@RowClass(row)">
+                    <td class="reorder-cell">
+                        @if (row.EntityId is not null && !row.IsArchived) {
+                            @if (row.Attention) { <i class="fa-solid fa-circle-xmark danger" role="img" aria-label="Check needs attention"></i> }
+                            else { <button type="button" class="reorder-handle" draggable="@(Blocked ? "false" : "true")" data-v2-check-grip="true" disabled="@Blocked" title="Reorder check" aria-label="Reorder check"><i class="fa-solid fa-grip-vertical" aria-hidden="true"></i></button> }
+                        }
+                    </td>
+                    <td class="check-type-cell @row.FieldClass("type")"><select @attributes='FieldAttributes(row, "check", "type", "Check type")' autocomplete="off" disabled="@(Blocked || row.IsArchived)">
+                        <option value="" selected="@(value.LocationType is null or "")">unknown</option>
+                        @if (value.LocationType is { } raw && !CheckTypes.Any(option => option.OutputValue == raw)) { <option value="@raw" selected disabled>Unrecognized: @raw</option> }
+                        @foreach (var group in CheckTypes.GroupBy(type => type.Group, StringComparer.Ordinal))
+                        { <optgroup @key="group.Key" label="@group.Key">@foreach (var option in group) { <option @key="option.OutputValue" value="@option.OutputValue" selected="@(option.OutputValue == value.LocationType)">@option.Name.ToLowerInvariant()</option> }</optgroup> }
+                    </select></td>
+                    <td class="@row.FieldClass("name")"><textarea @attributes='FieldAttributes(row, "check", "name", "Check name")' class="text-editor" data-v2-friendly-name-space="@(enemies ? "enemies" : "checks")" rows="1" autocomplete="off" readonly="@(row.IsArchived || Blocked)">@value.FriendlyName</textarea></td>
+                    <td class="@row.FieldClass("subroom")"><input @attributes='FieldAttributes(row, "check", "subroom", "Check subroom")' class="text-editor" autocomplete="off" list="v2-check-subroom-references" value="@value.SubroomReferenceText" readonly="@(row.IsArchived || Blocked)" /></td>
+                    <td class="requirements-cell @row.FieldClass("requirements")">
+                        @if (row.IsArchived) { <div class="requirements-preview" data-v2-requirements-highlight="">@row.Values.Requirements</div> }
+                        else { <div class="requirements-editor-layer requirements-inline-layer"><div data-v2-requirements-highlight="" aria-hidden="true">@value.Requirements</div><textarea @attributes='FieldAttributes(row, "check", "requirements", "Check requirements")' class="detail-editor requirements-editor" rows="1" data-v2-requirements-editor="" data-v2-requirements-room="@RoomId" readonly="@Blocked">@value.Requirements</textarea></div> }
+                    </td>
+                    <td class="@row.FieldClass("notes")"><textarea @attributes='FieldAttributes(row, "check", "notes", "Check notes")' class="detail-editor" rows="1" autocomplete="off" readonly="@(row.IsArchived || Blocked)">@value.Notes</textarea></td>
+                    <td class="checkbox-cell @row.FieldClass("todo")"><input @attributes='FieldAttributes(row, "check", "todo", "Check is TODO")' type="checkbox" autocomplete="off" checked="@value.IsTodo" disabled="@(row.IsArchived || Blocked)" /></td>
+                    <td class="verification-cell @row.FieldClass("verification")"><select @attributes='FieldAttributes(row, "check", "verification", "Check verification")' autocomplete="off" disabled="@(row.IsArchived || Blocked)"><option value="false" selected="@(value.IsVerified == false)">not verified</option><option value="" selected="@(value.IsVerified is null)">unknown</option><option value="true" selected="@(value.IsVerified == true)">verified</option></select></td>
+                    <td class="row-actions">@if (row.EntityId is { } id) {
+                        <span class="action-slot">@if (!row.IsArchived) { <button type="button" id="v2-check-metadata-@id" title="edit in-game data" aria-label="edit in-game data" disabled="@(Blocked || row.Attention)" @onclick="() => Action(row, section, RoomRowAction.Metadata)"><i class="fa-solid fa-pen"></i></button> }</span>
+                        <span class="action-slot">@if (row.IsArchived) { <button type="button" title="restore" aria-label="restore" disabled="@(Blocked || row.Attention)" @onclick="() => Action(row, section, RoomRowAction.Restore)"><i class="fa-solid fa-rotate-left"></i></button> } else { <button type="button" id="v2-check-@row.AnnotationAction-@id" title="@AnnotationTitle(row)" aria-label="@AnnotationTitle(row)" disabled="@(Blocked || row.Attention || !row.CanAnnotate || !SceneActionsAvailable)" @onclick="() => Action(row, section, RoomRowAction.Annotation)"><span class="annotation-crosshairs @row.AnnotationClass" aria-hidden="true"><i class="fa-solid fa-crosshairs"></i></span></button> }</span>
+                        <span class="action-slot"><button type="button" id="v2-check-open-delete-@id" title="@(row.IsArchived ? "delete permanently" : "archive")" aria-label="@(row.IsArchived ? "delete permanently" : "archive")" disabled="@(Blocked || row.Attention)" @onclick="() => Action(row, section, row.IsArchived ? RoomRowAction.Delete : RoomRowAction.Archive)"><i class="fa-solid @(row.IsArchived ? "fa-trash" : "fa-box-archive")"></i></button></span>
+                    }</td>
+                </tr>
+            }</tbody>
+        </table>
+    }
+    </section>
+}
+<datalist id="v2-transition-room-references">@foreach (var text in RoomReferences) { <option value="@text"></option> }</datalist>
+@foreach (var name in new[] { "v2-transition-subroom-references", "v2-connection-subroom-references", "v2-check-subroom-references" })
+{ <datalist id="@name">@foreach (var text in SubroomReferences) { <option value="@text"></option> }</datalist> }
+@foreach (var row in Transitions) { <datalist id="v2-transition-aliases-@row.ClientId">@foreach (var alias in row.DestinationAliases) { <option value="@alias"></option> }</datalist> }
+
+@code {
+    [Parameter, EditorRequired] public Guid RoomId { get; set; }
+    [Parameter, EditorRequired] public IReadOnlyList<RoomSubroomRow> Subrooms { get; set; } = [];
+    [Parameter, EditorRequired] public IReadOnlyList<RoomTransitionRow> Transitions { get; set; } = [];
+    [Parameter, EditorRequired] public IReadOnlyList<RoomConnectionRow> Connections { get; set; } = [];
+    [Parameter, EditorRequired] public RoomCheckSectionRows CheckLocations { get; set; } = new([], []);
+    [Parameter, EditorRequired] public RoomCheckSectionRows Enemies { get; set; } = new([], []);
+    [Parameter] public IReadOnlyList<string> RoomReferences { get; set; } = [];
+    [Parameter] public IReadOnlyList<string> SubroomReferences { get; set; } = [];
+    [Parameter, EditorRequired] public IReadOnlyList<CheckLocationTypeDefinition> CheckTypes { get; set; } = [];
+    [Parameter] public bool ShowArchived { get; set; }
+    [Parameter] public bool Blocked { get; set; }
+    [Parameter] public bool InspectionBlocked { get; set; }
+    [Parameter] public bool SceneActionsAvailable { get; set; }
+    [Parameter] public string SceneUnavailableReason { get; set; } = "Scene context is not ready.";
+    private string AnnotationTitle(RoomTableRow row) => SceneActionsAvailable ? row.AnnotationTitle : SceneUnavailableReason;
+    [Parameter, EditorRequired] public EventCallback<RoomRowActionIntent> ActionRequested { get; set; }
+    private IJSInProcessObjectReference? nativeOwner;
+    [Parameter, EditorRequired] public Func<RoomTableBoundaryIntent, Task<bool>> BoundaryRequested { get; set; } = null!;
+    [Parameter, EditorRequired] public IReadOnlyDictionary<RoomOrderSection, Guid> LatentSuccessors { get; set; } = null!;
+    private DotNetObjectReference<RoomTables>? nativeReference;
+    private bool disposed;
+    public void RegisterNative(IJSInProcessObjectReference owner)
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        nativeOwner = owner;
+        nativeReference ??= DotNetObjectReference.Create(this);
+        foreach (var kind in new[] { "subroom", "transition", "connection", "check" })
+        {
+            var prefix = "v2" + char.ToUpperInvariant(kind[0]) + kind[1..];
+            owner.InvokeVoid("registerRoom", nativeReference, kind, new
+            {
+                method = "navigate", blur = "blur", drop = "drop", control = "control", action = "action",
+                row = prefix + "Row", table = prefix + "Table", grip = prefix + "Grip", field = prefix + "Field", client = prefix + "ClientRow",
+                directionPrefix = prefix, before = kind == "subroom" ? "v2-drop-before" : $"v2-{kind}-drop-before",
+                tail = kind == "subroom" ? "v2-drop-tail" : $"v2-{kind}-drop-tail", tailRow = prefix + "Tail",
+                section = kind == "check" ? "v2CheckSection" : null, actions = new[] { "archive", "restore", "open-delete" }
+            });
+        }
+    }
+    [JSInvokable]
+    public Task<bool> DispatchRoomBoundary(string kind, string boundary, JsonElement[] arguments, RoomNativeField[] fields, long interaction, string? focusTarget)
+    {
+        if (disposed || Blocked || fields is null || arguments is null || interaction < 0) return Task.FromResult(false);
+        // Decode the permanent narrow positional browser boundaries once. Unknown
+        // methods, fields, partitions and directions never become default actions.
+        RoomTableKind? table = kind switch { "subroom" => RoomTableKind.Subroom, "transition" => RoomTableKind.Transition, "connection" => RoomTableKind.Connection, "check" => RoomTableKind.Check, _ => null };
+        if (table is null || arguments.Length == 0 || arguments[0].ValueKind != JsonValueKind.String || !arguments[0].TryGetGuid(out var client) || client == Guid.Empty) return Task.FromResult(false);
+        var native = fields.ToImmutableArray();
+        if (boundary == "drop")
+        {
+            if (arguments.Length != (table == RoomTableKind.Check ? 4 : 3) || arguments[1].ValueKind != JsonValueKind.String || arguments[1].GetString() != "active"
+                || arguments[2].ValueKind != JsonValueKind.Number || !arguments[2].TryGetInt32(out var target) || target < 0) return Task.FromResult(false);
+            RoomOrderSection? section = table switch { RoomTableKind.Subroom => RoomOrderSection.Subrooms, RoomTableKind.Transition => RoomOrderSection.Transitions,
+                RoomTableKind.Connection => RoomOrderSection.Connections, _ => arguments[3].ValueKind == JsonValueKind.String ? arguments[3].GetString() switch { "checks" => RoomOrderSection.Checks, "enemies" => RoomOrderSection.Enemies, _ => null } : null };
+            return section is null ? Task.FromResult(false) : BoundaryRequested(new RoomDropBoundaryIntent(table.Value, client, native, interaction, section.Value, target));
+        }
+        if (arguments.Length < 2 || arguments[1].ValueKind != JsonValueKind.String) return Task.FromResult(false);
+        var field = arguments[1].GetString();
+        var columns = kind switch { "subroom" => new[] { "name", "reference", "notes" }, "transition" => new[] { "alias", "name", "source", "destination-room", "destination-alias", "unsafe-arrival", "requirements", "notes", "todo", "verification" },
+            "connection" => new[] { "alias", "name", "source", "destination", "requirements", "notes", "todo", "verification" }, _ => new[] { "type", "name", "subroom", "requirements", "notes", "todo", "verification" } };
+        if (!columns.Contains(field)) return Task.FromResult(false);
+        var column = field switch { "name" => RoomNativeColumn.Name, "reference" => RoomNativeColumn.Reference, "notes" => RoomNativeColumn.Notes,
+            "alias" => RoomNativeColumn.Alias, "source" => RoomNativeColumn.Source, "destination-room" => RoomNativeColumn.DestinationRoom, "destination-alias" => RoomNativeColumn.DestinationAlias,
+            "unsafe-arrival" => RoomNativeColumn.UnsafeArrival, "requirements" => RoomNativeColumn.Requirements, "todo" => RoomNativeColumn.Todo, "verification" => RoomNativeColumn.Verification,
+            "destination" => RoomNativeColumn.Destination, "type" => RoomNativeColumn.Type, "subroom" => RoomNativeColumn.Subroom, _ => throw new InvalidOperationException() };
+        var control = column is RoomNativeColumn.Type or RoomNativeColumn.Verification or RoomNativeColumn.Todo or RoomNativeColumn.UnsafeArrival;
+        RoomNativeDirection? direction = null;
+        RoomNativeTrigger trigger;
+        if (boundary == "navigate" && arguments.Length == 4 && !control && arguments[2].ValueKind == JsonValueKind.String && arguments[3].ValueKind is JsonValueKind.String or JsonValueKind.Null)
+        {
+            direction = arguments[2].GetString() switch { "left" => RoomNativeDirection.Left, "right" => RoomNativeDirection.Right, "up" => RoomNativeDirection.Up, "down" => RoomNativeDirection.Down, _ => null };
+            if (direction is null) return Task.FromResult(false);
+            trigger = RoomNativeTrigger.BoundaryArrow;
+        }
+        else if (boundary == "control" && arguments.Length == 3 && control && arguments[2].ValueKind is JsonValueKind.String or JsonValueKind.Null) trigger = RoomNativeTrigger.ControlChange;
+        else if (boundary == "blur" && arguments.Length == 4 && arguments[2].ValueKind is JsonValueKind.String or JsonValueKind.Null
+            && (control ? arguments[3].ValueKind == JsonValueKind.Null : arguments[3].ValueKind is JsonValueKind.String or JsonValueKind.Null)) trigger = control ? RoomNativeTrigger.ControlBlur : RoomNativeTrigger.TextBlur;
+        else return Task.FromResult(false);
+        return BoundaryRequested(new RoomRowBoundaryIntent(table.Value, client, native, interaction, trigger, column, direction, focusTarget));
+    }
+    public ValueTask DisposeAsync()
+    {
+        if (disposed) return ValueTask.CompletedTask;
+        disposed = true;
+        if (nativeReference is null) return ValueTask.CompletedTask;
+        try { if (nativeOwner is not null) foreach (var kind in new[] { "subroom", "transition", "connection", "check" }) nativeOwner.InvokeVoid("unregister", kind); }
+        finally { nativeReference.Dispose(); }
+        return ValueTask.CompletedTask;
+    }
+    private static readonly bool[] Partitions = [false, true];
+    private static string FieldId(RoomTableRow row, string field) => $"editor-row-{row.ClientId}-{field}";
+    private static string RowClass(RoomTableRow row) => row.Attention ? "child-row-failed" : row.Pending ? "child-row-saving" : row.EntityId is null ? "uncommitted-row" : "";
+    private static Dictionary<string, object> RowAttributes(RoomTableRow row, string kind, int index)
+    {
+        var attributes = new Dictionary<string, object>
+        {
+        [$"data-v2-{kind}-tail"] = row.EntityId is null ? "true" : "false",
+        ["data-v2-row-annotation-kind"] = kind == "transition" ? "exit" : kind,
+        ["data-v2-row-annotation-id"] = (row is RoomConnectionRow connection ? connection.AnnotationMarkerId : row.EntityId)?.ToString() ?? "",
+        ["data-v2-row-source-subroom-id"] = (row as RoomConnectionRow)?.AttentionSourceSubroomId?.ToString() ?? "",
+        ["data-v2-row-destination-subroom-id"] = (row as RoomConnectionRow)?.AttentionDestinationSubroomId?.ToString() ?? ""
+        };
+        if (row.EntityId is { } id)
+        {
+            attributes[$"data-v2-{kind}-row"] = id.ToString();
+            attributes["data-v2-child-index"] = index;
+        }
+        return attributes;
+    }
+    private sealed record NavigationPosition(RoomOrderSection Section, RoomTableRow[] Rows, int Index, string[] Columns);
+    private Dictionary<RoomTableRow, NavigationPosition> PrepareNavigation()
+    {
+        var navigation = new Dictionary<RoomTableRow, NavigationPosition>();
+        foreach (var section in Enum.GetValues<RoomOrderSection>())
+        {
+            IEnumerable<RoomTableRow> family = section switch
+            {
+                RoomOrderSection.Subrooms => Subrooms, RoomOrderSection.Transitions => Transitions,
+                RoomOrderSection.Connections => Connections.Where(x => x.EntityId is not null || SubroomReferences.Count > 0),
+                RoomOrderSection.Enemies => Enemies.Active.Concat(Enemies.Archived),
+                _ => CheckLocations.Active.Concat(CheckLocations.Archived)
+            };
+            string[] columns = section switch
+            {
+                RoomOrderSection.Subrooms => ["name", "reference", "notes"],
+                RoomOrderSection.Transitions => ["alias", "name", "source", "destination-room", "destination-alias", "requirements", "notes"],
+                RoomOrderSection.Connections => ["alias", "name", "source", "destination", "requirements", "notes"],
+                _ => ["name", "subroom", "requirements", "notes"]
+            };
+            var partitions = family.ToLookup(x => x.IsArchived);
+            foreach (var archived in Partitions)
+            {
+                var rows = partitions[archived].ToArray();
+                for (var index = 0; index < rows.Length; index++) navigation.Add(rows[index], new(section, rows, index, columns));
+            }
+        }
+        return navigation;
+    }
+    private Dictionary<string, object> BuildFieldAttributes(IReadOnlyDictionary<RoomTableRow, NavigationPosition> navigation,
+        RoomTableRow row, string kind, string field, string label)
+    {
+        var attributes = new Dictionary<string, object>
+        {
+            ["id"] = FieldId(row, field), ["aria-label"] = label, [$"data-v2-{kind}-client-row"] = row.ClientId.ToString(),
+            [$"data-v2-{kind}-field"] = field, ["title"] = row.FieldTitle(field) ?? ""
+        };
+        if (!navigation.TryGetValue(row, out var position)) return attributes;
+        var section = position.Section; var rows = position.Rows; var columns = position.Columns;
+        var column = Array.IndexOf(columns, field); var index = position.Index;
+        if (column < 0 || index < 0) return attributes;
+        foreach (var direction in new[] { "left", "right", "up", "down" })
+        {
+            Guid? target = null; var targetField = field; var latent = false;
+            if (direction == "left" && column > 0) { target = row.ClientId; targetField = columns[column - 1]; }
+            if (direction == "right" && column < columns.Length - 1) { target = row.ClientId; targetField = columns[column + 1]; }
+            if (direction == "up" && index > 0) target = rows[index - 1].ClientId;
+            if (direction == "down" && index < rows.Length - 1) target = rows[index + 1].ClientId;
+            if (direction == "down" && index == rows.Length - 1 && !row.IsArchived && row.EntityId is null)
+            { target = LatentSuccessors[section]; latent = true; }
+            if (target is null) continue;
+            var name = $"data-v2-{kind}-{direction}"; attributes[name] = $"{target}|{targetField}";
+            if (latent) attributes[name + "-latent"] = "true";
+        }
+        return attributes;
+    }
+    private Task Action(RoomTableRow row, RoomOrderSection section, RoomRowAction action) =>
+        disposed || (action == RoomRowAction.FollowInverse
+            ? InspectionBlocked
+            : Blocked) ? Task.CompletedTask : ActionRequested.InvokeAsync(new(section, row.ClientId, action));
+}

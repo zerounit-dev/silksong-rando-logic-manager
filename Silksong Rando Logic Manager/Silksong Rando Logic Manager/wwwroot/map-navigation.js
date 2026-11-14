@@ -85,6 +85,18 @@ window.mapNavigation = (() => {
         const end = event => { if (!current() || !down || event.pointerId !== down.pointerId) return; if (down.panning) { suppressClick = true; if (svg.hasPointerCapture(event.pointerId)) svg.releasePointerCapture(event.pointerId); } down = null; };
         svg.addEventListener("pointerup", end, options); svg.addEventListener("pointercancel", end, options);
         svg.addEventListener("click", event => { if (!current() || !suppressClick) return; suppressClick = false; event.preventDefault(); event.stopImmediatePropagation(); }, { capture: true, signal: abort.signal });
+        svg.addEventListener("keydown", event => {
+            if (!current() || svg.dataset.mapKeyboard !== "true") return;
+            const path = event.target.closest?.("[data-map-owner]");
+            if (!path || !svg.contains(path)) return;
+            const context = event.key === "ContextMenu" || event.key === "F10" && event.shiftKey;
+            const primary = (event.key === "Enter" || event.key === " ") && path.dataset.mapOwner === "linked";
+            if (!context && !primary) return;
+            event.preventDefault();
+            if (event.repeat) return;
+            suppressClick = false;
+            path.dispatchEvent(new MouseEvent(context ? "contextmenu" : "click", { bubbles: true, cancelable: true, button: context ? 2 : 0 }));
+        }, options);
     };
     return {
         initialize(svg) {
@@ -101,15 +113,26 @@ window.mapOverlayCalibration = (() => {
     const point = (svg, x, y) => { const value = svg.createSVGPoint(); value.x = x; value.y = y; return value.matrixTransform(svg.getScreenCTM().inverse()); };
     return {
         initialize(id) {
-            const svg = document.getElementById(id);
-            if (!svg || svg.dataset.ready) return;
-            svg.dataset.ready = "true";
-            const base = parse(svg.dataset.baseViewbox);
+            const svg = typeof id === "string" ? document.getElementById(id) : id;
+            if (!svg) return;
+            if (svg.__overlayCalibrationOwner) { svg.__overlayCalibrationOwner.reconcile(); return; }
+            const abort = new AbortController();
+            let disposed = false, base = parse(svg.dataset.baseViewbox);
             let down = null;
+            const isCurrent = () => !disposed && svg.isConnected && svg.__overlayCalibrationOwner === owner && svg.dataset.calibrationDisabled !== "true";
+            const retireGesture = () => { if (down && svg.hasPointerCapture(down.id)) svg.releasePointerCapture(down.id); down = null; };
+            const owner = {
+                reconcile() { base = parse(svg.dataset.baseViewbox); if (!isCurrent()) retireGesture(); },
+                dispose() { if (disposed) return; disposed = true; retireGesture(); abort.abort(); if (svg.__overlayCalibrationOwner === owner) delete svg.__overlayCalibrationOwner; }
+            };
+            svg.__overlayCalibrationOwner = owner;
+            const input = id => svg.closest(".confirmation-modal").querySelector(`#${id}`);
+            const options = { signal: abort.signal };
             svg.addEventListener("wheel", event => {
+                if (!isCurrent()) return;
                 event.preventDefault();
                 if (event.ctrlKey) {
-                    const scaleX = document.getElementById("overlay-scale-x-percent"), scaleY = document.getElementById("overlay-scale-y-percent");
+                    const scaleX = input("overlay-scale-x-percent"), scaleY = input("overlay-scale-y-percent");
                     const zoom = parse(svg.getAttribute("viewBox"))[2] / base[2];
                     const step = zoom < .5 ? .1 : zoom < 1 ? .25 : .5;
                     const change = event.deltaY < 0 ? step : -step;
@@ -121,18 +144,19 @@ window.mapOverlayCalibration = (() => {
                 const view = parse(svg.getAttribute("viewBox")), at = point(svg, event.clientX, event.clientY), factor = Math.exp(Math.max(-.06, Math.min(.06, event.deltaY * .003)));
                 view[2] *= factor; view[3] *= factor; view[0] = at.x - (at.x - view[0]) * factor; view[1] = at.y - (at.y - view[1]) * factor;
                 svg.setAttribute("viewBox", view.join(" "));
-            }, { passive: false });
-            svg.addEventListener("pointerdown", event => { if (event.button === 0) { down = { id: event.pointerId, x: event.clientX, y: event.clientY, mode: event.ctrlKey ? event.shiftKey ? "scale" : "align" : "pan" }; svg.setPointerCapture(event.pointerId); } });
+            }, { passive: false, signal: abort.signal });
+            svg.addEventListener("pointerdown", event => { if (isCurrent() && event.button === 0) { down = { id: event.pointerId, x: event.clientX, y: event.clientY, mode: event.ctrlKey ? event.shiftKey ? "scale" : "align" : "pan" }; svg.setPointerCapture(event.pointerId); } }, options);
             svg.addEventListener("pointermove", event => {
+                if (!isCurrent()) { retireGesture(); return; }
                 if (!down || event.pointerId !== down.id) return;
                 const previous = point(svg, down.x, down.y), current = point(svg, event.clientX, event.clientY);
                 if (down.mode === "align") {
-                    const base = parse(svg.dataset.baseViewbox), left = document.getElementById("overlay-left-offset-percent"), bottom = document.getElementById("overlay-bottom-offset-percent");
+                    const base = parse(svg.dataset.baseViewbox), left = input("overlay-left-offset-percent"), bottom = input("overlay-bottom-offset-percent");
                     left.value = String(Number(left.value || 0) + (current.x - previous.x) / base[2] * 100);
                     bottom.value = String(Number(bottom.value || 0) - (current.y - previous.y) / base[3] * 100);
                     left.dispatchEvent(new Event("input", { bubbles: true })); bottom.dispatchEvent(new Event("input", { bubbles: true }));
                 } else if (down.mode === "scale") {
-                    const base = parse(svg.dataset.baseViewbox), scaleX = document.getElementById("overlay-scale-x-percent"), scaleY = document.getElementById("overlay-scale-y-percent");
+                    const base = parse(svg.dataset.baseViewbox), scaleX = input("overlay-scale-x-percent"), scaleY = input("overlay-scale-y-percent");
                     scaleX.value = String(Math.max(.1, Number(scaleX.value || 100) + (current.x - previous.x) / base[2] * 100));
                     scaleY.value = String(Math.max(.1, Number(scaleY.value || 100) - (current.y - previous.y) / base[3] * 100));
                     scaleX.dispatchEvent(new Event("input", { bubbles: true })); scaleY.dispatchEvent(new Event("input", { bubbles: true }));
@@ -142,10 +166,11 @@ window.mapOverlayCalibration = (() => {
                     svg.setAttribute("viewBox", view.join(" "));
                 }
                 down.x = event.clientX; down.y = event.clientY;
-            });
+            }, options);
             const end = event => { if (down?.id === event.pointerId) { if (svg.hasPointerCapture(event.pointerId)) svg.releasePointerCapture(event.pointerId); down = null; } };
-            svg.addEventListener("pointerup", end); svg.addEventListener("pointercancel", end);
-        }
+            svg.addEventListener("pointerup", end, options); svg.addEventListener("pointercancel", end, options);
+        },
+        dispose(svg) { (typeof svg === "string" ? document.getElementById(svg) : svg)?.__overlayCalibrationOwner?.dispose(); }
     };
 })();
 

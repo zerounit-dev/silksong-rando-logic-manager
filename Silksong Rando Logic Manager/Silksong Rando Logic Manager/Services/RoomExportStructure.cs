@@ -306,24 +306,7 @@ internal static class RoomExportStructure
         else identities.Add(id, owner);
     }
 
-    internal static string? CanonicalValue(string? value)
-    {
-        if (value is null) return null;
-        var output = new StringBuilder();
-        var pendingHyphen = false;
-        foreach (var rune in value.Trim().EnumerateRunes())
-        {
-            var lowered = Rune.ToLowerInvariant(rune);
-            if (lowered.IsAscii && (lowered.Value is >= 'a' and <= 'z' or >= '0' and <= '9'))
-            {
-                if (pendingHyphen && output.Length != 0) output.Append('-');
-                output.Append((char)lowered.Value);
-                pendingHyphen = false;
-            }
-            else pendingHyphen = output.Length != 0;
-        }
-        return output.Length == 0 ? null : output.ToString();
-    }
+    internal static string? CanonicalValue(string? value) => RoomPresentationRules.CanonicalSegment(value);
 
     private static bool ValidAlias(string? value) => !string.IsNullOrWhiteSpace(value) && value.EnumerateRunes().All(rune => Rune.IsLetter(rune) || Rune.GetUnicodeCategory(rune) == UnicodeCategory.DecimalDigitNumber);
     private static string Display(string? primary, string? secondary) => !string.IsNullOrWhiteSpace(primary) ? primary : !string.IsNullOrWhiteSpace(secondary) ? secondary : "unnamed row";

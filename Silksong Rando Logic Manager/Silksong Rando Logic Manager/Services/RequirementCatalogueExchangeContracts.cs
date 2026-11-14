@@ -61,6 +61,7 @@ public sealed record RequirementCatalogueImportOutcome(
     IReadOnlyList<RequirementCatalogueValidationIssue> ValidationIssues,
     string? Message = null)
 {
+    public SilksongRandoLogicManager.Contracts.VocabularyMutationPatch? Shared { get; init; }
     public static RequirementCatalogueImportOutcome Committed() => new(RequirementCatalogueImportStatus.Committed, []);
     public static RequirementCatalogueImportOutcome ValidationRejected(IReadOnlyList<RequirementCatalogueValidationIssue> issues) => new(RequirementCatalogueImportStatus.ValidationRejected, issues);
     public static RequirementCatalogueImportOutcome Failed(string message) => new(RequirementCatalogueImportStatus.Failed, [], message);

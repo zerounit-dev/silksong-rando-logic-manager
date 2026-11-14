@@ -1,0 +1,29 @@
+@page "/tools/map-manifest"
+@layout ToolsLayout
+@rendermode InteractiveServer
+
+<PageTitle>Map manifest | Silksong Logic Manager</PageTitle>
+
+<DiagnosticErrorBoundary>
+    <ChildContent>
+        <main class="map-manifest-tool map-wireframe-workspace tools-body">
+        <MapManifestWorkbench>
+            <ChildContent Context="manifest">
+                    <header class="map-wireframe-header">
+                        <h1 class="tool-title">map manifest</h1>
+                        @manifest.ProcessingIndicator
+                    </header>
+                    <div class="map-manifest-upload">
+                        <div class="map-controls-start">@manifest.Picker</div>
+                        @manifest.Status
+                    </div>
+            </ChildContent>
+        </MapManifestWorkbench>
+        </main>
+    </ChildContent>
+    <ErrorContent>
+        <div class="diagnostic-boundary-fallback" role="alert">Map manifest could not be displayed.<pre>@context.ToString()</pre></div>
+    </ErrorContent>
+</DiagnosticErrorBoundary>
+
+<DiagnosticModal />
