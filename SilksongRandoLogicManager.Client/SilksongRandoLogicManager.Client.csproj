@@ -39,4 +39,33 @@
     <PackageReference Include="Markdig" Version="1.3.2" />
   </ItemGroup>
 
+  <!-- SDK 10.0.401 initializes this transient item only in its build instance,
+       whose transform replaces source HTML with a Build-only asset. Referenced
+       publication has different globals: discover only current owning HTML when
+       absent, never promote the Build result. Keep native transformation and
+       registration intact; revisit when the SDK initializes publish HTML itself. -->
+  <Target Name="InitializeLogicPublishHtmlInputs"
+          BeforeTargets="GenerateHtmlAssetPlaceholdersPublishStaticWebAssets"
+          DependsOnTargets="ResolveHtmlAssetPlaceholdersPublishConfiguration"
+          Condition="'$(OverrideHtmlAssetPlaceholders)' == 'true' And '@(_HtmlStaticWebAssets)' == ''">
+    <ItemGroup>
+      <_HtmlStaticWebAssets Include="@(StaticWebAsset)"
+                           Condition="'%(StaticWebAsset.SourceId)' == '$(PackageId)' And '%(StaticWebAsset.AssetKind)' != 'Build' And '%(StaticWebAsset.Extension)' == '.html'" />
+      <_LogicPublishHtmlContent Include="@(Content)"
+                                Condition="'@(_HtmlStaticWebAssets)' == '' And '%(Content.Extension)' == '.html' And '%(Content.CopyToPublishDirectory)' != 'Never'" />
+    </ItemGroup>
+    <DefineStaticWebAssets Condition="'@(_HtmlStaticWebAssets)' == ''"
+                           CandidateAssets="@(_LogicPublishHtmlContent->Distinct())"
+                           FingerprintCandidates="$(StaticWebAssetsFingerprintContent)"
+                           FingerprintPatterns="@(StaticWebAssetFingerprintPattern)"
+                           RelativePathPattern="wwwroot/**"
+                           SourceType="Discovered" SourceId="$(PackageId)"
+                           ContentRoot="$(MSBuildProjectDirectory)\wwwroot\"
+                           BasePath="$(StaticWebAssetBasePath)"
+                           AssetMergeSource="$(StaticWebAssetMergeTarget)">
+      <Output TaskParameter="Assets" ItemName="_HtmlStaticWebAssets" />
+    </DefineStaticWebAssets>
+    <Error Condition="'@(_HtmlStaticWebAssets)' == ''"
+           Text="No current client HTML input was available for native publish transformation." />
+  </Target>
 </Project>

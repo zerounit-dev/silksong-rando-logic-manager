@@ -60,6 +60,9 @@ runtime-validation receipt.
    packaging. No prior local image build/load is required. Container packaging reuses the existing
    Linux portable builder's full sanitized staging, consistent SQLite snapshot and
    no-PDB/builder-path checks, also regenerating its ordinary standalone folder/archive.
+   The portable boundary also validates SDK-transformed startup HTML, all entry scripts,
+   imports/preload and shipped native endpoint targets before archiving. Container copying
+   does not select or rewrite startup HTML independently.
    It then removes only its **copied** portable marker/bypass configuration, moves the
    copied public Storage into an immutable image seed and generates required-mode
    defaults. The existing standalone artifacts retain their marker, config and behavior.

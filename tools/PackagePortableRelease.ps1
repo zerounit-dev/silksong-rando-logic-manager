@@ -2,14 +2,18 @@
 param(
     [ValidateSet('all', 'win-x64', 'linux-x64', 'osx-arm64')]
     [string] $RuntimeIdentifier = 'all',
-    [string[]] $PrivateRoots = @()
+    [string[]] $PrivateRoots = @(),
+    [string] $OutputRoot,
+    [string] $BuildEvidenceRoot
 )
 
 $ErrorActionPreference = 'Stop'
 
 if ($RuntimeIdentifier -eq 'all') {
     foreach ($target in @('win-x64', 'linux-x64', 'osx-arm64')) {
-        & $PSCommandPath -RuntimeIdentifier $target -PrivateRoots $PrivateRoots
+        $arguments = @{} + $PSBoundParameters
+        $arguments.RuntimeIdentifier = $target
+        & $PSCommandPath @arguments
         if ($LASTEXITCODE -ne 0) {
             throw "Portable release build failed for $target with exit code $LASTEXITCODE."
         }
@@ -76,7 +80,42 @@ elseif (Test-Path -LiteralPath $developmentLicense -PathType Leaf) {
 else {
     throw "Required MIT license was not found. Expected either release-root '$repositoryLicense' or development-parent '$developmentLicense'."
 }
-$releaseDirectory = Join-Path $repositoryRoot 'releases'
+function Resolve-IsolatedOutputRoot([string] $Path) {
+    if ([string]::IsNullOrWhiteSpace($Path)) { throw 'Custom output/evidence roots must not be empty.' }
+    $full = [IO.Path]::GetFullPath($(if ([IO.Path]::IsPathRooted($Path)) { $Path } else { Join-Path $repositoryRoot $Path })).TrimEnd('\', '/')
+    # In development, documentation and policy alongside project/ are source too.
+    # In the curated release checkout, repositoryRoot already is the source root.
+    $sourceRoot = if ((Split-Path -Leaf $repositoryRoot) -eq 'project' -and (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $repositoryRoot) 'AGENTS.md'))) { Split-Path -Parent $repositoryRoot } else { $repositoryRoot }
+    foreach ($protected in @($sourceRoot) + $resolvedPrivateRoots) {
+        $protected = [IO.Path]::GetFullPath($protected).TrimEnd('\', '/')
+        if ($full.Equals($protected, [StringComparison]::OrdinalIgnoreCase) -or
+            $full.StartsWith($protected + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -or
+            $protected.StartsWith($full + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Custom output/evidence roots must not overlap source or private state, including their ancestors.'
+        }
+    }
+    for ($parent = $full; $parent; $parent = [IO.Path]::GetDirectoryName($parent)) {
+        if (Test-Path -LiteralPath $parent) {
+            $item = Get-Item -LiteralPath $parent -Force
+            if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw 'Custom output/evidence roots must use real directories, not files or reparse points.'
+            }
+        }
+    }
+    return $full
+}
+$releaseDirectory = if ($PSBoundParameters.ContainsKey('OutputRoot')) { Resolve-IsolatedOutputRoot $OutputRoot } else { Join-Path $repositoryRoot 'releases' }
+$publishProperties = @()
+if ($PSBoundParameters.ContainsKey('BuildEvidenceRoot')) {
+    $evidenceDirectory = Resolve-IsolatedOutputRoot $BuildEvidenceRoot
+    if ($evidenceDirectory.Equals($releaseDirectory, [StringComparison]::OrdinalIgnoreCase) -or
+        $evidenceDirectory.StartsWith($releaseDirectory + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -or
+        $releaseDirectory.StartsWith($evidenceDirectory + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Output and build-evidence roots must be separate nonoverlapping directories.'
+    }
+    $runtimeEvidenceDirectory = Resolve-IsolatedOutputRoot (Join-Path $evidenceDirectory $RuntimeIdentifier)
+    $publishProperties += "-p:LogicBuildEvidenceRoot=$runtimeEvidenceDirectory"
+}
 $packageRoot = Join-Path $releaseDirectory $RuntimeIdentifier
 $applicationRoot = Join-Path $packageRoot 'Silksong Rando Logic Manager'
 $archiveExtension = if ($RuntimeIdentifier -eq 'win-x64') { 'zip' } else { 'tar.gz' }
@@ -90,6 +129,67 @@ foreach ($requiredPath in @($projectFile, $backupProject, $tarballBuilderProject
     }
 }
 
+function Assert-PublishedClientHtml {
+    param([Parameter(Mandatory = $true)][string] $ApplicationRoot)
+
+    # Inspect the SDK's final document and native routes, not guessed physical
+    # fingerprint names: aliases and negotiated compressed files are legitimate.
+    $webRoot = [IO.Path]::GetFullPath((Join-Path $ApplicationRoot 'wwwroot')) + [IO.Path]::DirectorySeparatorChar
+    $html = [IO.File]::ReadAllText((Join-Path $webRoot 'index.html'))
+    if ($html -match '#\[' -or $html -match '\{fingerprint\}') {
+        throw 'Published client index.html contains unresolved SDK asset placeholders.'
+    }
+    $manifest = Get-Content -LiteralPath (Join-Path $ApplicationRoot 'Silksong_Rando_Logic_Manager.staticwebassets.endpoints.json') -Raw | ConvertFrom-Json
+    if ($manifest.ManifestType -cne 'Publish') { throw 'Expected the native Publish static asset endpoint manifest.' }
+    $routes = @{}
+    foreach ($endpoint in $manifest.Endpoints) {
+        if (-not $routes.ContainsKey($endpoint.Route)) { $routes[$endpoint.Route] = @() }
+        $routes[$endpoint.Route] += $endpoint
+    }
+    function Assert-StartupAsset([string] $Url, [string] $Integrity = '') {
+        $url = [Net.WebUtility]::HtmlDecode($Url)
+        if ([string]::IsNullOrWhiteSpace($url) -or $url -match '[#?\\]' -or $url.StartsWith('//') -or $url -match '^[a-zA-Z][a-zA-Z0-9+.-]*:') {
+            throw "Invalid published startup asset URL: $url"
+        }
+        $route = $url -replace '^\./', '' -replace '^/', ''
+        if (-not $routes.ContainsKey($route)) { throw "Published startup asset has no native endpoint: $url" }
+        $endpoints = @($routes[$route])
+        foreach ($endpoint in $endpoints) {
+            $file = [IO.Path]::GetFullPath((Join-Path $webRoot $endpoint.AssetFile))
+            if (-not $file.StartsWith($webRoot, [StringComparison]::OrdinalIgnoreCase) -or -not [IO.File]::Exists($file)) {
+                throw "Published startup endpoint has no shipped asset: $url"
+            }
+            if ($Integrity) {
+                $nativeIntegrity = @($endpoint.EndpointProperties | Where-Object Name -CEQ 'integrity' | ForEach-Object Value)
+                if ($nativeIntegrity -cnotcontains $Integrity) { throw "Published startup integrity differs from native endpoint: $url" }
+            }
+        }
+    }
+    $scripts = @([regex]::Matches($html, '<script\b[^>]*\bsrc="([^"]+)"') | ForEach-Object { $_.Groups[1].Value })
+    foreach ($entry in @('_framework/blazor.webassembly', 'logic-code/map-support', 'logic-code/editor', 'logic-code/requirement-catalogue', 'logic-code/map-navigation', 'logic-code/archipelago')) {
+        if (@($scripts | Where-Object { $_ -cmatch ('^' + [regex]::Escape($entry) + '\.[^./#]+\.js$') }).Count -ne 1) {
+            throw "Published startup entry is missing or not fingerprinted: $entry"
+        }
+    }
+    foreach ($url in $scripts) { Assert-StartupAsset $url }
+    $preloads = @([regex]::Matches($html, '<link\b[^>]*\brel="(?:preload|modulepreload)"[^>]*>'))
+    if ($preloads.Count -eq 0) { throw 'Published startup preload metadata is missing.' }
+    foreach ($link in $preloads) {
+        $href = [regex]::Match($link.Value, '\bhref="([^"]+)"')
+        if (-not $href.Success) { throw 'Published startup preload has no resolved href.' }
+        Assert-StartupAsset $href.Groups[1].Value
+    }
+    $maps = [regex]::Matches($html, '<script\b[^>]*\btype="importmap"[^>]*>([\s\S]*?)</script>')
+    if ($maps.Count -ne 1) { throw 'Published startup must have one generated import map.' }
+    $map = $maps[0].Groups[1].Value | ConvertFrom-Json
+    if (@($map.imports.PSObject.Properties).Count -eq 0 -or @($map.integrity.PSObject.Properties).Count -eq 0) {
+        throw 'Published startup import map or integrity metadata is empty.'
+    }
+    foreach ($import in $map.imports.PSObject.Properties) { Assert-StartupAsset $import.Value }
+    foreach ($integrity in $map.integrity.PSObject.Properties) { Assert-StartupAsset $integrity.Name $integrity.Value }
+    Write-Host "Published client HTML validated: $($scripts.Count) scripts, $($preloads.Count) preloads, $(@($map.imports.PSObject.Properties).Count) imports."
+}
+
 function Assert-StagedPortableOutputSafe {
     param(
         [Parameter(Mandatory = $true)]
@@ -99,6 +199,7 @@ function Assert-StagedPortableOutputSafe {
         [string[]] $BuilderPathMarkers
     )
 
+    Assert-PublishedClientHtml -ApplicationRoot (Join-Path $StagedRoot 'Silksong Rando Logic Manager')
     $expectedAuthenticationConfig = Join-Path $StagedRoot 'Silksong Rando Logic Manager/Config/appsettings.json'
     $configFiles = @(Get-ChildItem -LiteralPath (Split-Path $expectedAuthenticationConfig) -Recurse -File -Force)
     if ($configFiles.Count -ne 1 -or $configFiles[0].FullName -ine $expectedAuthenticationConfig -or
@@ -166,13 +267,27 @@ function Assert-StagedPortableOutputSafe {
 
 try {
     if (Test-Path -LiteralPath $packageRoot) {
+        if ($PSBoundParameters.ContainsKey('OutputRoot')) {
+            # Never traverse an existing redirected stage while replacing isolated
+            # output. Check children before descent; Get-ChildItem -Recurse alone
+            # must not decide whether following a junction is safe on this host.
+            $pending = [Collections.Generic.Stack[string]]::new()
+            $pending.Push($packageRoot)
+            while ($pending.Count) {
+                $entry = Get-Item -LiteralPath $pending.Pop() -Force
+                if (($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Isolated package stage must not contain reparse points.' }
+                if ($entry.PSIsContainer) {
+                    foreach ($child in Get-ChildItem -LiteralPath $entry.FullName -Force) { $pending.Push($child.FullName) }
+                }
+            }
+        }
         Remove-Item -LiteralPath $packageRoot -Recurse -Force
     }
 
     New-Item -ItemType Directory -Path $packageRoot -Force | Out-Null
     # Escape the MSBuild property-list separator for the dotnet command-line parser.
     $privateRootsProperty = $resolvedPrivateRoots -join '%3B'
-    & dotnet publish $projectFile --configuration Release --runtime $RuntimeIdentifier --self-contained true --output $applicationRoot "-p:LogicManagerPrivateRoots=$privateRootsProperty" '-p:LogicManagerSanitizedPortable=true'
+    & dotnet publish $projectFile --configuration Release --runtime $RuntimeIdentifier --self-contained true --output $applicationRoot "-p:LogicManagerPrivateRoots=$privateRootsProperty" '-p:LogicManagerSanitizedPortable=true' @publishProperties
     if ($LASTEXITCODE -ne 0) {
         throw "dotnet publish failed with exit code $LASTEXITCODE."
     }

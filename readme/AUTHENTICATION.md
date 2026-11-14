@@ -207,6 +207,18 @@ remain Secure Always; forwarding never enables bypass. Verify public HTTPS, reco
 scheme/Origin checks (including disconnect), cookies, host filtering and untrusted-header
 rejection in the actual deployment. Source/build do not establish deployment security.
 
+## Failed documents and sign-in errors
+
+In production, an unexpected document-rendering failure (including a failure while
+creating a sign-in form) ends with a standalone, non-cacheable HTTP 500 page. It does
+not redirect through sign-in or automatically retry. The page needs no account,
+antiforgery token, cookie, script or stylesheet download and exposes no exception
+details. Original exceptions remain in native server diagnostics; account HTML is
+still excluded from the private HTTP request store. Normal protected-document login
+redirects, intentional denials and API/download error responses remain unchanged.
+Development retains its native diagnostics. This does not correct deployment scheme
+recognition or change Secure-cookie, CSRF, proxy trust or sign-in rate-limit settings.
+
 ## Bootstrap and recovery
 
 In deliberate bypass, `/account/admin` works without an account. Create an enabled

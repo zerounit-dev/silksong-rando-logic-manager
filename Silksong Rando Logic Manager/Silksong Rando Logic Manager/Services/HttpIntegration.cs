@@ -70,8 +70,9 @@ public static class HttpIntegration
         var exceptions = new ExceptionHandlerOptions { SuppressDiagnosticsCallback = _ => false };
         if (!app.Environment.IsDevelopment())
         {
-            exceptions.ExceptionHandlingPath = "/tools/error";
-            exceptions.CreateScopeForErrors = true;
+            // A failed login must not re-enter protected routing/admission. The
+            // existing handlers still own API failures and intentional denials.
+            exceptions.ExceptionHandler = TerminalDocumentFailureAsync;
         }
         else
         {
@@ -110,6 +111,35 @@ public static class HttpIntegration
             _ => ("failure", "The request could not be completed. The outcome could not be confirmed.")
         };
         return V3CatalogueHttp.ErrorAsync(context, context.Response.StatusCode, code, message);
+    }
+
+    private static Task TerminalDocumentFailureAsync(HttpContext context)
+    {
+        // Native exception middleware clears unstarted output before dispatch and
+        // rethrows started/aborted failures. No components, services, tokens, cookies
+        // or downloaded resources are needed to render this last-resort response.
+        context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+        context.Response.ContentType = "text/html; charset=utf-8";
+        context.Response.Headers.CacheControl = "no-store";
+        context.Response.Headers.Pragma = "no-cache";
+        context.Response.Headers.Remove("Location");
+        return context.Response.WriteAsync("""
+            <!doctype html><html lang="en"><head><meta charset="utf-8">
+            <meta name="viewport" content="width=device-width,initial-scale=1">
+            <title>Request failed | Silksong Logic Manager</title>
+            <style>
+            :root{font-family:"Cascadia Mono","SFMono-Regular",Consolas,"Liberation Mono",monospace;font-size:14px;color:#171717;background:#f6f5f1}
+            *{box-sizing:border-box}
+            body{margin:0;padding:3rem 1rem;line-height:1.5;overflow-wrap:anywhere}
+            main{width:100%;max-width:24rem;margin:0 auto}
+            .app-name{font-size:.85rem;color:#575650;margin:0 0 .5rem}
+            h1{font-size:1.4rem;line-height:1.3;margin:0 0 1rem}
+            p{margin:.75rem 0}
+            @media(max-width:40rem){body{padding:1.5rem 1rem}}
+            </style></head><body><main><p class="app-name">Silksong Logic Manager</p>
+            <h1>request failed</h1><p>The request could not be completed.</p>
+            </main></body></html>
+            """, context.RequestAborted);
     }
 }
 

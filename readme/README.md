@@ -50,6 +50,20 @@ Linux
    The Mac release targets Apple Silicon only and is unsigned, so macOS may
    require you to approve it in Privacy & Security after the first launch attempt.
 
+Published startup HTML is transformed by the .NET SDK for the same candidate, including
+all six entry scripts, imports and preload metadata. Portable packaging checks the final
+HTML against native endpoint mappings and shipped assets before archiving; Linux container
+input uses that same validated portable output. No fingerprint filename is fixed in source.
+For local packaging evidence, `tools/PackagePortableRelease.ps1` optionally accepts
+`-OutputRoot` (stages/archives) and `-BuildEvidenceRoot` (per-runtime build intermediates/
+outputs). Defaults remain `releases` and normal project build paths. Custom roots must
+be separate real directories outside source/private state and their ancestors; the
+ordinary consistent seed snapshot, real source backup hook and privacy checks still run.
+
+Unexpected production document failures, including sign-in form rendering, return a
+standalone non-cacheable HTTP 500 rather than repeatedly redirecting to sign-in. Normal
+login redirects remain. See the authentication guide for diagnostics and security boundaries.
+
 ## Private server HTTP logs
 
 Logging normally runs in the background with no operator configuration. The single
