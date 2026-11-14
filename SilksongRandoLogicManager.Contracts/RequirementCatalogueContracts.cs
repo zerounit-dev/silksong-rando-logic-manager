@@ -24,7 +24,9 @@ public enum RequirementInputSyntax
     RequiredDifficultyThenPredicateThenOptionalQuantity = 19,
     RequiredDifficultyThenPredicateThenQuantity = 20,
     RequiredDifficultyThenMethodThenPredicateThenOptionalQuantity = 21,
-    PredicateThenOptionalDirectionThenOptionalQuantity = 22
+    PredicateThenOptionalDirectionThenOptionalQuantity = 22,
+    PredicateThenMethod = 23,
+    RequiredDifficultyThenPredicateThenDirection = 24
 }
 
 public sealed record RequirementInputSyntaxOption(RequirementInputSyntax Value, string PersistedValue, string DisplayLabel, string Group);

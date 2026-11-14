@@ -31,7 +31,8 @@ internal static class PublishingRenderer
         var result = new PublishingImageResult();
         var capture = Path.Combine(captures, $"{room.Id:D}.webp");
         if (!File.Exists(capture)) { timing.SkipReason = "No eligible frozen capture"; return result; }
-        if (timing.Measure(PublishingMetric.Font, () => PublishingStorage.FileHash(font)) != FontHash) throw new PublishingBlock("The application-shipped publishing font is missing or changed. Repair the application assets before preparing.");
+        var actualFontHash = timing.Measure(PublishingMetric.Font, () => PublishingStorage.FileHash(font));
+        if (actualFontHash != FontHash) throw new PublishingBlock($"Assets/Publishing/NotoSans-Bold.ttf differs from the font pinned by this application.\nExpected raw SHA-256: {FontHash}\nObserved raw SHA-256: {actualFontHash}\nRestore that asset from the matching application distribution before preparing again; do not substitute a host font.");
         // Existing eligible captures must decode. Never downgrade corruption to an unavailable notice.
         using var decode = timing.Segment(PublishingMetric.Decode);
         using var source = new MagickImage(capture);
@@ -79,7 +80,7 @@ internal static class PublishingRenderer
             left = Math.Min(left, m.X - rx); right = Math.Max(right, m.X + rx); bottom = Math.Min(bottom, m.Y - ry); top = Math.Max(top, m.Y + ry);
         }
         var spanX = right - left; var spanY = top - bottom;
-        if (!Finite(spanX, spanY)) throw new PublishingBlock("Scene annotation extent exceeds finite geometry. Correct room geometry and prepare again.");
+        if (!Finite(spanX, spanY)) throw new PublishingBlock($"{PublishingDocuments.Title(room)} (room {room.Id:D}): annotation extent is not finite.\nObserved span X: {spanX}; span Y: {spanY}\nInspect this room's scene bounds, subroom frames and annotation coordinates in the editor, correct the nonfinite extent, then prepare again.");
         var scale = Math.Min(Math.Min(source.Width / width, source.Height / height), Math.Min(3500 / spanX, 3500 / spanY));
         (double X, double Y) Project(double x, double y) => ((x - left) * scale, (top - y) * scale);
         Dictionary<string, List<Label>> labels = [];
@@ -111,7 +112,7 @@ internal static class PublishingRenderer
                     var (px, py) = Project(entry.X, entry.Y);
                     timing.Labels = (timing.Labels ?? 0) + 1;
                     var metrics = timing.Measure(PublishingMetric.FontMetrics, () => new Drawables().Font(font).FontPointSize(fontSize).FontTypeMetrics(entry.Text))
-                        ?? throw new PublishingBlock("The fixed publishing font could not provide label metrics. Repair the shipped font/native rendering assets before preparing.");
+                        ?? throw new PublishingBlock($"{PublishingDocuments.Title(room)} (room {room.Id:D}): the pinned font returned no metrics for a {entry.Kind} label on record {entry.Ids[0]:D}, at font size {fontSize}. Check the matching application's Assets/Publishing/NotoSans-Bold.ttf and native rendering dependencies before preparing again; this does not establish an image-decoding failure.");
                     var tw = metrics.TextWidth + 6; var th = metrics.Ascent - metrics.Descent + 6;
                     if (entry.Kind == "checks") tw = th = Math.Max(Math.Max(tw, th), 6 * scale);
                     var obstacles = occupied.Where(x => x.Id != entry.Ids[0]).Select(x => x.Box).ToArray();
@@ -137,12 +138,12 @@ internal static class PublishingRenderer
             }
             var outputWidth = Math.Ceiling(maxX - minX); var outputHeight = Math.Ceiling(maxY - minY);
             if (!Finite(outputWidth, outputHeight) || outputWidth <= 0 || outputHeight <= 0)
-                throw new PublishingBlock("Annotation labels exceed finite canvas geometry. Correct the room geometry before preparing.");
+                throw new PublishingBlock($"{PublishingDocuments.Title(room)} (room {room.Id:D}): annotation canvas dimensions are nonfinite or nonpositive.\nObserved width: {outputWidth}; height: {outputHeight}\nInspect this room's bounds and annotation coordinates for invalid extents before preparing again.");
             if (Math.Max(outputWidth, outputHeight) <= 4096)
             { canvasWidth = (int)outputWidth; canvasHeight = (int)outputHeight; fit = true; break; }
             scale *= 4094d / Math.Max(outputWidth, outputHeight);
         }
-        if (!fit) throw new PublishingBlock("Annotation labels cannot fit the bounded image canvas. Correct dense geometry before preparing again.");
+        if (!fit) throw new PublishingBlock($"{PublishingDocuments.Title(room)} (room {room.Id:D}): annotation layout did not fit the 4096-pixel per-axis limit after 12 attempts.\nLast width: {Math.Ceiling(maxX - minX)}; height: {Math.Ceiling(maxY - minY)}\nReview this room's bounds and annotation placement before preparing again; if those are intended, report this room and these dimensions to the application maintainer. The limit does not by itself prove dense or corrupt geometry.");
         layoutTime.Complete();
         (double X, double Y) Point(double x, double y) { var p = Project(x, y); return (p.X - minX, p.Y - minY); }
         source.FilterType = FilterType.Lanczos;

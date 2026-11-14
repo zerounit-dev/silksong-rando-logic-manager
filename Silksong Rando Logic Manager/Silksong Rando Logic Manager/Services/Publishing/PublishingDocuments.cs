@@ -37,7 +37,10 @@ internal sealed class PublishingDocuments
             foreach (var room in d.Rooms.Where(x => x.RoomGroupId == group.Id))
                 d.Paths[room.Id] = d.GroupPaths[group.Id] + "/" + Unique(room.FriendlyName, names) + ".md";
         }
-        if (d.Rooms.Any(x => !d.Paths.ContainsKey(x.Id))) throw new PublishingBlock("Active rooms without a room group cannot be published. Assign them to a group and prepare again.");
+        var ungrouped = d.Rooms.Where(x => !d.Paths.ContainsKey(x.Id)).ToArray();
+        if (ungrouped.Length != 0) throw new PublishingBlock("Active rooms have no matching room group in the frozen publication snapshot:\n" +
+            string.Join("\n", ungrouped.Select(x => $"{x.FriendlyName} (room {x.Id:D}; group {x.RoomGroupId})")) +
+            "\nAssign these rooms to existing room groups in the editor, then discard the failed preparation and prepare again.");
         return d;
     }
     private static string Unique(string name, HashSet<string> used)
@@ -93,9 +96,7 @@ internal sealed class PublishingDocuments
                 storage.Timing = timing;
                 try
                 {
-                PublishingImageResult images;
-                try { images = PublishingRenderer.Render(storage, this, room, captures, directory, font, timing); }
-                catch (ImageMagick.MagickException) { throw new PublishingBlock($"{Title(room)}: eligible capture could not be decoded/rendered. Repair that room's image before preparing again; no publication was replaced."); }
+                var images = PublishingRenderer.Render(storage, this, room, captures, directory, font, timing);
                 var markdown = timing.Measure(PublishingMetric.Markdown, () => Markdown(room, images, false));
                 WriteText(storage, directory, Paths[room.Id], markdown);
                 using var masterTime = timing.Segment(PublishingMetric.Master);

@@ -73,7 +73,7 @@ internal static class PublishingSnapshot
             var factory = new PublishingSnapshotFactory(destination);
             await using var db = factory.CreateDbContext();
             var rooms = await timing.MeasureAsync(PublishingMetric.Load, () => db.Rooms.Where(x => !x.IsArchived && x.UseSceneImage && !x.IsSceneImageStale)
-                .Select(x => new { x.Id, x.SceneMinX, x.SceneMinY, x.SceneMaxX, x.SceneMaxY, x.SceneImageCropHash })
+                .Select(x => new { x.Id, x.FriendlyName, x.SceneMinX, x.SceneMinY, x.SceneMaxX, x.SceneMaxY, x.SceneImageCropHash })
                 .ToListAsync(cancellationToken));
             Directory.CreateDirectory(captures);
             foreach (var room in rooms)
@@ -91,7 +91,7 @@ internal static class PublishingSnapshot
                 }
                 timing.Files = (timing.Files ?? 0) + 1;
                 if (room.SceneImageCropHash is not null && !timing.Measure(PublishingMetric.CaptureValidation, () => SceneImageFileService.Matches(path, room.SceneImageCropHash)))
-                    throw new PublishingBlock("A scene capture does not match its frozen crop identity. Regenerate that room's image and prepare again.");
+                    throw new PublishingBlock($"Frozen room {room.FriendlyName} ({room.Id:D}): copied capture Staging/Captures/{room.Id:D}.webp does not match the snapshot's crop identity.\nExpected crop hash: {room.SceneImageCropHash}\nReview/regenerate this room's capture in the editor, then discard the failed preparation and prepare again. The frozen database and copied image did not agree; the source of that mismatch is not established.");
             }
             return factory;
         }

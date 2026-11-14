@@ -8,6 +8,7 @@
 .publishing-actions { display: flex; gap: .6rem; }
 .publishing-tool button i { margin-right: .18rem; }
 .publishing-error { color: var(--danger-color, #b42332); overflow-wrap: anywhere; }
+p.publishing-error { white-space: pre-wrap; }
 .publishing-review-group { margin: 1rem 0; }
 .publishing-review-group details { border-top: 1px solid var(--border-color, #c8c8c8); padding: .65rem 0; }
 .publishing-review-group summary { cursor: pointer; overflow-wrap: anywhere; }

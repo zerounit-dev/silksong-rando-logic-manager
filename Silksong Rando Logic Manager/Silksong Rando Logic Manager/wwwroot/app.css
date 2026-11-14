@@ -108,6 +108,27 @@ button, input, textarea { font: inherit; }
 .workspace { grid-column: 3; min-width: 0; height: 100vh; overflow-y: auto; padding: 0 1.35rem 0 0; }
 .content { width: min(100%, 1050px); margin: 0; padding: 1rem 0; }
 .content:has(> .room-editor-v2), .content:has(> .room-document) { padding: 0; }
+/* MOBILE-VIEW1: the initialized client root owns the usable viewport and the
+   full desktop canvas's horizontal scroll. Its native scrollbar reduces the
+   content box used by percentage-height descendants; no pixel allowance. */
+html:has(#app .v3-shell), body:has(#app .v3-shell) { min-width: 0; height: auto; overflow: auto; }
+#app:has(.v3-shell) { height: 100vh; height: 100dvh; overflow: auto; }
+.app-shell.v3-shell { height: 100%; min-height: 0; }
+.v3-shell > .sidebar { height: 100%; min-height: 0; overflow-y: auto; }
+.v3-shell > .workspace { height: 100%; min-height: 0; }
+/* Feedback remains in flow, before the room/loading allocation. Ordinary
+   landing/catalogue/import pages retain the workspace's normal block overflow. */
+.v3-shell > .workspace:has(> .content > .room-editor-v2),
+.v3-shell > .workspace:has(> .v3-initial) { display: flex; flex-direction: column; }
+.v3-shell > .workspace > * { flex-shrink: 0; }
+.v3-shell > .workspace > .content:has(> .room-editor-v2),
+.v3-shell > .workspace > .v3-initial { flex: 1 1 0; min-height: 0; }
+.v3-shell > .workspace > .content > .room-editor-v2,
+.v3-shell .room-editor-v2 > .room-document { height: 100%; min-height: 0; }
+/* max-content keeps the header intrinsic when it fits. Under constraint it
+   yields to a usable middle row, and only then needs its own scrollport. */
+.v3-shell .room-editor-v2 > .room-document { grid-template-rows: minmax(0, max-content) minmax(min(8rem, 20%), 1fr) auto; }
+.v3-shell .room-document > .room-sticky-context { min-height: 0; overflow: auto; }
 .nav-header { display: grid; gap: .35rem; padding-bottom: .55rem; border-bottom: 1px solid #c9c8c2; }
 .nav-title { display: flex; justify-content: space-between; align-items: center; color: inherit; font-size: .82rem; font-weight: 700; letter-spacing: .04em; text-decoration: none; text-transform: uppercase; }
 .search-entry { width: 100%; padding: .22rem; border: 1px solid #a7a69f; background: transparent; font-size: .76rem; }

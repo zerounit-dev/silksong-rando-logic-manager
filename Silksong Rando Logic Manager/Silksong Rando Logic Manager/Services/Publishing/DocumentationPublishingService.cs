@@ -189,16 +189,16 @@ public sealed class DocumentationPublishingService : IDisposable, IAsyncDisposab
     {
         settings.Validate(); storage.Admit(); journal = storage.Load();
         if (journal is null) return;
-        if (journal.Configuration != settings.Identity) throw new PublishingBlock("Publishing configuration differs from retained operation evidence. Preserve the workspace for operator recovery.");
+        if (journal.Configuration != settings.Identity) throw new PublishingBlock($"Current repository/branch configuration differs from the operation retained in Staging/current.json (phase {journal.Phase}). Compare DocumentationPublishing:RepositoryUrl and :Branch with the owned checkout's destination before resuming; keep Repository, Candidate and Rollback intact. Do not discard or push evidence into a different destination. Configuration identity hashes are not displayed.");
         if (journal.Phase == "Published") { storage.Clear(); journal = null; stage = "Previous publication was confirmed; prepare a new candidate"; return; }
         if (journal.Phase is "Replacing" or "Advancing") git.Recover(journal);
         if (journal.Phase == "Preparing") { journal.Phase = "Interrupted"; storage.Save(journal); }
         if (journal.Phase == "Prepared")
         {
             storage.Validate(journal);
-            if (journal.Renderer != PublishingRenderer.Version) throw new PublishingBlock("The retained candidate uses a different renderer version. Discard/reprepare and explicitly review the renderer change.");
+            if (journal.Renderer != PublishingRenderer.Version) throw new PublishingBlock($"Retained prepared changes use a different renderer.\nPrepared version: {journal.Renderer}\nCurrent application: {PublishingRenderer.Version}\nDiscard the prepared changes, prepare again and explicitly review the renderer change.");
             using var repo = git.Open(); git.EnsureClean(repo);
-            if (repo.Head.Tip.Sha != journal.BaseCommit) throw new PublishingBlock("Prepared base HEAD changed. Discard and prepare again.");
+            if (repo.Head.Tip.Sha != journal.BaseCommit) throw new PublishingBlock($"Retained prepared base differs from HEAD.\nPrepared base commit: {journal.BaseCommit}\nObserved HEAD commit: {repo.Head.Tip.Sha}\nCompare these commits to confirm the intended checkout history, then discard prepared changes and prepare/review against that history.");
             changes = Review(repo, journal);
         }
         phase = journal.Phase;
@@ -222,7 +222,10 @@ public sealed class DocumentationPublishingService : IDisposable, IAsyncDisposab
     }
     public Task<bool> PrepareAsync(LiveAccess access, PrepareDocumentation command) => StartAuthorizedAsync(access, command.Page, PreparationStep(1), execution => PrepareAsync(execution), () =>
     {
-        if (journal is not null) throw new PublishingBlock("Discard the current safe candidate before preparing again. Pending/uncertain commit evidence must first be reconciled.");
+        if (journal is not null) throw new PublishingBlock($"A retained operation already exists in phase {journal.Phase}{(journal.Commit is null ? "" : $", commit {journal.Commit}")}. " +
+            (journal.Phase is "Prepared" or "Interrupted" or "Failed"
+                ? "Review the existing result or use Discard prepared changes before preparing again; discard remains subject to the current evidence checks."
+                : "Keep Staging/current.json, Candidate and Rollback; compare the retained commit and checkout/remote history before resolving this operation. A new preparation cannot replace unresolved commit evidence."));
     });
     public Task<bool> CommitAndPushAsync(LiveAccess access, CommitDocumentation command) => StartAuthorizedAsync(access, command.Page, CommitStep(1), async _ =>
     {
@@ -234,12 +237,14 @@ public sealed class DocumentationPublishingService : IDisposable, IAsyncDisposab
         await PushAsync();
     }, () =>
     {
-        if (journal?.Phase != "Prepared" || command.CandidateId != CandidateId()) throw new PublishingBlock("Review the current prepared candidate before committing.");
+        if (journal?.Phase != "Prepared") throw new PublishingBlock($"Commit requires Prepared phase; current retained phase is {journal?.Phase ?? "none"}. Wait for active work or prepare and review changes before committing; unresolved commit/rollback evidence must be resolved first.");
+        if (command.CandidateId != CandidateId()) throw new PublishingBlock("The commit request refers to a different preparation than the current review. Reopen the current prepared changes, review them and enter the commit request again; an older review cannot authorize this candidate.");
         if (changes.Count == 0) throw new PublishingBlock("No changes; no empty commit will be created.");
     });
     public Task<bool> RetryPushAsync(LiveAccess access, RetryDocumentationPush command) => StartAuthorizedAsync(access, command.Page, RetryStep(), _ => { BeginTask(RetryStep()); return PushAsync(); }, () =>
     {
-        if (journal?.Phase != "PendingPush" || journal.Commit != command.Commit) throw new PublishingBlock("Retry must name the current pending commit.");
+        if (journal?.Phase != "PendingPush") throw new PublishingBlock($"Retry push requires PendingPush phase; current retained phase is {journal?.Phase ?? "none"}. Read the current operation result before choosing an action; retry does not create or recover a missing commit.");
+        if (journal.Commit != command.Commit) throw new PublishingBlock($"The retry request does not name the retained pending commit {journal.Commit ?? "(missing)"}. Reopen the current pending result and retry only that exact commit; do not prepare a replacement commit for an unconfirmed push.");
     });
     public Task<bool> DiscardAsync(LiveAccess access, DiscardDocumentation command) => StartAuthorizedAsync(access, command.Page, null, _ =>
     {
@@ -255,8 +260,10 @@ public sealed class DocumentationPublishingService : IDisposable, IAsyncDisposab
         finally { storage.Timing = null; }
     }, () =>
     {
-        if (journal?.Phase is not ("Prepared" or "Interrupted" or "Failed") || command.CandidateId != CandidateId() || phase == "Blocked")
-            throw new PublishingBlock("Discard is blocked while rollback/commit evidence is unresolved. Preserve the workspace for operator reconciliation.");
+        if (journal?.Phase is not ("Prepared" or "Interrupted" or "Failed"))
+            throw new PublishingBlock($"Discard is not allowed in retained phase {journal?.Phase ?? "none"}{(journal?.Commit is null ? "" : $", commit {journal.Commit}")}. Keep Staging/current.json, Candidate and Rollback; establish whether the retained commit/ref advanced and compare the checkout with the recorded before/after files before cleanup.");
+        if (command.CandidateId != CandidateId()) throw new PublishingBlock("The discard request refers to a different preparation than the current view. Reopen the current result and review which prepared changes would be removed before requesting discard again.");
+        if (phase == "Blocked") throw new PublishingBlock($"Discard is blocked by the current recovery failure in retained phase {journal.Phase}. Keep Staging/current.json, Candidate and Rollback; resolve the specific file/commit comparison in the preceding failure before cleanup.");
     });
     private async Task<bool> StartAuthorizedAsync(LiveAccess access, PublishingPage page, PublishingProgress? initialProgress, Func<LiveAccess, Task> action, Action validate)
     {
@@ -297,7 +304,7 @@ public sealed class DocumentationPublishingService : IDisposable, IAsyncDisposab
             Initialize(actor.Owner, page); if (busy || stopping) return false;
             try
             {
-                if (phase == "Blocked") throw new PublishingBlock(error ?? "Publishing requires operator recovery. Preserve the workspace and retained evidence.");
+                if (phase == "Blocked") throw new PublishingBlock(error ?? "Publishing is blocked without a recoverable operation result. Keep Repository and Staging/current.json; have the application maintainer establish the retained phase and commit/ref state before any command or cleanup.");
                 settings.Validate(); storage.Admit(); validate();
             }
             catch (PublishingBlock ex) { changed |= error != ex.Message; error = ex.Message; return false; }
@@ -443,7 +450,9 @@ public sealed class DocumentationPublishingService : IDisposable, IAsyncDisposab
         storage.Atomic(Path.Combine(storage.Candidate, "silksong-requirement-catalogue.json"), catalogue.JsonUtf8);
         BeginTask(PreparationStep(5));
         var complete = await DistributedExportService.ExportPreparedAsync(factory, TimeProvider.System, true);
-        if (complete is not CompleteExported exported) throw new PublishingBlock("The complete room catalogue could not be exported. Correct its location-type diagnostics and prepare again.");
+        if (complete is CompleteExportInvalidLocationType invalid)
+            throw new PublishingBlock($"The frozen complete room catalogue has an unsupported check location type.\nRoom: {invalid.Failure.RoomName} ({invalid.Failure.RoomId:D})\nCheck: {invalid.Failure.CheckName} ({invalid.Failure.CheckId:D})\nChoose a supported Location Type for this check in the editor, then discard the failed preparation and prepare again.");
+        if (complete is not CompleteExported exported) throw new InvalidOperationException($"Unexpected complete room catalogue export outcome: {complete?.GetType().Name ?? "null"}.");
         storage.Atomic(Path.Combine(storage.Candidate, "silksong-room-catalogue.json"), exported.Export.JsonUtf8);
         BeginTask(PreparationStep(6));
         var graph = await RoomGraphExportService.GeneratePreparedAsync(factory);
@@ -471,7 +480,7 @@ public sealed class DocumentationPublishingService : IDisposable, IAsyncDisposab
     }
     private Task PushAsync()
     {
-        if (!git.Push(journal!)) throw new PublishingBlock("Remote confirmation was inconclusive. Retry this exact pending commit.");
+        if (!git.Push(journal!)) throw new PublishingBlock($"Remote confirmation did not establish that branch {settings.Branch} contains retained commit {journal!.Commit}. Keep that exact commit and Staging/current.json; use Retry push for this retained commit to fetch/reconcile remote history before any further push. Do not create a new commit for this unconfirmed outcome.");
         var commit = journal!.Commit;
         journal.Phase = "Published"; storage.Save(journal);
         // A durable confirmed outcome is written before cleanup. Startup never pushes.
@@ -506,8 +515,12 @@ public sealed class DocumentationPublishingService : IDisposable, IAsyncDisposab
         {
             gateWait.Complete();
             var actor = access.RequireInsideSynchronousGate(AccessPolicies.PublishDocumentation);
-            Initialize(actor.Owner, page); if (busy || journal?.Phase != "Prepared" || candidateId != CandidateId() || !changes.Any(x => x.Path == path && x.Kind != "Image") || !(path.EndsWith(".md") || path.EndsWith(".json")))
-                throw new PublishingBlock("Only current reviewed text artifacts can be previewed.");
+            Initialize(actor.Owner, page);
+            if (busy) throw new PublishingBlock("Text preview is unavailable while a publishing command is running. Wait for its result, then open the current review entry again.");
+            if (journal?.Phase != "Prepared") throw new PublishingBlock($"Text preview requires Prepared phase; current retained phase is {journal?.Phase ?? "none"}. Open a completed preparation for review; resolve any retained recovery failure first.");
+            if (candidateId != CandidateId()) throw new PublishingBlock("This text preview belongs to an older preparation. Open the current review entry again; the old request cannot read a different candidate.");
+            if (!changes.Any(x => x.Path == path && x.Kind != "Image")) throw new PublishingBlock("The requested text path is not a changed non-image entry in the current review. Select a current text entry; arbitrary paths cannot be previewed.");
+            if (!(path.EndsWith(".md") || path.EndsWith(".json"))) throw new PublishingBlock("The reviewed artifact is not a Markdown (.md) or JSON (.json) text preview. Select a supported text entry; database and other binary artifacts have no text preview.");
             timing.Measure(PublishingMetric.Validation, () => storage.Validate(journal));
             string response;
             using (var repo = timing.Measure(PublishingMetric.GitOpen, git.Open))
@@ -537,8 +550,12 @@ public sealed class DocumentationPublishingService : IDisposable, IAsyncDisposab
         {
             gateWait.Complete();
             var actor = access.RequireInsideSynchronousGate(AccessPolicies.PublishDocumentation);
-            Initialize(actor.Owner, page); if (busy || journal?.Phase != "Prepared" || candidateId != CandidateId() || !journal.Files.ContainsKey(path) ||
-                !changes.Any(x => x.Path == path && x.Kind == "Image")) throw new PublishingBlock("Only current manifest-owned changed images can be previewed.");
+            Initialize(actor.Owner, page);
+            if (busy) throw new PublishingBlock("Image preview is unavailable while a publishing command is running. Wait for its result, then open the current review entry again.");
+            if (journal?.Phase != "Prepared") throw new PublishingBlock($"Image preview requires Prepared phase; current retained phase is {journal?.Phase ?? "none"}. Open a completed preparation for review; resolve any retained recovery failure first.");
+            if (candidateId != CandidateId()) throw new PublishingBlock("This image preview belongs to an older preparation. Open the current review entry again; the old request cannot read a different candidate.");
+            if (!journal.Files.ContainsKey(path)) throw new PublishingBlock("The requested image is absent from the current candidate manifest (removed files have no candidate image). Select a current added/changed image entry.");
+            if (!changes.Any(x => x.Path == path && x.Kind == "Image")) throw new PublishingBlock("The requested path is not a changed image in the current review. Select a current image entry; arbitrary files cannot be previewed.");
             timing.Measure(PublishingMetric.Validation, () => storage.Validate(journal));
             var bytes = timing.Measure(PublishingMetric.AfterRead, () => File.ReadAllBytes(PublishingStorage.Resolve(storage.Candidate, path)));
             timing.InputBytes = bytes.LongLength;
