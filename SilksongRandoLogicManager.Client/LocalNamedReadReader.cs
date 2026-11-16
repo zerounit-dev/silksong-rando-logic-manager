@@ -5,7 +5,7 @@ using SilksongRandoLogicManager.Contracts;
 
 namespace SilksongRandoLogicManager.Client;
 
-// Fixed readers for the five local SQL replies. These do not configure interop's
+// Fixed DOM readers for the four remaining local SQL replies. These do not configure interop's
 // serializer or any shared HTTP/domain converter, and never reconstruct SQL cells.
 internal static class LocalNamedReadReader
 {
@@ -44,7 +44,6 @@ internal static class LocalNamedReadReader
         return result.MoveToImmutable();
     }
     private static RoomDocumentObservation Observation(JsonElement x) => new(G(x, "roomId"), Ticks(x, "cacheFlagUtc"));
-    private static RoomLookupIdentity Identity(JsonElement x) => new(G(x, "entityId"), B(x, "isArchived"));
     private static RoomRowObservation Row(JsonElement x) => new(G(x, "entityId"), U(x, "updatedUtc"), B(x, "isArchived"));
     private static CatalogueGroup Group(JsonElement x) => new(G(x, "id"), S(x, "friendlyName"), I(x, "sortOrder"),
         N(x, "zoneReferenceText"), NG(x, "resolvedMapZoneId"), B(x, "isVirtual"), U(x, "updatedUtc"));
@@ -70,7 +69,7 @@ internal static class LocalNamedReadReader
         // Existing inventory uses standard JSON GUIDs and does not parse ticks here.
         x => new LocalRoomInventory(P(x, "id").GetGuid(), S(x, "cacheFlagUtc"), I(x, "completionStatus")));
 
-    internal static LocalVocabularySource Vocabulary(JsonElement value)
+    internal static LocalVocabularySource<VocabularyDefinition> Vocabulary(JsonElement value)
     {
         var x = P(value, "vocabulary");
         ImmutableArray<VocabularyDefinition> Definitions(string name, bool predicate = false) => List(x, name, d => {
@@ -81,40 +80,6 @@ internal static class LocalNamedReadReader
         }, d => d.Id);
         return new(Definitions("predicates", true), Definitions("crests"), Definitions("methods"),
             Definitions("items"), Definitions("countables"), Definitions("souls"));
-    }
-
-    internal static LocalCatalogueSource Catalogue(JsonElement value, LocalCacheState state)
-    {
-        var inventory = Inventory(value, "inventory");
-        var rooms = List(value, "rooms", r => {
-            var v = P(r, "values"); var image = P(r, "sceneImage");
-            return new LocalRoomLookupSource(Observation(P(r, "observation")), Identity(P(r, "identity")),
-                new(S(v, "friendlyName"), S(v, "referenceId"), N(v, "inGameId")), NG(r, "roomGroupId"), I(r, "sortOrder"), Status(r),
-                new(B(image, "useSceneImage"), B(image, "useUploadedSceneImage"), B(image, "stale"), ND(image, "pixelsPerUnitX"), ND(image, "pixelsPerUnitY")));
-        }, r => r.Observation.RoomId);
-        var selected = rooms.Select(x => x.Observation.RoomId).ToHashSet();
-        foreach (var r in rooms) if (r.Identity.EntityId != r.Observation.RoomId) throw Invalid();
-        Guid Owner(JsonElement x) { var id = G(x, "roomId"); if (!selected.Contains(id)) throw Invalid(); return id; }
-        string? Requirements(JsonElement x, bool archived) {
-            var text = N(x, "requirements");
-            if (!archived && text is null || archived && text is not null) throw Invalid();
-            return text;
-        }
-        var transitions = List(value, "transitions", x => {
-            var owner = Owner(x); var f = P(x, "facts"); var o = Identity(P(f, "observation")); var v = P(f, "values");
-            return new LocalTransitionLookupSource(owner, new(o, new(S(v, "alias"), N(v, "destinationRoomReferenceText"), N(v, "destinationTransitionAliasText")),
-                NG(f, "resolvedDestinationRoomId"), NG(f, "resolvedDestinationTransitionId")), Requirements(x, o.IsArchived));
-        }, x => x.Facts.Observation.EntityId);
-        var connections = List(value, "connections", x => {
-            var owner = Owner(x); var o = Identity(P(x, "identity"));
-            return new LocalConnectionLookupSource(owner, o, Requirements(x, o.IsArchived));
-        }, x => x.Identity.EntityId);
-        var checks = List(value, "checks", x => {
-            var owner = Owner(x); var f = P(x, "facts"); var o = Identity(P(f, "observation"));
-            return new LocalCheckLookupSource(owner, new(o, new(S(P(f, "values"), "friendlyName"))), Requirements(x, o.IsArchived));
-        }, x => x.Facts.Observation.EntityId);
-        return new(state, inventory, rooms, transitions, connections, checks,
-            List(value, "groups", Group, g => g.Id), Vocabulary(value));
     }
 
     internal static LocalMapsSource Maps(JsonElement value) => new(

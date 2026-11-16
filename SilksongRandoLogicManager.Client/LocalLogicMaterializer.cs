@@ -36,12 +36,14 @@ internal static class LocalLogicMaterializer
         if (previous is ImmutableArray<T> old && old.SequenceEqual(next)) return old;
         return next;
     }
-    internal static async Task<RequirementCatalogueManagerView> VocabularyAsync(LocalVocabularySource read,
+    internal static async Task<RequirementCatalogueManagerView> VocabularyAsync<TSource>(LocalVocabularySource<TSource> read,
+        Func<TSource, VocabularyDefinition> freeze,
         RequirementCatalogueManagerView? previous, Func<Task> yield, CancellationToken token, LocalLoadWork? observation = null)
     {
         var oldPredicates = previous?.Predicates.ToDictionary(x => x.Id);
-        var predicates = await PrepareAsync(read.Predicates, LogicCacheTable.RequirementPredicates, r =>
+        var predicates = await PrepareAsync(read.Predicates, LogicCacheTable.RequirementPredicates, row =>
         {
+            var r = freeze(row);
             var id = r.Id; var name = r.Name; var category = r.Category;
             var input = r.InputSyntax!; var output = r.Output; var notes = r.Notes;
             var order = r.SortOrder; var aliases = r.Aliases;
@@ -51,19 +53,19 @@ internal static class LocalLogicMaterializer
             return new RequirementPredicateView(id, name, category, input, output, notes, order, aliases,
                 RequirementCatalogueLanguage.ParseAliases(aliases));
         }, yield, token, observation);
-        var crests = await ValuesAsync(read.Crests, LogicCacheTable.RequirementCrests, previous?.Crests,
+        var crests = await ValuesAsync(read.Crests, freeze, LogicCacheTable.RequirementCrests, previous?.Crests,
             x => new(x.Id, x.Name, x.Category, x.SortOrder, x.Aliases, null, x.OutputValue, x.Notes),
             (v, a) => new RequirementCrestView(v.Id, v.Name, v.Category, v.Output, v.Notes, v.SortOrder, v.Aliases, a), yield, token, observation);
-        var methods = await ValuesAsync(read.Methods, LogicCacheTable.RequirementMethods, previous?.Methods,
+        var methods = await ValuesAsync(read.Methods, freeze, LogicCacheTable.RequirementMethods, previous?.Methods,
             x => new(x.Id, x.Name, x.Category, x.SortOrder, x.Aliases, null, x.OutputValue, x.Notes),
             (v, a) => new RequirementMethodView(v.Id, v.Name, v.Category, v.Output, v.Notes, v.SortOrder, v.Aliases, a), yield, token, observation);
-        var items = await ValuesAsync(read.Items, LogicCacheTable.RequirementItems, previous?.Items,
+        var items = await ValuesAsync(read.Items, freeze, LogicCacheTable.RequirementItems, previous?.Items,
             x => new(x.Id, x.Name, x.Category, x.SortOrder, x.Aliases, null, x.OutputValue, x.Notes),
             (v, a) => new RequirementItemView(v.Id, v.Name, v.Category, v.Output, v.Notes, v.SortOrder, v.Aliases, a), yield, token, observation);
-        var countables = await ValuesAsync(read.Countables, LogicCacheTable.RequirementCountables, previous?.Countables,
+        var countables = await ValuesAsync(read.Countables, freeze, LogicCacheTable.RequirementCountables, previous?.Countables,
             x => new(x.Id, x.Name, x.Category, x.SortOrder, x.Aliases, null, x.OutputValue, x.Notes),
             (v, a) => new RequirementCountableView(v.Id, v.Name, v.Category, v.Output, v.Notes, v.SortOrder, v.Aliases, a), yield, token, observation);
-        var souls = await ValuesAsync(read.Souls, LogicCacheTable.RequirementSouls, previous?.Souls,
+        var souls = await ValuesAsync(read.Souls, freeze, LogicCacheTable.RequirementSouls, previous?.Souls,
             x => new(x.Id, x.Name, x.Category, x.SortOrder, x.Aliases, null, x.OutputValue, x.Notes),
             (v, a) => new RequirementSoulView(v.Id, v.Name, v.Category, v.Output, v.Notes, v.SortOrder, v.Aliases, a), yield, token, observation);
         var orderedPredicates = Reuse(predicates.OrderBy(x => x.SortOrder).ThenBy(x => x.Id).ToImmutableArray(), previous?.Predicates);
@@ -72,13 +74,15 @@ internal static class LocalLogicMaterializer
             previous.Souls.SequenceEqual(souls)) return previous;
         return new(orderedPredicates, crests, methods, items, countables, souls);
     }
-    private static async Task<ImmutableArray<T>> ValuesAsync<T>(IReadOnlyList<VocabularyDefinition> read, LogicCacheTable table,
+    private static async Task<ImmutableArray<T>> ValuesAsync<TSource, T>(IReadOnlyList<TSource> read,
+        Func<TSource, VocabularyDefinition> freeze, LogicCacheTable table,
         IReadOnlyList<T>? previous, Func<T, VocabularyDefinition> source, Func<VocabularyDefinition, IReadOnlyList<string>, T> create,
         Func<Task> yield, CancellationToken token, LocalLoadWork? observation = null)
     {
         var old = previous?.ToDictionary(x => source(x).Id, x => (Fact: source(x), View: x));
-        var next = await PrepareAsync(read, table, value =>
+        var next = await PrepareAsync(read, table, row =>
         {
+            var value = freeze(row);
             return old?.TryGetValue(value.Id, out var prior) == true && prior.Fact == value ? prior.View
                 : create(value, RequirementCatalogueLanguage.ParseAliases(value.Aliases));
         }, yield, token, observation);

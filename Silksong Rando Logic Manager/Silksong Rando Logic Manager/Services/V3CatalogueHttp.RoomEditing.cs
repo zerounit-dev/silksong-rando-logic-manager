@@ -57,9 +57,9 @@ public static partial class V3CatalogueHttp
                 var start = Stopwatch.GetTimestamp();
                 var registered = entry.RegisterBatch(request);
                 if (registered) await workflow.ExecutePrefixAsync(entry);
-                // Historical range is permitted only for a validated immutable duplicate.
-                var after = registered ? request.Incorporated.IncorporatedThrough
-                    : Math.Max(request.Incorporated.IncorporatedThrough, entry.Progress.AcknowledgedThrough);
+                // Admission validated the entire suffix and claim. Late owned
+                // requests report current progress without asking for released bodies.
+                var after = Math.Max(request.Incorporated.IncorporatedThrough, entry.Progress.AcknowledgedThrough);
                 return entry.Read(after, Stopwatch.GetElapsedTime(start).TotalMilliseconds);
             }, context.RequestAborted);
             await WriteCacheResultAsync(context, 200, result);
@@ -70,7 +70,7 @@ public static partial class V3CatalogueHttp
             var result = await tracking.WithVisitAsync(Access(context), identity, entry =>
             {
                 entry.Acknowledge(request);
-                return Task.FromResult(entry.Read(request.Incorporated.IncorporatedThrough));
+                return Task.FromResult(entry.Read(Math.Max(request.Incorporated.IncorporatedThrough, entry.Progress.AcknowledgedThrough)));
             }, context.RequestAborted);
             await WriteCacheResultAsync(context, 200, result);
         }).RequireAuthorization(AccessPolicies.Normal);

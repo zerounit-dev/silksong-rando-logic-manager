@@ -35,7 +35,7 @@ public sealed partial class ConfirmedCatalogue
             if (referenceStateId != state.StateId || source is null || reference is null)
             {
                 var read = await browser.ReadVocabularyAsync(expected: state, token: linked.Token);
-                source = await LocalLogicMaterializer.VocabularyAsync(read, referenceSource,
+                source = await LocalLogicMaterializer.VocabularyAsync(read, r => r, referenceSource,
                     () => browser.YieldAsync(linked.Token), linked.Token);
                 if (!ReferenceEquals(source, referenceSource) || reference is null)
                     reference = LocalLogicMaterializer.Reference(source);
@@ -59,10 +59,13 @@ public sealed partial class ConfirmedCatalogue
     public Task<RoomEditing.RoomVisitEntry?> OpenRoomAsync(Guid roomId, Guid visitId, Func<bool> owns, CancellationToken token)
         => OpenRoomAsync(roomId, visitId, owns, token, PreparationContext.Ordinary);
 
-    internal async Task<RoomEditing.RoomVisitEntry?> OpenRoomAsync(Guid roomId, Guid visitId, Func<bool> owns, CancellationToken token,
+    internal Task<RoomEditing.RoomVisitEntry?> OpenRoomAsync(Guid roomId, Guid visitId, Func<bool> owns, CancellationToken token,
+        PreparationContext context)
+        => PrepareRoomReadAsync(cancellation => OpenPreparedRoomAsync(roomId, visitId, owns, cancellation, context), owns, token, context);
+
+    private async Task<RoomEditing.RoomVisitEntry?> OpenPreparedRoomAsync(Guid roomId, Guid visitId, Func<bool> owns, CancellationToken token,
         PreparationContext context)
     {
-        await RefreshAsync(context);
         using var timing = OperationTiming.Start("room.open.admission");
         var ownerEpoch = epoch; long ownerGeneration = 0;
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(token, lifetime.Token);
@@ -72,9 +75,10 @@ public sealed partial class ConfirmedCatalogue
             if (disposed || ownerEpoch != epoch || mutation || !owns()) return null;
             ownerGeneration = ++generation;
             timing.End();
-            if (!Rooms.ContainsKey(roomId) || !browser.CanAdoptLocal) return null;
+            if (!browser.CanAdoptLocal) throw new LocalReadInvalidatedException();
+            if (!Rooms.ContainsKey(roomId)) return null;
             var document = await ReadLocalDocumentAsync(roomId,
-                () => Owns(ownerEpoch, ownerGeneration) && !mutation && owns(), linked.Token, context);
+                () => Owns(ownerEpoch, ownerGeneration) && !mutation && owns(), linked.Token, context, prepareVisit: true);
             if (document is null) return null;
             if (!Owns(ownerEpoch, ownerGeneration) || mutation || !owns()) return null;
             readObservations = readObservations.Targeted(roomId, document.Header.RoomGroupId);
@@ -110,14 +114,15 @@ public sealed partial class ConfirmedCatalogue
     // One serialized named owner read supplies ONLY this full Room, its scene inputs
     // and exact dependency/orders. Never retain it in the application catalogue.
     private async Task<RoomCompleteDocument?> ReadLocalDocumentAsync(Guid roomId, Func<bool> current, CancellationToken token,
-        PreparationContext preparationContext = PreparationContext.Ordinary)
+        PreparationContext preparationContext = PreparationContext.Ordinary, bool prepareVisit = false)
     {
         token.ThrowIfCancellationRequested();
         if (!current()) throw new OperationCanceledException();
         var state = await browser.ReadStateAsync(token);
         token.ThrowIfCancellationRequested();
         if (!current()) throw new OperationCanceledException();
-        if (state is null || state.StateId != appliedLocalStateId || !browser.CanAdoptLocal)
+        if (prepareVisit) RequireRoomLocalCheckpoint(state);
+        else if (state is null || state.StateId != appliedLocalStateId || !browser.CanAdoptLocal)
             throw new InvalidOperationException("The local Room and common facts are not at the same confirmed checkpoint.");
         var read = await browser.ReadRoomAsync(roomId, state, token);
         token.ThrowIfCancellationRequested();

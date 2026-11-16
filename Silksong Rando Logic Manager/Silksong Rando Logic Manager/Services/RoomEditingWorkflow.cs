@@ -22,6 +22,7 @@ internal sealed class RoomEditingWorkflow(LogicCatalogService catalogue, RoomEdi
 
     public Task ResolveAsync(RoomEditingTracker.Entry entry, Wire.RoomResolveRequest request)
     {
+        if (entry.HandleAcknowledgedResolution(request)) return Task.CompletedTask;
         if (entry.CurrentHead?.Operation is Wire.SaveRoomHeader) return headers.ResolveAsync(entry, request);
         return entry.ResolveHeadAsync(request, async () =>
         {

@@ -43,10 +43,10 @@ internal sealed class PublishingGit(PublishingStorage storage, PublishingSetting
             if (Path.GetFullPath(repo.Info.WorkingDirectory).TrimEnd(Path.DirectorySeparatorChar) != storage.Repository)
                 throw new PublishingBlock("Git resolved its working directory somewhere other than Repository. The server operator must correct the checkout's working-directory ownership before publishing; retain Repository and Staging.");
             if (repo.Network.Remotes["origin"]?.Url != settings.RepositoryUrl) throw new PublishingBlock("Repository origin URL differs from DocumentationPublishing:RepositoryUrl. Have the server operator compare that setting with Repository/.git/config's origin fetch URL before network access. URLs are not echoed because a mismatched value may contain credentials.");
-            if (repo.Submodules.Any()) throw new PublishingBlock("Repository declares submodules. Publishing does not adopt submodules; have the repository owner remove the submodule dependency from the publication branch deliberately before preparing again.");
             if (repo.Network.Remotes["origin"]?.PushUrl is { Length: > 0 } pushUrl && pushUrl != settings.RepositoryUrl)
                 throw new PublishingBlock("Repository origin has a separate push URL differing from DocumentationPublishing:RepositoryUrl. Have the server operator review the origin push destination in Repository/.git/config before network access; no URL value is echoed.");
             ConfigureOwnedPaths(repo);
+            if (repo.Submodules.Any()) throw new PublishingBlock("Repository declares submodules. Publishing does not adopt submodules; have the repository owner remove the submodule dependency from the publication branch deliberately before preparing again.");
             ValidateTree(repo.Head.Tip.Tree);
             return repo;
         }
@@ -131,8 +131,11 @@ internal sealed class PublishingGit(PublishingStorage storage, PublishingSetting
     }
     private static void ConfigureOwnedPaths(Repository repo)
     {
-        // Set before native checkout/status can cache the default MAX_PATH limit.
+        // Set before any index-dependent use (including submodule inspection):
+        // native index capabilities/config-map values can be cached per handle.
+        // Physical execute bits are never Git mode authority on this checkout.
         // Only publisher-owned local config changes, never host Git settings.
+        repo.Config.Set("core.filemode", false, ConfigurationLevel.Local);
         if (OperatingSystem.IsWindows())
             repo.Config.Set("core.longpaths", true, ConfigurationLevel.Local);
     }
@@ -198,7 +201,7 @@ internal sealed class PublishingGit(PublishingStorage storage, PublishingSetting
                     throw new PublishingBlock($"Fast-forward stopped at {path}: the checkout no longer matches its captured preimage.\n{FileFacts(current, journal.Preimages[path], expected)}\nKeep Repository/{path} and Staging/Rollback/files/{path}; compare them with base commit {journal.BaseCommit} before resolving the interrupted advance. Earlier paths may already have changed.");
                 if (after.TryGetValue(path, out var blob))
                 {
-                    storage.Atomic(target, Bytes(blob)); SetMode(target, remote.Tree[path].Mode);
+                    storage.Atomic(target, Bytes(blob));
                     repo.Index.Add(blob, path, remote.Tree[path].Mode);
                 }
                 else { File.Delete(target); repo.Index.Remove(path); }
@@ -228,12 +231,6 @@ internal sealed class PublishingGit(PublishingStorage storage, PublishingSetting
             throw;
         }
     }
-    private static void SetMode(string path, Mode mode)
-    {
-        if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(path, mode == Mode.ExecutableFile
-            ? UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute | UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute
-            : UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead | UnixFileMode.OtherRead);
-    }
     private void SavePreimages(Repository repo, PublishingJournal journal)
     {
         EnsureClean(repo);
@@ -262,8 +259,8 @@ internal sealed class PublishingGit(PublishingStorage storage, PublishingSetting
             var before = entry?.Target as Blob;
             if (before?.Id == intended[path]?.Target.Id && entry?.Mode == intended[path]?.Mode) continue;
             var current = ReadRecoveryFile(repo, path, target);
-            if (!MatchesRecoveryFile(current, current.Hash, entry))
-                throw new PublishingBlock($"Cannot capture rollback for {path}: file presence, type or executable mode differs from the base entry.\nExpected Git entry: {(entry is null ? "(absent)" : $"{entry.TargetType}, {entry.Mode}")}\nObserved regular file present: {current.Hash is not null}\nObserved executable mode: {(OperatingSystem.IsWindows() ? "not checked on Windows" : current.Mode?.ToString() ?? "(absent)")}\nCompare Repository/{path} with base commit {baseline.Sha} before publishing; keep existing rollback evidence.");
+            if (!MatchesRecoveryFile(current, current, entry))
+                throw new PublishingBlock($"Cannot capture rollback for {path}: file presence or type differs from the base entry.\nExpected Git entry: {(entry is null ? "(absent)" : $"{entry.TargetType}, {entry.Mode}")}\nObserved regular file present: {current is not null}\nCompare Repository/{path} with base commit {baseline.Sha} before publishing; keep existing rollback evidence.");
             if (before is null) { journal.Preimages[path] = null; continue; }
             // Git identity and physical rollback identity are different: native
             // checkout can expand line endings/ident. Prove the captured bytes
@@ -271,8 +268,8 @@ internal sealed class PublishingGit(PublishingStorage storage, PublishingSetting
             var bytes = File.ReadAllBytes(target);
             var hash = PublishingStorage.Hash(bytes);
             using var input = new MemoryStream(bytes, false);
-            if (hash != current.Hash)
-                throw new PublishingBlock($"Repository/{path} changed while reading its rollback bytes.\nFirst raw SHA-256: {current.Hash}\nCaptured raw SHA-256: {hash}\nEstablish which writer changed this file before publishing; retain Repository and Staging.");
+            if (hash != current)
+                throw new PublishingBlock($"Repository/{path} changed while reading its rollback bytes.\nFirst raw SHA-256: {current}\nCaptured raw SHA-256: {hash}\nEstablish which writer changed this file before publishing; retain Repository and Staging.");
             var normalized = repo.ObjectDatabase.CreateBlob(input, path).Id;
             if (normalized != before.Id)
                 throw new PublishingBlock($"Captured checkout bytes for {path} do not normalize to the base Git blob.\nExpected base blob ID: {before.Id.Sha}\nObserved normalized blob ID: {normalized.Sha}\nCompare Repository/{path} and the publication branch's attributes with base commit {baseline.Sha}; do not replace rollback evidence or assume a line-ending cause.");
@@ -383,7 +380,7 @@ internal sealed class PublishingGit(PublishingStorage storage, PublishingSetting
                 var expected = repo.Lookup<Commit>(journal.BaseCommit).Tree[path];
                 if (!MatchesRecoveryFile(current, journal.Preimages[path], expected))
                     throw new PublishingBlock($"Replacement stopped at {path}: checkout differs from its captured preimage.\n{FileFacts(current, journal.Preimages[path], expected)}\nCompare Repository/{path} with Staging/Rollback/files/{path} and base commit {journal.BaseCommit}; keep the evidence. Earlier files may already have been replaced.");
-                if (journal.Files.ContainsKey(path)) { storage.Atomic(target, File.ReadAllBytes(PublishingStorage.Resolve(storage.Candidate, path))); SetMode(target, tree[path].Mode); }
+                if (journal.Files.ContainsKey(path)) storage.Atomic(target, File.ReadAllBytes(PublishingStorage.Resolve(storage.Candidate, path)));
                 else File.Delete(target);
                 // Direct blob-index insertion avoids attributes, filters and ignored-path rules.
                 if (journal.Files.ContainsKey(path)) repo.Index.Add((Blob)tree[path].Target, path, tree[path].Mode);
@@ -450,10 +447,10 @@ internal sealed class PublishingGit(PublishingStorage storage, PublishingSetting
             var target = PublishingStorage.Resolve(storage.Repository, path);
             var current = ReadRecoveryFile(repo, path, target);
             var after = journal.Files.GetValueOrDefault(path);
-            // Bytes and executable mode must belong to the SAME allowed state.
-            // In particular, content-only replacement never authorizes a chmod.
+            // Match a complete physical byte state against its regular Git entry.
+            // Git modes remain in the exact index/tree checks, never filesystem bits.
             if (!MatchesRecoveryFile(current, before, baseEntries[path]) && !MatchesRecoveryFile(current, after, intendedEntries[path]))
-                throw new PublishingBlock($"Rollback cannot classify Repository/{path} as the complete before or after state.\nBefore state:\n{FileFacts(current, before, baseEntries[path])}\nAfter state:\n{FileFacts(current, after, intendedEntries[path])}\nKeep this file, Staging/Rollback/files/{path} and Staging/Candidate/{path} where present. Compare bytes AND executable mode with the two retained states before recovery; do not discard or mix a before hash with an after mode.");
+                throw new PublishingBlock($"Rollback cannot classify Repository/{path} as the complete before or after state.\nBefore state:\n{FileFacts(current, before, baseEntries[path])}\nAfter state:\n{FileFacts(current, after, intendedEntries[path])}\nKeep this file, Staging/Rollback/files/{path} and Staging/Candidate/{path} where present. Compare the complete bytes and file presence with the two retained states before recovery; do not discard recovery evidence.");
             if (before is not null)
             {
                 var bytes = File.ReadAllBytes(PublishingStorage.Resolve(Path.Combine(storage.Rollback, "files"), path));
@@ -471,19 +468,19 @@ internal sealed class PublishingGit(PublishingStorage storage, PublishingSetting
                 !MatchesRecoveryFile(current, journal.Files.GetValueOrDefault(path), intendedEntries[path]))
                 throw new PublishingBlock($"Repository/{path} changed during rollback and matches neither retained state.\nBefore state:\n{FileFacts(current, before, baseEntries[path])}\nAfter state:\n{FileFacts(current, journal.Files.GetValueOrDefault(path), intendedEntries[path])}\nStop publishing attempts and compare this file with its retained before/after evidence. Keep Staging/Rollback; earlier files may already have been restored.");
             if (before is null) File.Delete(target);
-            else { storage.Atomic(target, preimageBytes[path]); SetMode(target, baseEntries[path].Mode); }
+            else storage.Atomic(target, preimageBytes[path]);
         }
         storage.Atomic(Path.Combine(repo.Info.Path, "index"), indexBytes);
         journal.Phase = advancing ? "Preparing" : "Prepared"; journal.Commit = null; storage.Save(journal);
         if (advancing) ClearRollback(journal);
     }
-    private static (string? Hash, Mode? Mode) ReadRecoveryFile(Repository repo, string relative, string target)
+    private static string? ReadRecoveryFile(Repository repo, string relative, string target)
     {
         PublishingStorage.CheckPath(target, "Repository/" + relative);
         FileAttributes attributes;
         try { attributes = File.GetAttributes(target); }
-        catch (FileNotFoundException) { return (null, null); }
-        catch (DirectoryNotFoundException) { return (null, null); }
+        catch (FileNotFoundException) { return null; }
+        catch (DirectoryNotFoundException) { return null; }
         if ((attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint | FileAttributes.Device)) != 0)
             throw new PublishingBlock($"Repository/{relative} is not an ordinary file; observed attributes: {attributes}. Keep this path and its Staging/Rollback evidence; establish its intended file type before capture, replacement or rollback. Earlier operation changes may remain.");
         // libgit2 excludes unsupported Unix filesystem types from its workdir
@@ -492,16 +489,14 @@ internal sealed class PublishingGit(PublishingStorage storage, PublishingSetting
         var status = repo.RetrieveStatus(relative);
         if ((status & (FileStatus.Nonexistent | FileStatus.DeletedFromWorkdir | FileStatus.TypeChangeInWorkdir | FileStatus.Unreadable)) != 0)
             throw new PublishingBlock($"Repository/{relative} exists but native Git reports {status}; it cannot be read as a regular rollback file. Keep this path and its Staging/Rollback evidence; have the server operator establish its type/readability and compare with the base entry before recovery.");
-        Mode? mode = OperatingSystem.IsWindows() ? null :
-            (File.GetUnixFileMode(target) & UnixFileMode.UserExecute) != 0 ? Mode.ExecutableFile : Mode.NonExecutableFile;
-        return (PublishingStorage.FileHash(target), mode);
+        return PublishingStorage.FileHash(target);
     }
-    private static bool MatchesRecoveryFile((string? Hash, Mode? Mode) current, string? hash, TreeEntry? entry) =>
-        entry is null ? hash is null && current.Hash is null :
+    private static bool MatchesRecoveryFile(string? current, string? hash, TreeEntry? entry) =>
+        entry is null ? hash is null && current is null :
         entry.Target is Blob && entry.Mode is Mode.NonExecutableFile or Mode.ExecutableFile &&
-        hash is not null && current.Hash == hash && (OperatingSystem.IsWindows() || current.Mode == entry.Mode);
-    private static string FileFacts((string? Hash, Mode? Mode) current, string? hash, TreeEntry? entry) =>
-        $"Expected raw SHA-256: {hash ?? "(absent)"}\nObserved raw SHA-256: {current.Hash ?? "(absent)"}\nExpected Git entry: {(entry is null ? "(absent)" : $"{entry.TargetType}, {entry.Mode}")}\nObserved executable mode: {(current.Hash is null ? "(absent)" : OperatingSystem.IsWindows() ? "not checked on Windows" : current.Mode?.ToString() ?? "(unknown)")}";
+        hash is not null && current == hash;
+    private static string FileFacts(string? current, string? hash, TreeEntry? entry) =>
+        $"Expected raw SHA-256: {hash ?? "(absent)"}\nObserved raw SHA-256: {current ?? "(absent)"}\nExpected Git entry: {(entry is null ? "(absent)" : $"{entry.TargetType}, {entry.Mode}")}";
     private void VerifyRecoveryEvidence(Repository repo, PublishingJournal journal, bool advancing)
     {
         var baseline = repo.Lookup<Commit>(journal.BaseCommit);

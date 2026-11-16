@@ -1,24 +1,15 @@
 using System.Collections.Immutable;
+using System.Text.Json.Serialization;
 using SilksongRandoLogicManager.Contracts;
 
 namespace SilksongRandoLogicManager.Client;
 
 // Named SQL sources only. Image existence, aliases, scene preparation and map
 // assets are deliberately absent: those remain the consuming managed owners'.
-internal sealed record LocalVocabularySource(ImmutableArray<VocabularyDefinition> Predicates,
-    ImmutableArray<VocabularyDefinition> Crests, ImmutableArray<VocabularyDefinition> Methods,
-    ImmutableArray<VocabularyDefinition> Items, ImmutableArray<VocabularyDefinition> Countables,
-    ImmutableArray<VocabularyDefinition> Souls);
-internal sealed record LocalRoomLookupSource(RoomDocumentObservation Observation, RoomLookupIdentity Identity,
-    RoomLookupText Values, Guid? RoomGroupId, int SortOrder, RoomStatus CompletionStatus,
-    RoomImageIndicatorFacts SceneImage);
-internal sealed record LocalTransitionLookupSource(Guid RoomId, TransitionLookupFacts Facts, string? Requirements);
-internal sealed record LocalConnectionLookupSource(Guid RoomId, RoomLookupIdentity Identity, string? Requirements);
-internal sealed record LocalCheckLookupSource(Guid RoomId, CheckLookupFacts Facts, string? Requirements);
-internal sealed record LocalCatalogueSource(LocalCacheState State, ImmutableArray<LocalRoomInventory> Inventory,
-    ImmutableArray<LocalRoomLookupSource> Rooms, ImmutableArray<LocalTransitionLookupSource> Transitions,
-    ImmutableArray<LocalConnectionLookupSource> Connections, ImmutableArray<LocalCheckLookupSource> Checks,
-    ImmutableArray<CatalogueGroup> Groups, LocalVocabularySource Vocabulary);
+internal sealed record LocalVocabularySource<T>([property: JsonRequired] IReadOnlyList<T> Predicates,
+    [property: JsonRequired] IReadOnlyList<T> Crests, [property: JsonRequired] IReadOnlyList<T> Methods,
+    [property: JsonRequired] IReadOnlyList<T> Items, [property: JsonRequired] IReadOnlyList<T> Countables,
+    [property: JsonRequired] IReadOnlyList<T> Souls);
 internal sealed record LocalOverlaySource(Guid Id, Guid MapId, string ImageAssetKey, int SortOrder,
     double ScaleXPercent, double ScaleYPercent, double LeftOffsetPercent, double BottomOffsetPercent);
 internal sealed record LocalMapsSource(ImmutableArray<MapDataMap> Maps, ImmutableArray<MapDataZone> Zones,

@@ -41,6 +41,8 @@ public sealed class LogicBrowserCache(IJSRuntime js, HttpClient http, SessionAcc
     private long acceptedObservation;
     private int pendingPublications;
     private bool failedPublication;
+    private Exception? publicationFailure;
+    private TaskCompletionSource? publicationSettlement;
     private readonly HashSet<Guid> imageDemands = [];
     // Feature-result provenance outranks older SQL until its own asynchronous
     // installation settles. This gates only RAM adoption, never native success/ACK.
@@ -51,6 +53,24 @@ public sealed class LogicBrowserCache(IJSRuntime js, HttpClient http, SessionAcc
     public event Func<LocalCacheState?, Task>? LocalChanged;
     public event Action? ImagesChanged;
     public event Action<Exception>? Failed;
+
+    // Waiters own cancellation, never the producer. Completion is published before
+    // notifications, whose common refresh may itself be joined by a Room reader.
+    internal async Task WaitForLocalReadinessAsync(CancellationToken token)
+    {
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(token, lifetime.Token);
+        while (true)
+        {
+            linked.Token.ThrowIfCancellationRequested();
+            ObjectDisposedException.ThrowIf(disposed, this);
+            runtime.RequireActive();
+            if (failedPublication)
+                throw new InvalidOperationException("The confirmed local publication failed. Use explicit Refresh to synchronize it.", publicationFailure);
+            var pending = publicationSettlement;
+            if (pendingPublications == 0) return;
+            await pending!.Task.WaitAsync(linked.Token);
+        }
+    }
 
     private Task<IJSObjectReference> ModuleAsync()
     {
@@ -167,7 +187,7 @@ public sealed class LogicBrowserCache(IJSRuntime js, HttpClient http, SessionAcc
         }
         catch (Exception error) { throw new CacheReplacementFailure(dispatched, error); }
     }
-    internal async Task<LocalVocabularySource> ReadVocabularyAsync(LocalCacheState? expected = null, CancellationToken token = default)
+    internal async Task<LocalVocabularySource<VocabularyDefinition>> ReadVocabularyAsync(LocalCacheState? expected = null, CancellationToken token = default)
     {
         var observed = await RequestAsync<JsonElement>(new { operation = "query", name = "vocabulary", expectedStateId = expected?.StateId }, token, "query", "vocabulary");
         var (state, conflict) = LocalNamedReadReader.Header(observed.Result);
@@ -181,6 +201,8 @@ public sealed class LogicBrowserCache(IJSRuntime js, HttpClient http, SessionAcc
         var observed = await RequestAsync<JsonElement>(new { operation = "query", name = "maps", expectedStateId = expected?.StateId }, token, "query", "maps");
         var (state, conflict) = LocalNamedReadReader.Header(observed.Result);
         Observe(state, observed.RequestId);
+        if (conflict && state is not null && expected is not null && state.StateId != expected.StateId)
+            throw new LocalReadInvalidatedException();
         if (conflict || state is null)
             throw new InvalidOperationException("The local confirmed facts changed during preparation. Read the current local checkpoint before trying again.");
         return LocalNamedReadReader.Maps(observed.Result);
@@ -190,24 +212,28 @@ public sealed class LogicBrowserCache(IJSRuntime js, HttpClient http, SessionAcc
         var observed = await RequestAsync<JsonElement>(new { operation = "query", name = "room", roomId, expectedStateId = expected?.StateId }, token, "query", "room");
         var (state, conflict) = LocalNamedReadReader.Header(observed.Result);
         Observe(state, observed.RequestId);
+        if (conflict && state is not null && expected is not null && state.StateId != expected.StateId)
+            throw new LocalReadInvalidatedException();
         if (conflict || state is null)
             throw new InvalidOperationException("The local confirmed facts changed during preparation. Read the current local checkpoint before trying again.");
         return LocalNamedReadReader.Room(observed.Result, roomId);
     }
     private sealed record InstallReply(bool Conflict, LocalCacheState? State, bool Changed = false);
-    internal async Task<LocalCatalogueSource> ReadCatalogueAsync(IReadOnlyDictionary<Guid, ConfirmedRoomFacts> known,
+    internal async Task<LocalCatalogueReply> ReadCatalogueAsync(IReadOnlyDictionary<Guid, ConfirmedRoomFacts> known,
         CancellationToken token = default)
     {
         using var observationsWork = OperationTiming.Start("local-catalogue-request-observation-preparation");
         var observations = known.Select(x => new { id = x.Key, cacheFlagUtc = x.Value.Observation.CacheFlagUtc.Ticks.ToString(CultureInfo.InvariantCulture) }).ToArray();
         new LocalLoadWork().Report(observationsWork, items: observations.Length);
         observationsWork.End();
-        var observed = await RequestAsync<JsonElement>(new { operation = "query", name = "catalogue", knownRooms = observations }, token, "query", "catalogue");
-        var (state, conflict) = LocalNamedReadReader.Header(observed.Result);
+        var observed = await RequestAsync<LocalCatalogueReply?>(new { operation = "query", name = "catalogue", knownRooms = observations }, token, "query", "catalogue");
+        var read = observed.Result ?? throw new JsonException("Missing local catalogue reply.");
+        var state = read.State?.Freeze();
         Observe(state, observed.RequestId);
-        if (conflict || state is null)
+        if (read.Conflict || state is null)
             throw new InvalidOperationException("The local common catalogue is unavailable.");
-        return LocalNamedReadReader.Catalogue(observed.Result, state);
+        LocalCatalogueValidation.Success(read);
+        return read;
     }
 
     public async Task<LocalCacheInventory> ReadInventoryAsync(LocalCacheState? expected = null, CancellationToken token = default)
@@ -244,6 +270,7 @@ public sealed class LogicBrowserCache(IJSRuntime js, HttpClient http, SessionAcc
     public void Publish<T>(ReceivedCacheResult<T> received)
     {
         if (disposed || runtime.Retired) return;
+        if (pendingPublications == 0) publicationSettlement = new(TaskCreationOptions.RunContinuationsAsynchronously);
         pendingPublications++;
         _ = PublishAsync(received.Cache, received.Request.From);
     }
@@ -258,8 +285,16 @@ public sealed class LogicBrowserCache(IJSRuntime js, HttpClient http, SessionAcc
             finally { synchronization.Release(); }
         }
         catch (OperationCanceledException) when (disposed) { }
-        catch (Exception error) { failedPublication = true; if (!disposed && !runtime.Retired) Failed?.Invoke(error); }
-        finally { pendingPublications--; }
+        catch (Exception error) { failedPublication = true; publicationFailure = error; if (!disposed && !runtime.Retired) Failed?.Invoke(error); }
+        finally
+        {
+            if (--pendingPublications == 0)
+            {
+                var settled = publicationSettlement;
+                publicationSettlement = null;
+                settled?.TrySetResult();
+            }
+        }
         if (!disposed && !runtime.Retired && CanAdoptLocal && installed is not null)
         {
             try { await NotifyAsync(installed); }

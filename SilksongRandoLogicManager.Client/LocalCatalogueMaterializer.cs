@@ -1,5 +1,4 @@
 using System.Collections.Immutable;
-using System.Globalization;
 using System.Text.Json;
 using SilksongRandoLogicManager.Contracts;
 
@@ -13,7 +12,7 @@ internal sealed record LocalRoomFacts(ImmutableDictionary<Guid, ConfirmedRoomFac
 
 internal static class LocalCatalogueMaterializer
 {
-    internal static async Task<LocalRoomFacts> MergeAsync(LocalCatalogueSource read, LocalRoomFacts previous,
+    internal static async Task<LocalRoomFacts> MergeAsync(LocalCatalogueReply read, LocalRoomFacts previous,
         IReadOnlyDictionary<Guid, bool> images, Func<Task> yield, CancellationToken token, LocalLoadWork? observation = null)
     {
         var work = 0;
@@ -22,14 +21,14 @@ internal static class LocalCatalogueMaterializer
             token.ThrowIfCancellationRequested();
             if (++work % 128 == 0) { await yield(); token.ThrowIfCancellationRequested(); }
         }
-        var changed = new List<LocalRoomLookupSource>();
-        foreach (var row in read.Rooms)
+        var changed = new List<LocalCatalogueRoom>();
+        foreach (var row in read.Rooms!)
         {
             observation?.Row(LogicCacheTable.Rooms);
             changed.Add(row); await Checkpoint();
         }
         var changedIds = changed.Select(x => x.Observation.RoomId).ToHashSet();
-        async Task<ILookup<Guid, T>> Children<T>(ImmutableArray<T> source, Func<T, Guid> ownerId, LogicCacheTable table)
+        async Task<ILookup<Guid, T>> Children<T>(T[] source, Func<T, Guid> ownerId, LogicCacheTable table)
         {
             var rows = new List<(Guid Owner, T Row)>();
             foreach (var row in source)
@@ -41,12 +40,12 @@ internal static class LocalCatalogueMaterializer
             }
             return rows.ToLookup(x => x.Owner, x => x.Row);
         }
-        var exits = await Children(read.Transitions, x => x.RoomId, LogicCacheTable.RoomTransitions);
-        var paths = await Children(read.Connections, x => x.RoomId, LogicCacheTable.SubroomConnections);
-        var checks = await Children(read.Checks, x => x.RoomId, LogicCacheTable.CheckLocations);
+        var exits = await Children(read.Transitions!, x => x.RoomId, LogicCacheTable.RoomTransitions);
+        var paths = await Children(read.Connections!, x => x.RoomId, LogicCacheTable.SubroomConnections);
+        var checks = await Children(read.Checks!, x => x.RoomId, LogicCacheTable.CheckLocations);
         var rooms = previous.Rooms;
         var changedRooms = ImmutableHashSet.CreateBuilder<Guid>();
-        var inventory = read.Inventory.ToDictionary(x => x.Id);
+        var inventory = read.Inventory!.ToDictionary(x => x.Id);
         foreach (var id in rooms.Keys)
         {
             if (!inventory.ContainsKey(id)) { rooms = rooms.Remove(id); changedRooms.Add(id); }
@@ -61,7 +60,7 @@ internal static class LocalCatalogueMaterializer
             var requirements = ImmutableArray.CreateBuilder<string>();
             foreach (var x in exits[id])
             {
-                transitions.Add(x.Facts);
+                transitions.Add(x.Facts.Freeze());
                 if (!x.Facts.Observation.IsArchived) requirements.Add(x.Requirements!);
                 await Checkpoint();
             }
@@ -72,14 +71,14 @@ internal static class LocalCatalogueMaterializer
             }
             foreach (var x in checks[id])
             {
-                names.Add(x.Facts);
+                names.Add(x.Facts.Freeze());
                 if (!x.Facts.Observation.IsArchived) requirements.Add(x.Requirements!);
                 await Checkpoint();
             }
-            var header = new RoomLookupHeader(r.Identity, r.Values,
-                r.RoomGroupId, r.SortOrder, r.CompletionStatus, r.SceneImage,
+            var header = new RoomLookupHeader(r.Identity.Freeze(), r.Values.Freeze(),
+                r.RoomGroupId, r.SortOrder, LocalCatalogueValidation.Status(r.CompletionStatus), r.SceneImage.Freeze(),
                 new(images.TryGetValue(id, out var known) ? known : null));
-            var value = ConfirmedRoomFacts.Reuse(new(r.Observation, header,
+            var value = ConfirmedRoomFacts.Reuse(new(r.Observation.Freeze(), header,
                 transitions.ToImmutable(), names.ToImmutable(), requirements.ToImmutable()), previous.Rooms.GetValueOrDefault(id));
             rooms = rooms.SetItem(id, value);
             if (!ReferenceEquals(value, previous.Rooms.GetValueOrDefault(id))) changedRooms.Add(id);
@@ -87,11 +86,11 @@ internal static class LocalCatalogueMaterializer
         }
         var statuses = previous.Statuses;
         foreach (var id in statuses.Keys) if (!inventory.ContainsKey(id)) statuses = statuses.Remove(id);
-        var order = ImmutableArray.CreateBuilder<Guid>(read.Inventory.Length);
+        var order = ImmutableArray.CreateBuilder<Guid>(read.Inventory!.Length);
         foreach (var stamp in read.Inventory)
         {
             if (!rooms.TryGetValue(stamp.Id, out var room) || room.Observation.CacheFlagUtc.Ticks !=
-                long.Parse(stamp.CacheFlagUtc, NumberStyles.None, CultureInfo.InvariantCulture)
+                stamp.CacheFlagTicks
                 || room.Header.CompletionStatus != Status(stamp.CompletionStatus))
                 throw new JsonException("Incomplete local global-purpose Room coverage.");
             bool? exists = images.TryGetValue(stamp.Id, out var known) ? known : null;
@@ -105,10 +104,10 @@ internal static class LocalCatalogueMaterializer
             order.Add(stamp.Id); await Checkpoint();
         }
         var groups = ImmutableArray.CreateBuilder<CatalogueGroup>();
-        foreach (var r in read.Groups)
+        foreach (var r in read.Groups!)
         {
             observation?.Row(LogicCacheTable.RoomGroups);
-            groups.Add(r); await Checkpoint();
+            groups.Add(r.Freeze()); await Checkpoint();
         }
         var groupIds = groups.Select(x => x.Id).ToHashSet();
         foreach (var room in rooms.Values)

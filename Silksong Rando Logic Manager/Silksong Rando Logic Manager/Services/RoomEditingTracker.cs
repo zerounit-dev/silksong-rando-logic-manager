@@ -213,8 +213,10 @@ internal sealed class RoomEditingTracker(TimeProvider clock, SceneImageFileServi
         private readonly SortedDictionary<long, Wire.RoomQueuedOperation> operations = [];
         private readonly Dictionary<Guid, long> operationSequences = [];
         private readonly Dictionary<Guid, Wire.RoomBatchRequest> batches = [];
+        private readonly HashSet<Guid> batchIds = [];
         private sealed record ResolutionAttempt(Wire.RoomResolveRequest Request, Wire.RoomResolutionAttemptSummary Summary);
         private readonly Dictionary<Guid, ResolutionAttempt> attempts = [];
+        private readonly Dictionary<Guid, Wire.RoomOperationIdentity> attemptHeads = [];
         private readonly SortedDictionary<long, Wire.RoomTerminalReceipt> receipts = [];
         private readonly SortedDictionary<long, Wire.RoomTerminalResult> results = [];
 
@@ -230,12 +232,7 @@ internal sealed class RoomEditingTracker(TimeProvider clock, SceneImageFileServi
                 || !Wire.RoomEditingIdentity.ValidObservation(request.LastCompleteRead, Identity.RoomId))
                 throw Invalid("Invalid batch envelope.");
             ValidateClaim(request.Incorporated);
-            if (batches.TryGetValue(request.RequestId, out var known))
-            {
-                if (!Wire.RoomEditingIdentity.SameBatch(known, request)) throw Invalid("The batch request identity was reused with different content.");
-                ActivityVersion++;
-                return false;
-            }
+            var duplicate = batchIds.Contains(request.RequestId);
 
             var expectedNew = registeredThrough + 1;
             long? previous = null;
@@ -248,7 +245,12 @@ internal sealed class RoomEditingTracker(TimeProvider clock, SceneImageFileServi
                     || !Wire.RoomEditingIdentity.ValidOperation(item.Operation, Identity.RoomId))
                     throw Invalid("Invalid operation sequence or payload.");
                 previous = item.Sequence;
-                if (operations.TryGetValue(item.Sequence, out var existing))
+                if (item.Sequence <= acknowledgedThrough)
+                {
+                    if (!operationSequences.TryGetValue(item.OperationId, out var sequence) || sequence != item.Sequence)
+                        throw Invalid("The acknowledged operation identity does not match.");
+                }
+                else if (operations.TryGetValue(item.Sequence, out var existing))
                 {
                     if (existing.OperationId != item.OperationId
                         || !Wire.RoomEditingIdentity.SameOperation(existing.Operation, item.Operation))
@@ -268,6 +270,10 @@ internal sealed class RoomEditingTracker(TimeProvider clock, SceneImageFileServi
                 }
             }
 
+            if (batches.TryGetValue(request.RequestId, out var known)
+                && !Wire.RoomEditingIdentity.SameBatch(known, OutstandingBatch(request)))
+                throw Invalid("The batch request identity was reused with different content.");
+
             // No code above this line mutates admitted tracker state. Registered
             // tails remain recorded even if execution subsequently blocks at head.
             foreach (var item in newItems)
@@ -278,14 +284,26 @@ internal sealed class RoomEditingTracker(TimeProvider clock, SceneImageFileServi
                 Images.Pin(item);
             }
             AcceptClaim(request.Incorporated);
-            batches.Add(request.RequestId, request);
+            batchIds.Add(request.RequestId);
+            var outstanding = OutstandingBatch(request);
+            if (!outstanding.Items.IsEmpty) batches[request.RequestId] = outstanding;
             ActivityVersion++;
             // Registration may proceed while older outcomes await incorporation,
             // but new execution may not. The caller returns retained progress;
             // a later explicit resume carries the incorporated terminal prefix.
-            return (request.Items.IsEmpty || newItems.Count > 0)
+            return ((!duplicate && request.Items.IsEmpty) || newItems.Count > 0)
                 && request.Incorporated.IncorporatedThrough >= terminalThrough;
         }
+
+        // Allocate a new backing array, not a slice retaining an acknowledged prefix.
+        // Claims retain only outstanding identity evidence; no old payload equality
+        // is required at/below A. Empty envelopes need only their request ID.
+        private Wire.RoomBatchRequest OutstandingBatch(Wire.RoomBatchRequest request) => request with
+        {
+            Items = request.Items.Where(x => x.Sequence > acknowledgedThrough).ToImmutableArray(),
+            Incorporated = new(Math.Max(request.Incorporated.IncorporatedThrough, acknowledgedThrough),
+                request.Incorporated.Outcomes.Where(x => x.Sequence > acknowledgedThrough).ToImmutableArray())
+        };
 
         public Wire.RoomQueuedOperation? NextOperation => Blocked is null && !ProjectionPending
             && terminalThrough < registeredThrough ? operations[terminalThrough + 1] : null;
@@ -383,7 +401,7 @@ internal sealed class RoomEditingTracker(TimeProvider clock, SceneImageFileServi
         /// returns false and cannot execute. The caller publishes current progress.
         /// A new choice must have a new ID against current server-owned evidence.
         /// </summary>
-        private bool RegisterResolution(Wire.RoomResolveRequest request)
+        private void ValidateResolution(Wire.RoomResolveRequest request)
         {
             Owner(request.Owner);
             if (request.ResolutionAttemptId == Guid.Empty || request.OperationId == Guid.Empty
@@ -391,6 +409,27 @@ internal sealed class RoomEditingTracker(TimeProvider clock, SceneImageFileServi
                 || !Wire.RoomEditingIdentity.ValidResolution(request.Resolution)
                 || !Wire.RoomEditingIdentity.ValidObservation(request.LastCompleteRead, Identity.RoomId))
                 throw Invalid("Invalid resolution envelope.");
+            if (attemptHeads.TryGetValue(request.ResolutionAttemptId, out var head)
+                && (head.Sequence != request.Sequence || head.OperationId != request.OperationId))
+                throw Invalid("The resolution identity names a different operation.");
+        }
+
+        // Called before workflow dispatch can inspect CurrentHead. A late owned
+        // request may name released work, but never needs or recreates its body.
+        public bool HandleAcknowledgedResolution(Wire.RoomResolveRequest request)
+        {
+            ValidateResolution(request);
+            if (request.Sequence > acknowledgedThrough) return false;
+            if (!operationSequences.TryGetValue(request.OperationId, out var sequence) || sequence != request.Sequence)
+                throw Invalid("Resolution names an unknown operation.");
+            attemptHeads.TryAdd(request.ResolutionAttemptId, new(request.Sequence, request.OperationId));
+            ActivityVersion++;
+            return true;
+        }
+
+        private bool RegisterResolution(Wire.RoomResolveRequest request)
+        {
+            if (HandleAcknowledgedResolution(request)) return false;
             if (attempts.TryGetValue(request.ResolutionAttemptId, out var known))
             {
                 if (!Wire.RoomEditingIdentity.SameResolution(known.Request, request)) throw Invalid("The resolution identity was reused with different content.");
@@ -404,6 +443,7 @@ internal sealed class RoomEditingTracker(TimeProvider clock, SceneImageFileServi
                 && blocked.Revision == request.EvidenceRevision && !ProjectionPending;
             if (admitted && !ResolutionMatches(request.Resolution, Blocked!))
                 throw Invalid("The resolution choice does not match the current corrective workflow.");
+            attemptHeads.Add(request.ResolutionAttemptId, new(request.Sequence, request.OperationId));
             attempts.Add(request.ResolutionAttemptId, new(request, new(request.ResolutionAttemptId,
                 request.Sequence, request.OperationId, request.EvidenceId, request.EvidenceRevision,
                 !admitted, !admitted, null, null, null)
@@ -471,8 +511,8 @@ internal sealed class RoomEditingTracker(TimeProvider clock, SceneImageFileServi
             foreach (var outcome in claim.Outcomes)
             {
                 if (outcome is null || outcome.Sequence <= 0 || outcome.Sequence > claim.IncorporatedThrough
-                    || !identities.Add(outcome.Sequence) || !receipts.TryGetValue(outcome.Sequence, out var receipt)
-                    || receipt.OperationId != outcome.OperationId) throw Invalid("Incorporation identities do not match retained outcomes.");
+                    || !identities.Add(outcome.Sequence) || !operationSequences.TryGetValue(outcome.OperationId, out var sequence)
+                    || sequence != outcome.Sequence) throw Invalid("Incorporation identities do not match admitted outcomes.");
             }
             for (var sequence = acknowledgedThrough + 1; sequence <= claim.IncorporatedThrough; sequence++)
                 if (!identities.Contains(sequence) || !results.TryGetValue(sequence, out var result) || result.ProjectionPending)
@@ -484,23 +524,33 @@ internal sealed class RoomEditingTracker(TimeProvider clock, SceneImageFileServi
             if (claim.IncorporatedThrough <= acknowledgedThrough) return;
             acknowledgedThrough = claim.IncorporatedThrough;
             foreach (var sequence in results.Keys.TakeWhile(x => x <= acknowledgedThrough).ToArray()) results.Remove(sequence);
-            foreach (var (id, attempt) in attempts.Where(x => x.Value.Summary.Sequence <= acknowledgedThrough
-                && x.Value.Summary.TerminalResult is not null).ToArray())
-                attempts[id] = attempt with { Summary = attempt.Summary with { TerminalResult = null } };
-            // Compact receipt/operation/request/attempt evidence deliberately stays.
+            foreach (var sequence in receipts.Keys.TakeWhile(x => x <= acknowledgedThrough).ToArray()) receipts.Remove(sequence);
+            foreach (var sequence in operations.Keys.TakeWhile(x => x <= acknowledgedThrough).ToArray()) operations.Remove(sequence);
+            foreach (var id in attempts.Where(x => x.Value.Summary.Sequence <= acknowledgedThrough).Select(x => x.Key).ToArray())
+                attempts.Remove(id);
+            foreach (var (id, batch) in batches.ToArray())
+            {
+                var outstanding = OutstandingBatch(batch);
+                if (outstanding.Items.IsEmpty) batches.Remove(id);
+                else batches[id] = outstanding;
+            }
         }
 
         public Wire.RoomTrackingResponse Read(long after, double? completedRequestMilliseconds = null,
             Guid? resolutionAttemptId = null)
         {
             if (Invalidated) throw new RoomTrackingUnavailableException();
-            if (after < acknowledgedThrough || after > terminalThrough) throw Invalid("The requested result range is no longer available or has not executed.");
             Wire.RoomResolutionAttemptSummary? attempt = null;
             if (resolutionAttemptId is { } attemptId)
             {
-                if (!attempts.TryGetValue(attemptId, out var retained)) throw Invalid("The requested resolution attempt is unknown.");
-                attempt = retained.Summary;
+                if (!attemptHeads.TryGetValue(attemptId, out var head)) throw Invalid("The requested resolution attempt is unknown.");
+                // Only a recognized released attempt admits a stale historical
+                // range. Ordinary invalid ranges retain their strict rejection.
+                if (head.Sequence <= acknowledgedThrough && after >= 0 && after <= terminalThrough)
+                    after = Math.Max(after, acknowledgedThrough);
+                if (attempts.TryGetValue(attemptId, out var retained)) attempt = retained.Summary;
             }
+            if (after < acknowledgedThrough || after > terminalThrough) throw Invalid("The requested result range is no longer available or has not executed.");
             ActivityVersion++;
             return new(Identity, Progress, results.Where(x => x.Key > after).Select(x => x.Value).ToImmutableArray(),
                 Blocked, operations.Where(x => x.Key > (Blocked?.Sequence ?? terminalThrough))

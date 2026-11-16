@@ -55,6 +55,9 @@ public sealed partial class ConfirmedCatalogue
         LoadRoomMapAsync(room, owns, token, PreparationContext.Ordinary);
     internal Task<RoomMapContextView?> LoadRoomMapAsync(Guid room, Func<bool> owns, CancellationToken token, PreparationContext context) =>
         AdmitMapReadAsync((current, cancellation) => ReadRoomMapAsync(room, current, cancellation, false, context), owns, token, observe: true);
+    internal Task<RoomMapContextView?> LoadRoomVisitMapAsync(Guid room, Func<bool> owns, CancellationToken token, PreparationContext context) =>
+        PrepareRoomReadAsync(cancellation => AdmitMapReadAsync((current, admitted) => ReadRoomMapAsync(room, current, admitted,
+            false, context, prepareVisit: true), owns, cancellation, observe: true), owns, token, context, refreshCommon: false);
     public Task<RoomMapContextView?> RefreshRoomMapAsync(Guid room, Func<bool> owns, CancellationToken token) =>
         RefreshRoomMapCoreAsync(room, owns, token);
     private async Task<RoomMapContextView?> RefreshRoomMapCoreAsync(Guid room, Func<bool> owns, CancellationToken token)
@@ -147,16 +150,18 @@ public sealed partial class ConfirmedCatalogue
     }
 
     private async Task<MapReadCandidate?> MapInputAsync(Func<bool> owns, CancellationToken token, bool refresh,
-        PreparationContext context = PreparationContext.Ordinary)
+        PreparationContext context = PreparationContext.Ordinary, bool prepareVisit = false)
     {
         using var preparation = OperationTiming.Start("local-map-input-preparation");
         var work = new LocalLoadWork();
         if (!owns() || token.IsCancellationRequested || mapData.IsDisposed) return null;
-        if (!browser.CanAdoptLocal) return null;
+        if (!browser.CanAdoptLocal) { if (prepareVisit) throw new LocalReadInvalidatedException(); return null; }
         using var stateCheck = OperationTiming.Start("local-map-state-check");
         var state = await browser.ReadStateAsync(token);
         stateCheck.End(TimingOutcome.Returned);
-        if (!owns() || token.IsCancellationRequested || mapData.IsDisposed || !browser.CanAdoptLocal) return null;
+        if (!owns() || token.IsCancellationRequested || mapData.IsDisposed) return null;
+        if (prepareVisit) RequireRoomLocalCheckpoint(state);
+        else if (!browser.CanAdoptLocal) return null;
         if (state is null) throw new InvalidOperationException("The local map source is unavailable.");
         if (state.StateId != appliedLocalStateId)
             throw new InvalidOperationException("Map preparation no longer matches the admitted common local facts.");
@@ -170,7 +175,8 @@ public sealed partial class ConfirmedCatalogue
         using var query = OperationTiming.Start("local-map-query-return-including-managed-decode");
         var read = await browser.ReadMapsAsync(expected: state, token: token);
         query.End(TimingOutcome.Returned);
-        if (!owns() || token.IsCancellationRequested || mapData.IsDisposed || !browser.CanAdoptLocal) return null;
+        if (!owns() || token.IsCancellationRequested || mapData.IsDisposed) return null;
+        if (!browser.CanAdoptLocal) { if (prepareVisit) throw new LocalReadInvalidatedException(); return null; }
         async Task YieldObserved()
         {
             token.ThrowIfCancellationRequested();
@@ -204,10 +210,10 @@ public sealed partial class ConfirmedCatalogue
         return view;
     }
     private async Task<RoomMapContextView?> ReadRoomMapAsync(Guid room, Func<bool> owns, CancellationToken token, bool refresh,
-        PreparationContext context = PreparationContext.Ordinary)
+        PreparationContext context = PreparationContext.Ordinary, bool prepareVisit = false)
     {
         using var load = OperationTiming.Start("local-room-map-demand");
-        var candidate = await MapInputAsync(owns, token, refresh, context);
+        var candidate = await MapInputAsync(owns, token, refresh, context, prepareVisit);
         if (candidate is null) return null;
         var view = mapData.Room(candidate.Entry, room, Rooms, Statuses, load.Id);
         if (!owns() || token.IsCancellationRequested || mapData.IsDisposed) return null;

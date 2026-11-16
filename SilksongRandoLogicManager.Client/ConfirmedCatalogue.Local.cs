@@ -119,7 +119,7 @@ public sealed partial class ConfirmedCatalogue
             materialize.End();
             if (!Current()) { DeferRefresh(false); return; }
             using var definitionWork = OperationTiming.Start("local-catalogue-vocabulary-materialization");
-            var definitions = await LocalLogicMaterializer.VocabularyAsync(read.Vocabulary, localDefinitions,
+            var definitions = await LocalLogicMaterializer.VocabularyAsync(read.Vocabulary!, r => r.Freeze(), localDefinitions,
                 YieldCurrent, lifetime.Token, work);
             work.Report(definitionWork, ReferenceEquals(definitions, localDefinitions));
             definitionWork.End();
@@ -171,10 +171,25 @@ public sealed partial class ConfirmedCatalogue
             // Local DB coverage, not either retired global timestamp scope. No
             // generated freshness marker certifies an independently retained result.
             using var install = OperationTiming.Start("local-catalogue-candidate-install");
-            appliedLocalStateId = read.State.StateId;
-            appliedImageEvidence = evidence;
-            localDefinitions = definitions;
-            Install(candidate);
+            var priorStateId = appliedLocalStateId;
+            var priorEvidence = appliedImageEvidence;
+            var priorDefinitions = localDefinitions;
+            try
+            {
+                appliedLocalStateId = read.State!.StateId;
+                appliedImageEvidence = evidence;
+                localDefinitions = definitions;
+                Install(candidate);
+            }
+            catch
+            {
+                // Preserve callbacks' existing in-install witness, but a failed
+                // install cannot certify reuse on the next explicit read attempt.
+                appliedLocalStateId = priorStateId;
+                appliedImageEvidence = priorEvidence;
+                localDefinitions = priorDefinitions;
+                throw;
+            }
             prepared = true;
             install.End(TimingOutcome.Incorporated);
             load.End(TimingOutcome.Incorporated);

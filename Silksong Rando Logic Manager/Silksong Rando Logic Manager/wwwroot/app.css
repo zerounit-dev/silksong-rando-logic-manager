@@ -125,10 +125,6 @@ html:has(#app .v3-shell), body:has(#app .v3-shell) { min-width: 0; height: auto;
 .v3-shell > .workspace > .v3-initial { flex: 1 1 0; min-height: 0; }
 .v3-shell > .workspace > .content > .room-editor-v2,
 .v3-shell .room-editor-v2 > .room-document { height: 100%; min-height: 0; }
-/* max-content keeps the header intrinsic when it fits. Under constraint it
-   yields to a usable middle row, and only then needs its own scrollport. */
-.v3-shell .room-editor-v2 > .room-document { grid-template-rows: minmax(0, max-content) minmax(min(8rem, 20%), 1fr) auto; }
-.v3-shell .room-document > .room-sticky-context { min-height: 0; overflow: auto; }
 .nav-header { display: grid; gap: .35rem; padding-bottom: .55rem; border-bottom: 1px solid #c9c8c2; }
 .nav-title { display: flex; justify-content: space-between; align-items: center; color: inherit; font-size: .82rem; font-weight: 700; letter-spacing: .04em; text-decoration: none; text-transform: uppercase; }
 .search-entry { width: 100%; padding: .22rem; border: 1px solid #a7a69f; background: transparent; font-size: .76rem; }

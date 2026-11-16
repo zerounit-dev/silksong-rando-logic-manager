@@ -73,8 +73,9 @@ public sealed record RoomResolutionAttemptSummary(Guid AttemptId, long Sequence,
     public RoomBlockedHead? ReviewedQuestion { get; init; }
     public RoomBlockedHead? ResultingQuestion { get; init; }
     public RoomTerminalReceipt? TerminalReceipt { get; init; }
-    // Large payload may be released after acknowledgement; the receipt/summary
-    // remains. Only an originally pending projection may gain read-only recovery.
+    // All historical attempt bodies/receipt/summary are released at acknowledgement;
+    // response.ResolutionAttempt is then null. While unacknowledged, only an
+    // originally pending projection may gain read-only recovery.
     public RoomTerminalResult? TerminalResult { get; init; }
 }
 

@@ -104,6 +104,7 @@ public sealed partial class ConfirmedCatalogue(HttpClient http, MapDataOwner map
         ObjectDisposedException.ThrowIf(disposed, this);
         if (mutation) throw new InvalidOperationException("A catalogue mutation is already admitted.");
         mutation = true; var owner = ++epoch; generation++;
+        var settled = mutationSettlement = new(TaskCreationOptions.RunContinuationsAsynchronously);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(token, lifetime.Token);
         try
         {
@@ -115,6 +116,8 @@ public sealed partial class ConfirmedCatalogue(HttpClient http, MapDataOwner map
         finally
         {
             mutation = false;
+            mutationSettlement = null;
+            settled.TrySetResult();
             // Background storage may have completed while this admitted feature
             // was installing native/queue state. Drain its deferred local checkpoint
             // after admission releases, without awaiting SQL for feature success.

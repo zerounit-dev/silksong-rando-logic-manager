@@ -73,7 +73,7 @@ public partial class App
         using var timing = OperationTiming.Start("room.entry.document-map");
         if (initialProgress is not null) await initialProgress(new(InitialLoadingPhase.Room));
         var opened = await Catalogue.OpenRoomAsync(room, Guid.NewGuid(), owns, token, context);
-        if (!owns()) return null;
+        if (!owns() || token.IsCancellationRequested) return null;
         if (opened is null)
         {
             if (Catalogue.Rooms.ContainsKey(room)) throw new InvalidOperationException("The selected room could not be loaded.");
@@ -85,8 +85,8 @@ public partial class App
         RoomDocumentReconciliation.Validate(opened.Document);
         using var mapTiming = OperationTiming.Start("room.map.combined-read-decode-preparation");
         if (initialProgress is not null) await initialProgress(new(InitialLoadingPhase.Map));
-        var map = await Catalogue.LoadRoomMapAsync(room, owns, token, context);
-        if (!owns()) return null;
+        var map = await Catalogue.LoadRoomVisitMapAsync(room, owns, token, context);
+        if (!owns() || token.IsCancellationRequested) return null;
         if (map is null) throw new InvalidOperationException("The selected room context could not be loaded.");
         if (map.RoomId != room || (map.State == RoomMapContextState.Ready) != (map.Surface is not null)
             || map.Surface is { } surface && (surface.Context.CurrentRoomId != room || !surface.Context.IsRoomContext))
