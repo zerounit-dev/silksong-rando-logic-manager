@@ -7,12 +7,19 @@ public enum RoomImageAssetKind { Original, Crop }
 public sealed record UnusedRoomImage(Guid RoomId, RoomImageAssetKind Kind, string Hash, long Bytes);
 public sealed record RoomImageScan(IReadOnlyList<UnusedRoomImage> Candidates, bool Complete)
 {
+    public string? HistoryWarning { get; init; }
     public long Bytes => Candidates.Sum(x => x.Bytes);
 }
-public sealed record RoomImageCleanupResult(int Deleted, long Bytes, IReadOnlyList<Exception> Failures);
+public sealed record RoomImageCleanupResult(int Deleted, long Bytes, IReadOnlyList<Exception> Failures)
+{
+    public string? HistoryWarning { get; init; }
+}
 public sealed record RoomImageBlocker(string FriendlyName, string Instruction);
 public sealed record RoomImageRegenerationResult(int Generated, int Failed, bool Interrupted,
-    IReadOnlyList<RoomImageBlocker> Blockers, IReadOnlyList<Exception> Diagnostics);
+    IReadOnlyList<RoomImageBlocker> Blockers, IReadOnlyList<Exception> Diagnostics)
+{
+    public string? HistoryWarning { get; init; }
+}
 
 /// <summary>Explicit slow integrity/lifecycle operations. Never called by hot scene/sidebar loaders.</summary>
 public sealed class RoomImageOperationsService(IDbContextFactory<LogicDbContext> contexts, SceneImageFileService files,
@@ -27,6 +34,7 @@ public sealed class RoomImageOperationsService(IDbContextFactory<LogicDbContext>
         var rooms = await db.Rooms.AsNoTracking().Select(x => new { x.Id, x.SceneImageOriginalHash, x.SceneImageCropHash }).ToDictionaryAsync(x => x.Id);
         List<UnusedRoomImage> candidates = [];
         var complete = true;
+        string? historyWarning = null;
         foreach (var kind in Enum.GetValues<RoomImageAssetKind>())
         {
             var directory = kind == RoomImageAssetKind.Original ? files.OriginalsDirectory : files.ScenesDirectory;
@@ -57,13 +65,14 @@ public sealed class RoomImageOperationsService(IDbContextFactory<LogicDbContext>
                             .ExecuteUpdateAsync(set => set.SetProperty(x => x.IsSceneImageStale, true));
                         await transaction.FinalizeAsync(CancellationToken.None);
                         var prepared = publication.PrepareAdvance(affected != 0, false);
-                        await transaction.CommitAsync(() => publication.PublishCommitted(prepared));
+                        var history = await transaction.CommitAsync(() => publication.PublishCommitted(prepared));
+                        historyWarning ??= history.Warning;
                     }
                 }
                 catch (Exception ex) { logger.LogError(ex, "Room image integrity scan failed for {Path}", path); complete = false; }
             }
         }
-        return new(candidates, complete);
+        return new(candidates, complete) { HistoryWarning = historyWarning };
     }
 
     public async Task<RoomImageCleanupResult> DeleteUnusedAsync(RoomImageScan confirmed)
@@ -77,6 +86,7 @@ public sealed class RoomImageOperationsService(IDbContextFactory<LogicDbContext>
         var rooms = await db.Rooms.AsNoTracking().Where(x => ids.Contains(x.Id))
             .Select(x => new { x.Id, x.SceneImageOriginalHash, x.SceneImageCropHash }).ToDictionaryAsync(x => x.Id);
         int deleted = 0; long bytes = 0; List<Exception> failures = [];
+        string? historyWarning = null;
         foreach (var candidate in confirmed.Candidates)
         {
             var path = candidate.Kind == RoomImageAssetKind.Original ? files.GetOriginalPath(candidate.RoomId) : files.GetRoomImagePath(candidate.RoomId);
@@ -97,12 +107,13 @@ public sealed class RoomImageOperationsService(IDbContextFactory<LogicDbContext>
                         .ExecuteUpdateAsync(set => set.SetProperty(x => x.IsSceneImageStale, true));
                     await transaction.FinalizeAsync(CancellationToken.None);
                     var prepared = publication.PrepareAdvance(affected != 0, false);
-                    await transaction.CommitAsync(() => publication.PublishCommitted(prepared));
+                    var history = await transaction.CommitAsync(() => publication.PublishCommitted(prepared));
+                    historyWarning ??= history.Warning;
                 }
             }
             catch (Exception ex) { logger.LogError(ex, "Unused room image deletion failed for {RoomId}/{Kind}", candidate.RoomId, candidate.Kind); failures.Add(ex); }
         }
-        return new(deleted, bytes, failures);
+        return new(deleted, bytes, failures) { HistoryWarning = historyWarning };
     }
 
     public async Task<RoomImageRegenerationResult> RegenerateAsync(SceneImageRebuildMode mode, IProgress<SceneImageRebuildProgress> progress)
@@ -137,6 +148,7 @@ public sealed class RoomImageOperationsService(IDbContextFactory<LogicDbContext>
         var diagnostics = result.FailureExceptions.Concat(result.CleanupExceptions).ToList();
         if (interruption is not null) diagnostics.Add(interruption);
         return new(result.Items.Count(x => x.Status == SceneImageRebuildItemStatus.Generated),
-            result.Items.Count(x => x.Status == SceneImageRebuildItemStatus.Failed), interruption is not null, blockers, diagnostics);
+            result.Items.Count(x => x.Status == SceneImageRebuildItemStatus.Failed), interruption is not null, blockers, diagnostics)
+            { HistoryWarning = result.HistoryWarning };
     }
 }

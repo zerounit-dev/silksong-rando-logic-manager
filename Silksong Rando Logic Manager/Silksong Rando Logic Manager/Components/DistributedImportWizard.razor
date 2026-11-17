@@ -256,7 +256,11 @@
         }
         catch (DistributedImportInterruptedException exception) { view!.State = exception.State; RecordUnexpectedFailure("start import", exception); }
         catch (Exception exception) { RecordUnexpectedFailure(view?.Started == true ? "read preparation" : "start import", exception); }
-        finally { busy = false; }
+        finally
+        {
+            busy = false;
+            ShowHistoryWarning(view?.State?.AreaMapOutcome.HistoryWarning ?? view?.State?.RoomGroupingOutcome.HistoryWarning);
+        }
     }
     private async Task LoadCurrentAsync(bool advanceIdentical = true)
     {
@@ -315,6 +319,7 @@
     private async Task DecideAsync(DistributedRoomDecisionIntent intent)
     {
         if (busy || view?.State is null || view.CurrentComparison is null || !HasCurrentUndecidedComparison) return; busy = true;
+        string? historyWarning = null;
         try
         {
             view.RoomStatuses.Remove(intent.RoomId);
@@ -346,6 +351,7 @@
             }
             if (outcome is DistributedImportRoomApplied applied)
             {
+                historyWarning = applied.HistoryWarning;
                 view.State = applied.State;
                 view.AppliedRooms.TryAdd(applied.RoomId, applied.State.Package.Rooms.Single(room => room.Id == applied.RoomId).FriendlyName);
                 if (view.DecidedRoomIndexes.Add(view.RoomIndex)) view.Applied++;
@@ -376,7 +382,7 @@
             await LoadCurrentAsync();
         }
         catch (Exception exception) { RecordUnexpectedFailure(view?.RetryIntent is null ? "read preparation" : "room", exception); }
-        finally { busy = false; }
+        finally { busy = false; ShowHistoryWarning(historyWarning); }
     }
     private Task ImportRoomAsync()
     {
@@ -395,6 +401,7 @@
     private async Task DecideSweepAsync(bool archive)
     {
         if (busy || view?.State is null || view.Sweep is null) return; busy = true;
+        string? historyWarning = null;
         try
         {
             view.RetrySweepArchive = archive;
@@ -403,12 +410,13 @@
             if (result is DistributedImportRejected rejected) { view.RetrySweepArchive = null; view.ParseErrors = rejected.Errors.ToList(); return; }
             if (result is DistributedImportSweepCompleted completed)
             {
+                historyWarning = completed.HistoryWarning;
                 if (completed.Archived) view.Applied++; else view.Skipped++;
                 view.Sweep = null; view.Completed = true; view.Failure = null; view.RetrySweepArchive = null;
             }
         }
         catch (Exception exception) { RecordUnexpectedFailure("final-sweep", exception); }
-        finally { busy = false; }
+        finally { busy = false; ShowHistoryWarning(historyWarning); }
     }
     private async Task GenerateSceneImagesAsync(SceneImageRebuildMode mode)
     {
@@ -429,7 +437,14 @@
             Diagnostics.Show(exception.ToString());
         }
         catch (Exception exception) { view.SceneImageError = "Image generation failed unexpectedly. See error details."; Diagnostics.Show(exception.ToString()); }
-        finally { busy = false; }
+        finally { busy = false; ShowHistoryWarning(view.SceneImageResult?.HistoryWarning); }
+    }
+    private void ShowHistoryWarning(string? warning)
+    {
+        if (warning is null) return;
+        var existing = Diagnostics.ErrorDetails;
+        if (existing?.Contains(warning, StringComparison.Ordinal) == true) return;
+        Diagnostics.Show(existing is null ? warning : existing + Environment.NewLine + warning);
     }
     private void ShowImageCleanupDiagnostics(SceneImageRebuildResult result)
     {

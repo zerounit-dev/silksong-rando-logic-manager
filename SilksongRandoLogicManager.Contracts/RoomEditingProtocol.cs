@@ -46,6 +46,7 @@ public sealed record RoomTerminalReceipt(long Sequence, Guid OperationId, RoomTe
     Guid? CreatedEntityId, ImmutableArray<Guid> AffectedRoomIds, string? CleanupWarning)
 {
     public SharedMutationTimestamps? SharedTimestamps { get; init; }
+    public string? HistoryWarning { get; init; }
     public ImmutableArray<RoomDocumentObservation> SharedOriginalRooms { get; init; } = [];
 }
 public sealed record RoomTerminalResult(RoomTerminalReceipt Receipt, ImmutableArray<RoomDocumentDelta> Changes,

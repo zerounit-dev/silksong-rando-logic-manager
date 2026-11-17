@@ -6,7 +6,7 @@ namespace Silksong_Rando_Logic_Manager.Services;
 public sealed class MapOverlayService(IDbContextFactory<LogicDbContext> dbContextFactory, Authentication.LiveAccess access,
     SharedPublicationCoordinator publications)
 {
-    public async Task SavePlacementAsync(MapOverlayPlacementCommand draft, CancellationToken cancellationToken = default)
+    public async Task<string?> SavePlacementAsync(MapOverlayPlacementCommand draft, CancellationToken cancellationToken = default)
     {
         using var publication = await publications.AcquireAsync(cancellationToken);
         var historyActor = HistoryActor.From(await access.RequireAsync(Authentication.AccessPolicies.Author, cancellationToken));
@@ -20,7 +20,7 @@ public sealed class MapOverlayService(IDbContextFactory<LogicDbContext> dbContex
                 .SetProperty(x => x.BottomOffsetPercent, draft.BottomOffsetPercent), cancellationToken);
         if (updated != 1) throw new MapOverlayMissingException();
         await transaction.FinalizeAsync(cancellationToken);
-        await transaction.CommitAsync(token: cancellationToken);
+        return (await transaction.CommitAsync(token: cancellationToken)).Warning;
     }
 }
 

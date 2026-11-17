@@ -16,7 +16,7 @@ public sealed partial class TransitionInverseSetupService(IDbContextFactory<Logi
         return CreateDraft(transitions.SingleOrDefault(x => x.Id == sourceTransitionId), rooms, transitions);
     }
 
-    public async Task<bool> ApplyAsync(Guid sourceTransitionId, CancellationToken cancellationToken = default)
+    public async Task<TransitionInverseSetupResult> ApplyAsync(Guid sourceTransitionId, CancellationToken cancellationToken = default)
     {
         using var publication = await publications.AcquireAsync(cancellationToken);
         var historyActor = HistoryActor.From(await access.RequireAsync(Authentication.AccessPolicies.Author, cancellationToken));
@@ -28,7 +28,7 @@ public sealed partial class TransitionInverseSetupService(IDbContextFactory<Logi
         var draft = CreateDraft(source, rooms, transitions);
         if (draft is null)
         {
-            return false;
+            return new(false);
         }
 
         var target = transitions.Single(x => x.Id == draft.TargetTransitionId);
@@ -46,8 +46,8 @@ public sealed partial class TransitionInverseSetupService(IDbContextFactory<Logi
         await new LogicReferenceResolver(db).ResolveAsync(cancellationToken);
         await transaction.FinalizeAsync(cancellationToken);
         var prepared = publication.PrepareAdvance(transaction.FinalEffects.RoomFactsChanged, false);
-        await transaction.CommitAsync(() => publication.PublishCommitted(prepared), cancellationToken);
-        return true;
+        var history = await transaction.CommitAsync(() => publication.PublishCommitted(prepared), cancellationToken);
+        return new(true) { HistoryWarning = history.Warning };
     }
 
     public static TransitionInverseSetupDraft? CreateDraft(RoomTransition? source, IEnumerable<Room> rooms, IEnumerable<RoomTransition> transitions)
@@ -85,6 +85,11 @@ public sealed partial class TransitionInverseSetupService(IDbContextFactory<Logi
         var matches = candidates.Where(x => string.Equals(value.Trim(), x.Value.Trim(), StringComparison.OrdinalIgnoreCase)).ToArray();
         return matches.Length == 1 && matches[0].Id == expectedId;
     }
+}
+
+public sealed record TransitionInverseSetupResult(bool Applied)
+{
+    public string? HistoryWarning { get; init; }
 }
 
 public sealed record TransitionInverseSetupDraft(

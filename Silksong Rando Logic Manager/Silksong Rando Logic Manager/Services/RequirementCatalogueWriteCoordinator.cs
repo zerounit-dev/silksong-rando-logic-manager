@@ -15,7 +15,8 @@ public sealed class RequirementCatalogueWriteCoordinator(IDbContextFactory<Logic
     private readonly SemaphoreSlim gate = new(1, 1);
 
     public async Task<T> ExecuteAsync<T>(Authentication.LiveAccess access, Func<LogicDbContext, CancellationToken, Task<T>> operation,
-        Func<T, VocabularyMutationPatch, T> attachPublication, bool replacement, CancellationToken cancellationToken = default)
+        Func<T, VocabularyMutationPatch, T> attachPublication, Func<T, string?, T> attachHistory,
+        bool replacement, CancellationToken cancellationToken = default)
     {
         await gate.WaitAsync(cancellationToken);
         try
@@ -36,8 +37,8 @@ public sealed class RequirementCatalogueWriteCoordinator(IDbContextFactory<Logic
                 ? new VocabularyMutationPatch(prepared.Timestamps.Requirements, true, [], [], after with { Token = prepared.After.RequirementsUtc })
                 : TargetedPatch(before, after, prepared.Timestamps.Requirements);
             var publishedResult = attachPublication(result, patch);
-            await transaction.CommitAsync(() => publication.PublishCommitted(prepared), cancellationToken);
-            return publishedResult;
+            var history = await transaction.CommitAsync(() => publication.PublishCommitted(prepared), cancellationToken);
+            return attachHistory(publishedResult, history.Warning);
         }
         finally
         {

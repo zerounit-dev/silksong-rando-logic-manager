@@ -30,11 +30,12 @@ public sealed partial class LogicCatalogService
             return result.Code is null
                 ? new SidebarCommandOutcome(result.Status, new(shared, editor, result.RoomId, result.Count), null)
                 : new SidebarCommandOutcome(result.Status, null, new(result.Code, result.Message!, Shared: shared, GroupEditor: editor));
-        }, token);
+        }, (outcome, history) => outcome with { Result = outcome.Result is { } result ? result with { HistoryWarning = history.Warning } : null }, token);
 
     private async Task<TResult> InSidebarTransactionAsync<T, TResult>(Func<LogicDbContext, Task<T>> operation,
         Func<LogicDbContext, LogicWriteScope,
-            SharedPublicationCoordinator.PreparedPublication, T, Task<TResult>> project, CancellationToken token)
+            SharedPublicationCoordinator.PreparedPublication, T, Task<TResult>> project,
+        Func<TResult, HistoryWriteOutcome, TResult> attachHistory, CancellationToken token)
     {
         using var images = await sharedCatalogue.AcquireImagesAsync(token);
         var (publication, historyActor) = await AcquireAuthorPublicationAsync(token);
@@ -46,8 +47,8 @@ public sealed partial class LogicCatalogService
         await transaction.FinalizeAsync(CancellationToken.None);
         var prepared = publication.PrepareAdvance(transaction.FinalEffects.RoomFactsChanged, false);
         var outcome = await project(db, transaction, prepared, result);
-        await transaction.CommitAsync(() => publication.PublishCommitted(prepared));
-        return outcome;
+        var history = await transaction.CommitAsync(() => publication.PublishCommitted(prepared));
+        return attachHistory(outcome, history);
     }
 
     private static SidebarDecision SidebarResult(int status = 200,

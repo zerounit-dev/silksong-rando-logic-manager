@@ -39,7 +39,8 @@ public sealed partial class TransitionInverseSetupService
         var plan = await SceneAffectedPublication.PrepareAsync(db, publication, transaction,
             [transitions.Single(t => t.Id == command.SourceId).RoomId, target.RoomId]);
         var result = new SceneInverseResult(true, null, null, plan.Recovery);
-        await transaction.CommitAsync(() => publication.PublishCommitted(plan.Publication));
+        var history = await transaction.CommitAsync(() => publication.PublishCommitted(plan.Publication));
+        result = result with { HistoryWarning = history.Warning };
         try
         {
             await transaction.DisposeAsync();

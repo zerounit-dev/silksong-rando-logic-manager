@@ -1,6 +1,7 @@
 using LibGit2Sharp;
 using System.Text;
 using System.Text.Json;
+using System.Security.Cryptography;
 using Silksong_Rando_Logic_Manager.Authentication;
 
 namespace Silksong_Rando_Logic_Manager.Services.Publishing;
@@ -497,7 +498,11 @@ public sealed class DocumentationPublishingService : IDisposable, IAsyncDisposab
         foreach (var path in current.Files.Keys.Concat(current.Removed).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal))
         {
             var before = old.GetValueOrDefault(path); var after = current.Files.GetValueOrDefault(path);
-            if (before is not null && after is not null && PublishingStorage.Hash(PublishingGit.Bytes(before)) == after) continue;
+            if (before is not null && after is not null)
+            {
+                using var content = before.GetContentStream();
+                if (Convert.ToHexStringLower(SHA256.HashData(content)) == after) continue;
+            }
             var image = path.EndsWith(".png", StringComparison.Ordinal) || path.EndsWith(".webp", StringComparison.Ordinal);
             var group = path.StartsWith("00-annotations/") ? path.Split('/')[1] : path.Contains('/') && path.EndsWith(".md") ? path.Split('/')[0] : "Machine artifacts / publication index";
             list.Add(new(path, group, image ? "Image" : path.EndsWith(".md") ? "Documentation" : "Machine artifact",

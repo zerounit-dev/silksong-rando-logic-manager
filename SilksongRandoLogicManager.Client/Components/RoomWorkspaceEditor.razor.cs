@@ -294,6 +294,7 @@ public partial class RoomWorkspaceEditor
         if (!Shell.CanAuthor || !Current || !workspace.IsAdmitted || draining || controlPending || roomResponseObservationFailed || workspace.AcceptanceFailed || nativeOwner is null || !Shell.CanUseRoom) return;
         using var timing = OperationTiming.Start("save.drain");
         draining = true;
+        string? historyWarning = null;
         try
         {
             while (Shell.CanAuthor && Current && !Shell.GeneralErrorOpen && !workspace.Queue.RecoveryRequired && !workspace.AuthoringBlocked)
@@ -318,9 +319,9 @@ public partial class RoomWorkspaceEditor
                     try
                     {
                         if (!Current) return;
-                        IncorporateRoomSaveResponse(response, admission);
+                        IncorporateRoomSaveResponse(response, admission, warning => historyWarning ??= warning);
                         StateHasChanged();
-                        await AcknowledgeAsync(admission);
+                        await AcknowledgeAsync(admission, warning => historyWarning ??= warning);
                     }
                     finally { PublishReceivedRoomCache(response.Received, admission); }
                 }, lifetime.Token);
@@ -338,16 +339,20 @@ public partial class RoomWorkspaceEditor
                 ? "Saved; authoritative refresh failed. Retry reads the retained result and does not repeat the write."
                 : "The room request could not be completed. Pending work has been retained; Retry recovers progress before any further write.");
         }
-        finally { draining = false; if (Current) { StateHasChanged(); await Shell.DrainRoomRefreshAsync(); } }
+        finally
+        {
+            try { draining = false; if (Current) { StateHasChanged(); await Shell.DrainRoomRefreshAsync(); } }
+            finally { if (Current) await Shell.ReportHistoryWarningAsync(historyWarning); }
+        }
         NavigateAfterRoomDelete();
     }
-    private async Task AcknowledgeAsync(ConfirmedCatalogue.MutationAdmission admission)
+    private async Task AcknowledgeAsync(ConfirmedCatalogue.MutationAdmission admission, Action<string> retainHistoryWarning)
     {
         if (!Current || nativeOwner is null || workspace.Queue.IncorporatedThrough == workspace.Queue.AcknowledgedThrough) return;
         using var timing = OperationTiming.Start("save.acknowledgement");
         workspace.Queue.BeginControlRequest();
         var response = await admission.AcknowledgeRoomAsync(workspace.Queue.Identity, new(new(workspace.Queue.Identity.TabId, workspace.Queue.Identity.VisitId), workspace.Queue.Claim()));
-        try { if (Current) IncorporateRoomResponse(response, admission); }
+        try { if (Current) IncorporateRoomResponse(response, admission, retainHistoryWarning); }
         finally { PublishReceivedRoomCache(response, admission); }
         timing.End(Current ? TimingOutcome.Acknowledged : TimingOutcome.Retired);
     }
@@ -356,6 +361,7 @@ public partial class RoomWorkspaceEditor
         if (!Current || !workspace.IsAdmitted || draining || controlPending || nativeOwner is null || workspace.Queue.TrackingUnavailable || !Shell.CanUseRoom) return;
         using var timing = OperationTiming.Start("save.read-only-recovery");
         controlPending = true;
+        string? historyWarning = null;
         try
         {
             workspace.Queue.BeginControlRequest();
@@ -370,7 +376,7 @@ public partial class RoomWorkspaceEditor
                 try
                 {
                     if (!Current) return;
-                    IncorporateRoomResponse(response, admission);
+                    IncorporateRoomResponse(response, admission, warning => historyWarning ??= warning);
                     keyboardUnsentFailure = false;
                     PublishKeyboardStates();
                     if (!workspace.Queue.ProjectionPending && resolutionRequest is { } request
@@ -385,10 +391,10 @@ public partial class RoomWorkspaceEditor
                         var saved = await admission.ResolveRoomHeadAsync(workspace.Queue.Identity, request, () => ObserveResolutionDispatch(request));
                         resolved = saved.Received;
                         if (!Current) return;
-                        IncorporateRoomSaveResponse(saved, admission);
+                        IncorporateRoomSaveResponse(saved, admission, warning => historyWarning ??= warning);
                     }
                     resolutionRequest = null;
-                    await AcknowledgeAsync(admission);
+                    await AcknowledgeAsync(admission, warning => historyWarning ??= warning);
                     if (workspace.Queue.Blocked is null && displayedReview is not null)
                     { displayedReview = null; }
                 }
@@ -402,7 +408,11 @@ public partial class RoomWorkspaceEditor
         }
         catch (ConfirmedCatalogue.RoomTrackingUnavailableException) { timing.End(TimingOutcome.Uncertain); if (Current) { workspace.Queue.LoseTracking(); ObserveRoomRequestFailure(); ObserveKeyboardFailure(); } }
         catch (Exception exception) { workspace.Queue.RequestFailed(); ObserveRoomRequestFailure(); ObserveKeyboardFailure(); timing.End(QueueTimingOutcome == TimingOutcome.Complete ? TimingOutcome.FailedOrRetired : QueueTimingOutcome); if (Current) await Shell.ReportRoomErrorAsync(exception, "Room progress could not be recovered. No write was repeated."); }
-        finally { controlPending = false; if (Current) { StateHasChanged(); await Shell.DrainRoomRefreshAsync(); } }
+        finally
+        {
+            try { controlPending = false; if (Current) { StateHasChanged(); await Shell.DrainRoomRefreshAsync(); } }
+            finally { if (Current) await Shell.ReportHistoryWarningAsync(historyWarning); }
+        }
         if (Current && !workspace.Queue.RecoveryRequired) await DrainAsync();
     }
     private async Task ResolveAsync(RoomHeadResolution choice)
@@ -410,6 +420,7 @@ public partial class RoomWorkspaceEditor
         if (!Shell.CanAuthor || !Current || !workspace.IsAdmitted || draining || controlPending || workspace.Queue.RecoveryRequired || nativeOwner is null || !Shell.CanUseRoom || workspace.Queue.Blocked is not { } head) return;
         using var timing = OperationTiming.Start("save.resolution");
         var attempt = Guid.NewGuid(); controlPending = true;
+        string? historyWarning = null;
         if (operationInitiators.TryGetValue(head.OperationId, out var initiator))
             operationReturnFocus[head.OperationId] = (initiator, nativeOwner.Invoke<long>("roomInteractionGeneration"));
         var identity = workspace.Queue.Identity;
@@ -428,9 +439,9 @@ public partial class RoomWorkspaceEditor
                 try
                 {
                     if (!Current) return;
-                    IncorporateRoomSaveResponse(response, admission);
+                    IncorporateRoomSaveResponse(response, admission, warning => historyWarning ??= warning);
                     resolutionRequest = null;
-                    await AcknowledgeAsync(admission);
+                    await AcknowledgeAsync(admission, warning => historyWarning ??= warning);
                     if (workspace.Queue.Blocked is null) displayedReview = null;
                 }
                 finally { PublishReceivedRoomCache(response.Received, admission); }
@@ -441,18 +452,23 @@ public partial class RoomWorkspaceEditor
         catch (Exception exception) { workspace.Queue.RequestFailed(); ObserveRoomRequestFailure(); ObserveKeyboardFailure(); timing.End(QueueTimingOutcome == TimingOutcome.Complete ? TimingOutcome.FailedOrRetired : QueueTimingOutcome); if (Current) await Shell.ReportRoomErrorAsync(exception, "The reviewed room choice could not be confirmed. Retry recovers progress and reuses the exact same attempt only if still required."); }
         finally
         {
-            controlPending = false;
-            if (Current) { StateHasChanged(); await Shell.DrainRoomRefreshAsync(); }
+            try
+            {
+                controlPending = false;
+                if (Current) { StateHasChanged(); await Shell.DrainRoomRefreshAsync(); }
+            }
+            finally { if (Current) await Shell.ReportHistoryWarningAsync(historyWarning); }
         }
         if (Current && !workspace.Queue.RecoveryRequired) await DrainAsync();
     }
     private Task DismissProposalAsync() => workspace.Queue.Blocked?.Disposition == RoomBlockedDisposition.ProposalAwaitingChoice && !controlPending
          ? ResolveAsync(new ChooseRoomProposal(RoomProposalChoice.Revert)) : Task.CompletedTask;
-    private void IncorporateRoomSaveResponse(ConfirmedCatalogue.RoomSaveResponse saved, ConfirmedCatalogue.MutationAdmission admission)
+    private void IncorporateRoomSaveResponse(ConfirmedCatalogue.RoomSaveResponse saved, ConfirmedCatalogue.MutationAdmission admission,
+        Action<string> retainHistoryWarning)
     {
         if (!Current) return;
         workspace.Queue.RecordCompletedSave(saved.Received.Result, saved.ElapsedMilliseconds);
-        IncorporateRoomResponse(saved.Received, admission);
+        IncorporateRoomResponse(saved.Received, admission, retainHistoryWarning);
     }
     private Task ReviewKeyDownAsync(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs args) => args.Key == "Escape" ? DismissProposalAsync() : Task.CompletedTask;
     private async Task RowActionAsync(RoomRowActionIntent intent)

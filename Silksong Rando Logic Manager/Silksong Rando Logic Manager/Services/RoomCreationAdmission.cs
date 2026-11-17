@@ -46,11 +46,12 @@ internal sealed class RoomCreationAdmission(RoomEditingTracker.Entry entry, Wire
                 SharedOriginalRooms = SharedPlan.OriginalRooms };
         try
         {
-            await transaction.CommitAsync(() =>
+            var history = await transaction.CommitAsync(() =>
             {
                 try { entry.RecordReceipt(receipt); }
                 finally { publication.PublishCommitted(prepared); }
             });
+            if (history.Warning is { } warning) entry.RecordHistoryWarning(operation.Sequence, warning);
         }
         catch
         {

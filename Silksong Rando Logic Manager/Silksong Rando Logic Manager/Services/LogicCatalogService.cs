@@ -93,12 +93,13 @@ public sealed partial class LogicCatalogService(IDbContextFactory<LogicDbContext
         resolverStopwatch.Stop();
         await transaction.FinalizeAsync(cancellationToken);
         var prepared = publication.PrepareAdvance(transaction.FinalEffects.RoomFactsChanged, false);
+        string? historyWarning = null;
         if (admission is null)
         {
-            await transaction.CommitAsync(() => publication.PublishCommitted(prepared), cancellationToken);
+            historyWarning = (await transaction.CommitAsync(() => publication.PublishCommitted(prepared), cancellationToken)).Warning;
         }
         else await admission.CommitAsync(db, transaction, publication, prepared);
-        return new(subroom, true, false, false, resolverStopwatch.Elapsed);
+        return new(subroom, true, false, false, resolverStopwatch.Elapsed) { HistoryWarning = historyWarning };
     }
 
     internal async Task<CatalogCreateOutcome<SubroomConnection>> CreateConnectionWithOutcomeAsync(Guid roomId, SubroomConnection draft,
@@ -137,12 +138,13 @@ public sealed partial class LogicCatalogService(IDbContextFactory<LogicDbContext
         await ValidateRequirementsAsync(db, connection, RequirementBearingRowKind.Connection, cancellationToken);
         await transaction.FinalizeAsync(cancellationToken);
         var prepared = publication.PrepareAdvance(transaction.FinalEffects.RoomFactsChanged, false);
+        string? historyWarning = null;
         if (admission is null)
         {
-            await transaction.CommitAsync(() => publication.PublishCommitted(prepared), cancellationToken);
+            historyWarning = (await transaction.CommitAsync(() => publication.PublishCommitted(prepared), cancellationToken)).Warning;
         }
         else await admission.CommitAsync(db, transaction, publication, prepared);
-        return new(connection, true, connection.IsTodo, false, resolverStopwatch.Elapsed);
+        return new(connection, true, connection.IsTodo, false, resolverStopwatch.Elapsed) { HistoryWarning = historyWarning };
     }
 
     internal async Task<CatalogCreateOutcome<CheckLocation>> CreateCheckWithOutcomeAsync(Guid roomId, CheckLocation draft,
@@ -182,12 +184,13 @@ public sealed partial class LogicCatalogService(IDbContextFactory<LogicDbContext
         await ValidateRequirementsAsync(db, check, RequirementBearingRowKind.Check, cancellationToken);
         await transaction.FinalizeAsync(cancellationToken);
         var prepared = publication.PrepareAdvance(transaction.FinalEffects.RoomFactsChanged, false);
+        string? historyWarning = null;
         if (admission is null)
         {
-            await transaction.CommitAsync(() => publication.PublishCommitted(prepared), cancellationToken);
+            historyWarning = (await transaction.CommitAsync(() => publication.PublishCommitted(prepared), cancellationToken)).Warning;
         }
         else await admission.CommitAsync(db, transaction, publication, prepared);
-        return new(check, true, check.IsTodo, false, resolverStopwatch.Elapsed);
+        return new(check, true, check.IsTodo, false, resolverStopwatch.Elapsed) { HistoryWarning = historyWarning };
     }
 
     private static Task<List<CheckLocation>> OrderedActiveChecksAsync(LogicDbContext db, Guid roomId, CancellationToken token) =>
@@ -362,4 +365,7 @@ public sealed record CatalogSaveOutcome(bool Changed, bool Resolved, bool Requir
     public static CatalogSaveOutcome Unchanged { get; } = new(false, false, false, false, false, TimeSpan.Zero);
 }
 
-public sealed record CatalogCreateOutcome<TEntity>(TEntity Entity, bool RequiresDocumentRefresh, bool RequiresSidebarRefresh, bool RequiresSceneLayoutRefresh, TimeSpan ResolverElapsed) where TEntity : AuditedEntity;
+public sealed record CatalogCreateOutcome<TEntity>(TEntity Entity, bool RequiresDocumentRefresh, bool RequiresSidebarRefresh, bool RequiresSceneLayoutRefresh, TimeSpan ResolverElapsed) where TEntity : AuditedEntity
+{
+    public string? HistoryWarning { get; init; }
+}

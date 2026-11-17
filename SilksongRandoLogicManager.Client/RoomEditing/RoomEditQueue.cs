@@ -413,6 +413,7 @@ public sealed class RoomEditQueue
     private static bool SameReceipt(RoomTerminalReceipt left, RoomTerminalReceipt right) =>
         left.Sequence == right.Sequence && left.OperationId == right.OperationId && left.Disposition == right.Disposition
         && left.CreatedEntityId == right.CreatedEntityId && left.CleanupWarning == right.CleanupWarning
+        && left.HistoryWarning == right.HistoryWarning
         && left.AffectedRoomIds.SequenceEqual(right.AffectedRoomIds)
         && left.SharedTimestamps == right.SharedTimestamps && left.SharedOriginalRooms.SequenceEqual(right.SharedOriginalRooms);
     private static void AppendAccount(StringBuilder target, IEnumerable<RoomQueuedOperation> items)

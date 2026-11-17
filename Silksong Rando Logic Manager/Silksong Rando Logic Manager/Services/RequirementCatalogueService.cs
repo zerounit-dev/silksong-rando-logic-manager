@@ -82,7 +82,8 @@ public sealed partial class RequirementCatalogueService(IDbContextFactory<LogicD
     {
         try
         {
-            return await writes.ExecuteAsync(access, command, (result, patch) => result with { Shared = patch }, false, ct);
+            return await writes.ExecuteAsync(access, command, (result, patch) => result with { Shared = patch },
+                (result, warning) => result with { HistoryWarning = warning }, false, ct);
         }
         catch (Exception exception) when (TryClassifyStorageFailure(exception, out var message))
         {

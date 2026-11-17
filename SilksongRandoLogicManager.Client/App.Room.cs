@@ -130,6 +130,21 @@ public partial class App
         await FailAsync(new ReadFailure(message, null, exception), false);
         if (!disposed) StateHasChanged();
     }
+    public async Task ReportHistoryWarningAsync(string? warning)
+    {
+        if (warning is null || disposed || Runtime.Retired) return;
+        if (errorOpen)
+        {
+            // Preserve an originating follow-up error; add the saved-history
+            // distinction to its existing visible surface instead of replacing it.
+            if (errorMessage?.Contains(warning, StringComparison.Ordinal) != true) errorMessage += " " + warning;
+            StateHasChanged();
+            return;
+        }
+        // This is notification of a KNOWN successful save, never mutation failure.
+        await FailAsync(new ReadFailure(warning, null), false);
+        if (!disposed) StateHasChanged();
+    }
     public bool FocusRoomDialog(string id) => CanInteract && !errorOpen
         && ((IJSInProcessRuntime)JS).Invoke<bool>("focusV2ModalDialog", id, errorDialog);
 }

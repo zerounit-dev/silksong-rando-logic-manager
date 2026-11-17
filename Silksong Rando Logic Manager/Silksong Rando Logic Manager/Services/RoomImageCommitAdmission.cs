@@ -33,13 +33,14 @@ internal sealed class RoomImageCommitAdmission
                     plan.OriginalRooms.Where(x => x.RoomId == entry.Identity.RoomId)) };
         try
         {
-            await transaction.CommitAsync(() =>
+            var history = await transaction.CommitAsync(() =>
             {
                 durable?.Invoke();
                 BoundsChanged = boundsChanged;
                 try { entry.RecordReceipt(terminal); }
                 finally { publication.PublishCommitted(plan.Publication); }
             });
+            if (history.Warning is { } warning) entry.RecordHistoryWarning(terminal.Sequence, warning);
         }
         catch { entry.Invalidate(); throw; }
     }

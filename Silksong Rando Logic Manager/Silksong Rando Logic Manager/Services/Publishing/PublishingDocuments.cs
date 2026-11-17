@@ -16,6 +16,13 @@ internal sealed class PublishingDocuments
     internal Dictionary<Guid, string> Paths = [];
     internal Dictionary<Guid, string> GroupPaths = [];
     private List<RequirementSoul> souls = [];
+    private ILookup<Guid?, Room> roomsByGroup = null!;
+    private ILookup<Guid, Room> roomsById = null!;
+    private ILookup<Guid, Subroom> subroomsById = null!;
+    internal ILookup<Guid, Subroom> SubroomsByRoom { get; private set; } = null!;
+    internal ILookup<Guid, RoomTransition> TransitionsByRoom { get; private set; } = null!;
+    internal ILookup<Guid, SubroomConnection> ConnectionsByRoom { get; private set; } = null!;
+    internal ILookup<Guid, CheckLocation> ChecksByRoom { get; private set; } = null!;
     internal static async Task<PublishingDocuments> LoadAsync(PublishingSnapshotFactory factory)
     {
         await using var db = factory.CreateDbContext();
@@ -29,12 +36,20 @@ internal sealed class PublishingDocuments
             Checks = await db.CheckLocations.Where(x => !x.IsArchived).OrderBy(x => x.SortOrder).ThenBy(x => x.FriendlyName).ThenBy(x => x.Id).ToListAsync(),
             souls = await db.RequirementSouls.ToListAsync()
         };
+        // Lookup buckets retain the already ordered frozen lists, including first ID matches.
+        d.roomsByGroup = d.Rooms.ToLookup(x => x.RoomGroupId);
+        d.roomsById = d.Rooms.ToLookup(x => x.Id);
+        d.subroomsById = d.Subrooms.ToLookup(x => x.Id);
+        d.SubroomsByRoom = d.Subrooms.ToLookup(x => x.RoomId);
+        d.TransitionsByRoom = d.Transitions.ToLookup(x => x.RoomId);
+        d.ConnectionsByRoom = d.Connections.ToLookup(x => x.RoomId);
+        d.ChecksByRoom = d.Checks.ToLookup(x => x.RoomId);
         var groupNames = new HashSet<string>(StringComparer.Ordinal) { "00-annotations", "01-geometry", ".git" };
         foreach (var group in d.Groups)
         {
             d.GroupPaths[group.Id] = Unique(group.FriendlyName, groupNames);
             var names = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var room in d.Rooms.Where(x => x.RoomGroupId == group.Id))
+            foreach (var room in d.roomsByGroup[group.Id])
                 d.Paths[room.Id] = d.GroupPaths[group.Id] + "/" + Unique(room.FriendlyName, names) + ".md";
         }
         var ungrouped = d.Rooms.Where(x => !d.Paths.ContainsKey(x.Id)).ToArray();
@@ -63,12 +78,12 @@ internal sealed class PublishingDocuments
         var pogo = new Regex(@"\b(?:(?<difficulty>(?!enemy\b)[a-z]+)\s+)?(?:enemy\s+)?pogo\s+off\s+(?<enemies>\[[^\]]+\]|(?:(?!\s+\b(?:AND|OR)\b)[^()\r\n])+)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         foreach (var room in Rooms)
         {
-            foreach (var check in Checks.Where(x => x.RoomId == room.Id && new[] { "boss", "gauntlet" }.Contains(x.LocationType?.Trim().ToLowerInvariant())))
+            foreach (var check in ChecksByRoom[room.Id].Where(x => new[] { "boss", "gauntlet" }.Contains(x.LocationType?.Trim().ToLowerInvariant())))
                 if (!Regex.IsMatch(check.Requirements, @"(?<!\w)Combat\s+Requirements(?!\w)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
                     issues.Add($"{Title(room)}: {check.FriendlyName} [{check.LocationType}] must include Combat Requirements.");
-            var rows = Transitions.Where(x => x.RoomId == room.Id).Select(x => (x.FriendlyName, x.Requirements, Kind: "transition"))
-                .Concat(Connections.Where(x => x.RoomId == room.Id).Select(x => (x.FriendlyName, x.Requirements, Kind: "connection")))
-                .Concat(Checks.Where(x => x.RoomId == room.Id).Select(x => (x.FriendlyName, x.Requirements, Kind: "location")));
+            var rows = TransitionsByRoom[room.Id].Select(x => (x.FriendlyName, x.Requirements, Kind: "transition"))
+                .Concat(ConnectionsByRoom[room.Id].Select(x => (x.FriendlyName, x.Requirements, Kind: "connection")))
+                .Concat(ChecksByRoom[room.Id].Select(x => (x.FriendlyName, x.Requirements, Kind: "location")));
             foreach (var row in rows)
                 foreach (Match match in pogo.Matches(row.Requirements))
                 {
@@ -87,7 +102,7 @@ internal sealed class PublishingDocuments
         foreach (var group in Groups)
         {
             index.Append($"## {group.FriendlyName}\n\n"); master.Append($"## {group.FriendlyName}\n\n");
-            var rooms = Rooms.Where(x => x.RoomGroupId == group.Id).ToArray();
+            var rooms = roomsByGroup[group.Id].ToArray();
             foreach (var room in rooms)
             {
                 progress(Title(room), count, Rooms.Count);
@@ -139,7 +154,7 @@ internal sealed class PublishingDocuments
     private static string Anchor(string path) => "room-" + path[..^3].Replace("/", "--");
     private static string Cell(object? value) => (value?.ToString() ?? "").Replace("|", "\\|").Replace("\r", "").Replace("\n", " ").Trim();
     private static string Verified(bool? value) => value is true ? "Verified" : value is false ? "Needs verification" : "";
-    private string SubroomName(Guid? id, string? fallback) => Subrooms.FirstOrDefault(x => x.Id == id)?.FriendlyName ?? fallback ?? "";
+    private string SubroomName(Guid? id, string? fallback) => (id is Guid key ? subroomsById[key].FirstOrDefault()?.FriendlyName : null) ?? fallback ?? "";
     private string Markdown(Room room, PublishingImageResult images, bool master)
     {
         var b = new StringBuilder($"# {Title(room)}\n\n");
@@ -158,23 +173,23 @@ internal sealed class PublishingDocuments
             }
             b.Append('\n');
         }
-        var subs = Subrooms.Where(x => x.RoomId == room.Id).ToArray();
+        var subs = SubroomsByRoom[room.Id].ToArray();
         Table("Subrooms", ["No.", "Subroom", "Annotated"], subs.Select((x, i) => new object?[] { $"S{i + 1}", x.FriendlyName, Mark(x.Id) }), "No subrooms defined.");
         foreach (var s in subs.Where(x => !string.IsNullOrEmpty(x.Notes))) b.Append($"- **{s.FriendlyName}:** {s.Notes}\n");
         if (subs.Any(x => !string.IsNullOrEmpty(x.Notes))) b.Append('\n');
         string Destination(RoomTransition t)
         {
-            var target = Rooms.FirstOrDefault(x => x.Id == t.ResolvedDestinationRoomId);
+            var target = t.ResolvedDestinationRoomId is Guid key ? roomsById[key].FirstOrDefault() : null;
             if (target is null) return string.IsNullOrEmpty(t.DestinationRoomReferenceText) ? "TODO" : t.DestinationRoomReferenceText;
             var path = Paths[target.Id];
             return $"[{Title(target)}]({(master ? "#" + Anchor(path) : target.RoomGroupId == room.RoomGroupId ? path.Split('/')[1] : "../" + path)})";
         }
         Table("Room Transitions", ["Alias", "Name", "From subroom", "Destination", "Destination alias", "Requirements", "TODO", "Verification", "Annotated", "Notes"],
-            Transitions.Where(x => x.RoomId == room.Id).Select(x => new object?[] { x.Alias, x.FriendlyName, SubroomName(x.ResolvedSourceSubroomId, x.SourceSubroomReferenceText), Destination(x), x.DestinationTransitionAliasText, x.Requirements, x.IsTodo ? "TODO" : "", Verified(x.IsVerified), Mark(x.Id), x.Notes }), "No room transitions defined.");
+            TransitionsByRoom[room.Id].Select(x => new object?[] { x.Alias, x.FriendlyName, SubroomName(x.ResolvedSourceSubroomId, x.SourceSubroomReferenceText), Destination(x), x.DestinationTransitionAliasText, x.Requirements, x.IsTodo ? "TODO" : "", Verified(x.IsVerified), Mark(x.Id), x.Notes }), "No room transitions defined.");
         Table("Subroom Connections", ["Alias", "Name", "Source", "Destination", "Requirements", "TODO", "Verification", "Annotated", "Notes"],
-            Connections.Where(x => x.RoomId == room.Id).Select(x => new object?[] { x.Alias, x.FriendlyName, SubroomName(x.ResolvedSourceSubroomId, x.SourceSubroomReferenceText), SubroomName(x.ResolvedDestinationSubroomId, x.DestinationSubroomReferenceText), x.Requirements, x.IsTodo ? "TODO" : "", Verified(x.IsVerified), Mark(x.Id), x.Notes }), "No subroom connections defined.");
+            ConnectionsByRoom[room.Id].Select(x => new object?[] { x.Alias, x.FriendlyName, SubroomName(x.ResolvedSourceSubroomId, x.SourceSubroomReferenceText), SubroomName(x.ResolvedDestinationSubroomId, x.DestinationSubroomReferenceText), x.Requirements, x.IsTodo ? "TODO" : "", Verified(x.IsVerified), Mark(x.Id), x.Notes }), "No subroom connections defined.");
         Table("Check Locations", ["No.", "Check", "Subroom", "Requirements", "TODO", "Verification", "Location Type", "Annotated", "Notes"],
-            Checks.Where(x => x.RoomId == room.Id).Select((x, i) => new object?[] { i + 1, x.FriendlyName, SubroomName(x.ResolvedSubroomId, x.SubroomReferenceText), x.Requirements, x.IsTodo ? "TODO" : "", Verified(x.IsVerified), x.LocationType, Mark(x.Id), x.Notes }), "No check locations defined.");
+            ChecksByRoom[room.Id].Select((x, i) => new object?[] { i + 1, x.FriendlyName, SubroomName(x.ResolvedSubroomId, x.SubroomReferenceText), x.Requirements, x.IsTodo ? "TODO" : "", Verified(x.IsVerified), x.LocationType, Mark(x.Id), x.Notes }), "No check locations defined.");
         if (!string.IsNullOrEmpty(room.Comments)) b.Append($"## Notes\n\n{room.Comments.Trim()}\n\n");
         if (!master)
         {

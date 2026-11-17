@@ -35,6 +35,7 @@
     [Parameter, EditorRequired] public Func<ElementReference, Task> Hide { get; set; } = null!;
     [Parameter, EditorRequired] public Func<ElementReference, bool, Task> Freeze { get; set; } = null!;
     [Parameter, EditorRequired] public Func<Exception, string, Task> ReportError { get; set; } = null!;
+    [Parameter, EditorRequired] public Func<string?, Task> ReportHistoryWarning { get; set; } = null!;
     [Parameter] public EventCallback<bool> Closed { get; set; }
     [Parameter] public EventCallback Settled { get; set; }
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { RespectRequiredConstructorParameters = true };
@@ -106,6 +107,7 @@
         using var outcome = Runtime.ObserveMutation();
         pending = true; pendingAction = action; feedback = null;
         var operation = ++generation; var acknowledged = false;
+        string? historyWarning = null;
         StateHasChanged();
         try
         {
@@ -136,6 +138,7 @@
                 decodeTiming.End(TimingOutcome.ResponseDecoded);
                 if (!result.Committed || action == "merge" && result.MergedCount is not >= 0) throw new JsonException();
                 acknowledged = true;
+                historyWarning = result.HistoryWarning;
                 outcome.OutcomeKnown();
                 if (!Current || operation != generation) return;
                 Exception? failure = null;
@@ -168,6 +171,8 @@
         finally
         {
             pending = false; pendingAction = "";
+            try
+            {
             if (Current)
             {
                 try { if (links is not null) await Freeze(dialog, false); }
@@ -176,6 +181,8 @@
                 await Settled.InvokeAsync(); StateHasChanged();
             }
             LocalLinksChanged();
+            }
+            finally { if (Current) await ReportHistoryWarning(historyWarning); }
         }
     }
     private async Task CloseAsync()

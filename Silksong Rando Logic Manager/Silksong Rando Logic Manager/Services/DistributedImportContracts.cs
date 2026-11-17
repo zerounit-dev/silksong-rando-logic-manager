@@ -91,7 +91,10 @@ public static class DistributedRoomImageComparison
 }
 public sealed record ImportChangedRoom(Guid RoomId, DistributedRoomChildPlan ChildPlan, DistributedImageChoice? ImageChoice, DistributedOriginalChoice? OriginalChoice) : DistributedRoomDecisionIntent(RoomId);
 public sealed record DistributedImportProgress(string Stage, int Completed, int Total, string? Detail);
-public abstract record DistributedImportOutcome;
+public abstract record DistributedImportOutcome
+{
+    public string? HistoryWarning { get; init; }
+}
 public sealed record DistributedImportPrepared(DistributedImportPackageSummary Summary) : DistributedImportOutcome;
 public sealed record DistributedImportRoomPrepared(DistributedRoomComparison Comparison) : DistributedImportOutcome;
 public sealed record DistributedImportStartRequest(DistributedImportPackage Package, bool ApplyAreaMap, bool ApplyRoomGroupings);
@@ -114,7 +117,10 @@ public sealed record DistributedImportOrchestrationState(
             new("unstarted", 0, 0, null), new("area-map", false, false, null),
             new("room-groupings", false, false, null), new HashSet<Guid>(), new HashSet<Guid>(), []) { }
 }
-public sealed record DistributedImportStageOutcome(string Stage, bool Applied, bool Skipped, string? Detail);
+public sealed record DistributedImportStageOutcome(string Stage, bool Applied, bool Skipped, string? Detail)
+{
+    public string? HistoryWarning { get; init; }
+}
 public sealed record DistributedImportStarted(DistributedImportOrchestrationState State, DistributedImportStageOutcome AreaMap, DistributedImportStageOutcome RoomGroupings) : DistributedImportOutcome;
 public sealed record DistributedImportRoomSkipped(Guid RoomId, DistributedImportOrchestrationState State, DistributedRoomComparison? Comparison = null) : DistributedImportOutcome;
 public sealed record DistributedImportRoomKept(Guid RoomId, DistributedImportOrchestrationState State) : DistributedImportOutcome;

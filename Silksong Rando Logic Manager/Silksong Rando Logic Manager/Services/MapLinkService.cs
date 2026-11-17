@@ -6,7 +6,10 @@ namespace Silksong_Rando_Logic_Manager.Services;
 
 public sealed record MapLinkDraft(Guid MapSceneId, string? RoomReferenceText);
 public sealed class MapLinkTargetMissingException : Exception { }
-public sealed record MapLinkWriteOutcome(int? MergedCount, SilksongRandoLogicManager.Contracts.SharedMutationSegment? Shared);
+public sealed record MapLinkWriteOutcome(int? MergedCount, SilksongRandoLogicManager.Contracts.SharedMutationSegment? Shared)
+{
+    public string? HistoryWarning { get; init; }
+}
 
 public sealed class MapLinkService(IDbContextFactory<LogicDbContext> dbContextFactory, SharedPublicationCoordinator publications,
     SharedCatalogueService sharedCatalogue, ILogger<MapLinkService> logger, Authentication.LiveAccess access)
@@ -36,7 +39,8 @@ public sealed class MapLinkService(IDbContextFactory<LogicDbContext> dbContextFa
         var prepared = publication.PrepareAdvance(transaction.FinalEffects.RoomFactsChanged, false);
         var outcome = new MapLinkWriteOutcome(null, null);
         var plan = await SharedRoomCommitPlan.PrepareAsync(db, transaction, prepared, cancellationToken);
-        await transaction.CommitAsync(() => publication.PublishCommitted(prepared), cancellationToken);
+        var history = await transaction.CommitAsync(() => publication.PublishCommitted(prepared), cancellationToken);
+        outcome = outcome with { HistoryWarning = history.Warning };
         publication.Dispose();
         return await ProjectCommittedAsync(outcome, plan);
     }
@@ -72,7 +76,8 @@ public sealed class MapLinkService(IDbContextFactory<LogicDbContext> dbContextFa
         var prepared = publication.PrepareAdvance(transaction.FinalEffects.RoomFactsChanged, false);
         var outcome = new MapLinkWriteOutcome(merged, null);
         var plan = await SharedRoomCommitPlan.PrepareAsync(db, transaction, prepared, cancellationToken);
-        await transaction.CommitAsync(() => publication.PublishCommitted(prepared), cancellationToken);
+        var history = await transaction.CommitAsync(() => publication.PublishCommitted(prepared), cancellationToken);
+        outcome = outcome with { HistoryWarning = history.Warning };
         publication.Dispose();
         return await ProjectCommittedAsync(outcome, plan);
     }

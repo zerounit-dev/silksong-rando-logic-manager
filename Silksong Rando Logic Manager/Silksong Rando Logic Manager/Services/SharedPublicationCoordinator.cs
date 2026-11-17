@@ -41,7 +41,7 @@ public sealed class SharedPublicationCoordinator
             LogicCacheSql.SchemaManifest schema)
         {
             if (Owner.standalone || Owner.records is not null) throw new InvalidOperationException("Invalid record history composition.");
-            await store.InitializeAsync(db, schema);
+            await store.InitializeAsync(schema);
             Owner.records = store;
         }
 

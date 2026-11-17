@@ -5,12 +5,18 @@ public sealed record SceneForeignMatch(string IdentityKey, Guid RecordId, Guid R
 public sealed record SceneReviewEvidence(SceneImportPreview Preview, IReadOnlyList<SceneForeignMatch> ForeignMatches, string Fingerprint, SceneDestinationObservation Destinations);
 public sealed record SceneAppliedReceipt(Guid RoomId, IReadOnlyList<Guid> CreatedTransitionIds, IReadOnlyList<Guid> CreatedCheckIds, IReadOnlyList<Guid> AppliedExitIds);
 public sealed record SceneApplyResult(SceneAppliedReceipt Receipt, SilksongRandoLogicManager.Contracts.SharedMutationSegment? Patch,
-    SilksongRandoLogicManager.Contracts.SceneAffectedRecovery Recovery);
+    SilksongRandoLogicManager.Contracts.SceneAffectedRecovery Recovery)
+{
+    public string? HistoryWarning { get; init; }
+}
 public sealed record SceneInverseProposal(Guid SourceId, Guid TargetId, string SourceName, string TargetName, string RoomReference, string Alias, bool FillRoom, bool FillAlias, string Baseline);
 public sealed record SceneInversePrepare(Guid SourceId);
 public sealed record SceneInverseConfirm(Guid SourceId, string Baseline);
 public sealed record SceneInverseResult(bool Applied, string? Detail, SilksongRandoLogicManager.Contracts.SharedMutationSegment? Patch,
-    SilksongRandoLogicManager.Contracts.SceneAffectedRecovery Recovery);
+    SilksongRandoLogicManager.Contracts.SceneAffectedRecovery Recovery)
+{
+    public string? HistoryWarning { get; init; }
+}
 public sealed class SceneTransportException : Exception;
 
 public static class SceneTransport

@@ -30,6 +30,7 @@ public sealed record RequirementValidationPreflightResult(
     int Unknown)
 {
     public SilksongRandoLogicManager.Contracts.SharedMutationSegment? Shared { get; init; }
+    public string? HistoryWarning { get; init; }
 }
 
 public interface IRequirementValidationService
@@ -102,8 +103,8 @@ public sealed class RequirementValidationService : IRequirementValidationService
             await transaction.FinalizeAsync(cancellationToken);
             var prepared = publication.PrepareAdvance(transaction.FinalEffects.RoomFactsChanged, false);
             var plan = catalogue is null ? null : await SharedRoomCommitPlan.PrepareAsync(db, transaction, prepared, cancellationToken);
-            await transaction.CommitAsync(() => publication.PublishCommitted(prepared), cancellationToken);
-            var result = CreateResult(results);
+            var history = await transaction.CommitAsync(() => publication.PublishCommitted(prepared), cancellationToken);
+            var result = CreateResult(results) with { HistoryWarning = history.Warning };
             if (catalogue is null) return result;
             // Release the write scope before the common lifecycle-first projection.
             // A later independent write makes coverage unavailable, not a rollback.
@@ -166,8 +167,8 @@ public sealed class RequirementValidationService : IRequirementValidationService
             if (activeRoom is null)
             {
                 await transaction.FinalizeAsync(cancellationToken);
-                await transaction.CommitAsync(token: cancellationToken);
-                return CreateResult([]);
+                var history = await transaction.CommitAsync(token: cancellationToken);
+                return CreateResult([]) with { HistoryWarning = history.Warning };
             }
 
             var context = await LoadContextAsync(db, cancellationToken);
@@ -186,8 +187,8 @@ public sealed class RequirementValidationService : IRequirementValidationService
             using (db.SuppressAuditMetadata()) await db.SaveChangesAsync(cancellationToken);
             await transaction.FinalizeAsync(cancellationToken);
             var prepared = publication.PrepareAdvance(transaction.FinalEffects.RoomFactsChanged, false);
-            await transaction.CommitAsync(() => publication.PublishCommitted(prepared), cancellationToken);
-            return CreateResult(results);
+            var recorded = await transaction.CommitAsync(() => publication.PublishCommitted(prepared), cancellationToken);
+            return CreateResult(results) with { HistoryWarning = recorded.Warning };
         }
         catch (Exception exception) when (ClassifySqlite(exception) is not null)
         {

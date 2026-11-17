@@ -15,7 +15,10 @@ public sealed record MapUnitBounds(double? MinX, double? MinY, double? MaxX, dou
 public sealed record ImportedMapZone(string InGameId, MapUnitBounds Bounds);
 public sealed record ImportedMapChunk(string ZoneInGameId, string SceneInGameId, int CacheIndex, string? InitialState, MapUnitBounds Bounds, double? MapUnitZ);
 public sealed record MapManifest(string MapInGameId, IReadOnlyList<ImportedMapZone> Zones, IReadOnlyList<ImportedMapChunk> Chunks, int ExcludedAnnotations);
-public sealed record MapReconciliationResult(int New, int Missing, int MatchedDifferent, int MatchedUnchanged, int AutoLinked, int UnresolvedAutoLinkCandidates, int ExcludedAnnotations);
+public sealed record MapReconciliationResult(int New, int Missing, int MatchedDifferent, int MatchedUnchanged, int AutoLinked, int UnresolvedAutoLinkCandidates, int ExcludedAnnotations)
+{
+    public string? HistoryWarning { get; init; }
+}
 public enum MapReconciliationKind { Removed, Added, Changed, Unchanged }
 public enum MapReconciliationEntity { Map, Zone, Scene, Chunk }
 public sealed class MapReconciliationPlanRow
@@ -449,8 +452,8 @@ public sealed class MapManifestService(IDbContextFactory<LogicDbContext> dbConte
         await new LogicReferenceResolver(db).ResolveAsync(cancellationToken);
         await transaction.FinalizeAsync(cancellationToken);
         var prepared = publication.PrepareAdvance(transaction.FinalEffects.RoomFactsChanged, false);
-        await transaction.CommitAsync(() => publication.PublishCommitted(prepared), cancellationToken);
-        return new(result.New, result.Missing, result.MatchedDifferent, result.MatchedUnchanged, result.AutoLinked, result.UnresolvedAutoLinkCandidates, plan.Manifest.ExcludedAnnotations);
+        var history = await transaction.CommitAsync(() => publication.PublishCommitted(prepared), cancellationToken);
+        return new(result.New, result.Missing, result.MatchedDifferent, result.MatchedUnchanged, result.AutoLinked, result.UnresolvedAutoLinkCandidates, plan.Manifest.ExcludedAnnotations) { HistoryWarning = history.Warning };
     }
 
     private static MapReconciliationPlanRow Row(MapReconciliationKind kind, MapReconciliationEntity entity, string label, string? detail = null, Guid? existingId = null, string? zone = null, string? scene = null, int? cacheIndex = null, ImportedMapZone? importedZone = null, ImportedMapChunk? importedChunk = null, bool selected = false, string? currentValue = null, string? proposedValue = null) => new()

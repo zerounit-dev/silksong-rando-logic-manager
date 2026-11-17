@@ -368,6 +368,7 @@ public partial class Requirements
         using var timing = OperationTiming.Start(action == "replace" ? "requirements.import.replace" : "requirements.command");
         using var outcome = Runtime.ObserveMutation();
         var committed = false;
+        string? historyWarning = null;
         try
         {
             if (owner is not null) await owner.InvokeVoidAsync("freeze", true);
@@ -386,6 +387,7 @@ public partial class Requirements
             if (disposed) return;
             if (result.Status != "committed") { timing.End(TimingOutcome.Rejected); Reject(result); return; }
             committed = true;
+            historyWarning = result.HistoryWarning;
             // This input was accepted even if its carried facts cannot be installed.
             // Retire it now and close the native surface on every publication path.
             ClearModal();
@@ -411,7 +413,12 @@ public partial class Requirements
                 ? "The change committed, but its catalogue result could not be incorporated. Refresh the catalogue to see current data."
                 : "The change outcome could not be confirmed. Your current input is retained. Review current data before submitting again.");
         }
-        finally { provisional = null; await EndAsync(); }
+        finally
+        {
+            provisional = null;
+            try { await EndAsync(); }
+            finally { if (!disposed) await Shell.ReportHistoryWarningAsync(historyWarning); }
+        }
     }
     private void Reject(RequirementOperationResult result)
     {
@@ -497,6 +504,7 @@ public partial class Requirements
         using var timing = OperationTiming.Start("requirements.recheck");
         using var outcome = Runtime.ObserveMutation();
         var committed = false;
+        string? historyWarning = null;
         try
         {
             RequirementOperationResult? result = null;
@@ -511,6 +519,7 @@ public partial class Requirements
                 {
                 if (result.Status != "committed") return;
                 committed = true;
+                historyWarning = result.HistoryWarning;
                 if (disposed) return;
                 if (result.Counts is not { Successful: >= 0, Failed: >= 0, Unknown: >= 0 }) throw new JsonException("Missing recheck counts.");
                 counts = result.Counts;
@@ -525,7 +534,11 @@ public partial class Requirements
             timing.End();
         }
         catch (Exception exception) { timing.End(committed ? TimingOutcome.KnownCommitFollowupFailed : TimingOutcome.Uncertain); if (!disposed) await ErrorAsync(exception, committed ? "The requirement recheck committed, but its updated room facts could not be applied. Use Refresh; do not repeat the recheck as recovery." : "The requirement recheck outcome could not be confirmed. Review current data before running it again."); }
-        finally { await EndAsync(); }
+        finally
+        {
+            try { await EndAsync(); }
+            finally { if (!disposed) await Shell.ReportHistoryWarningAsync(historyWarning); }
+        }
     }
     private Task ErrorAsync(Exception exception, string message)
     { Console.Error.WriteLine(exception); return Shell.ReportRequirementsErrorAsync(exception, message); }

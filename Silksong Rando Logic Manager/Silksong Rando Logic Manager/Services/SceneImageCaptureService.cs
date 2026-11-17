@@ -31,7 +31,10 @@ public sealed record SceneImageCaptureDraftResult(SceneImageCaptureDraft Draft, 
 public enum SceneImageRebuildMode { MissingOrStale, AllUploaded }
 public sealed record SceneImageRebuildRequest(IReadOnlyList<Guid> PackageRoomIds, SceneImageRebuildMode Mode);
 public sealed record SceneImageRebuildProgress(int Completed, int Total);
-public sealed record SceneImagePublicationResult(bool Published, Exception? CleanupException = null);
+public sealed record SceneImagePublicationResult(bool Published, Exception? CleanupException = null)
+{
+    public string? HistoryWarning { get; init; }
+}
 public enum SceneImageRebuildItemStatus { Generated, Skipped, Failed }
 public enum SceneImageRebuildIssue { None, BoundsUnset, MappingIncomplete, MapSourceUnavailable, OriginalUnavailable, RoomChanged }
 public sealed record SceneImageRebuildItem(Guid RoomId, SceneImageRebuildItemStatus Status, string Detail)
@@ -40,6 +43,7 @@ public sealed record SceneImageRebuildItem(Guid RoomId, SceneImageRebuildItemSta
 }
 public sealed record SceneImageRebuildResult(IReadOnlyList<SceneImageRebuildItem> Items)
 {
+    public string? HistoryWarning { get; init; }
     public IReadOnlyList<Exception> CleanupExceptions { get; init; } = [];
     public IReadOnlyList<Exception> FailureExceptions { get; init; } = [];
 }
@@ -84,13 +88,13 @@ public sealed class SceneImageCaptureService(IDbContextFactory<LogicDbContext> d
         return preview is not null && File.Exists(Path.Combine(files.SourceDirectory, "build.json"));
     }
 
-    public Task ClearBoundsAsync(Guid roomId, SceneImageCaptureBaseline baseline, CancellationToken token = default) =>
+    public Task<string?> ClearBoundsAsync(Guid roomId, SceneImageCaptureBaseline baseline, CancellationToken token = default) =>
         ClearBoundsCoreAsync(roomId, baseline, null, token);
 
     internal Task ClearTrackedBoundsAsync(Guid roomId, SceneImageCaptureBaseline baseline, RoomImageCommitAdmission admission) =>
         ClearBoundsCoreAsync(roomId, baseline, admission, CancellationToken.None);
 
-    private async Task ClearBoundsCoreAsync(Guid roomId, SceneImageCaptureBaseline baseline, RoomImageCommitAdmission? tracked, CancellationToken token)
+    private async Task<string?> ClearBoundsCoreAsync(Guid roomId, SceneImageCaptureBaseline baseline, RoomImageCommitAdmission? tracked, CancellationToken token)
     {
         using var admission = await files.AcquireLifecycleAsync(token);
         using var publication = await publications.AcquireAsync(token);
@@ -117,9 +121,11 @@ public sealed class SceneImageCaptureService(IDbContextFactory<LogicDbContext> d
         await transaction.FinalizeAsync(token);
         var prepared = publication.PrepareAdvance(transaction.FinalEffects.RoomFactsChanged, false);
         var plan = tracked is null ? null : await SharedRoomCommitPlan.PrepareAsync(db, transaction, prepared, token, [roomId]);
-        if (tracked is null) await transaction.CommitAsync(() => publication.PublishCommitted(prepared), token);
+        string? historyWarning = null;
+        if (tracked is null) historyWarning = (await transaction.CommitAsync(() => publication.PublishCommitted(prepared), token)).Warning;
         else await tracked.CommitAsync(transaction, boundsChanged, publication, plan!);
         if (tracked is not null) tracked.SharedPlan = plan;
+        return historyWarning;
     }
 
     public async Task<SceneImageCaptureDraftResult> GetEstimateAsync(Guid roomId, SceneImageCaptureDraft draft, CancellationToken cancellationToken = default)
@@ -206,10 +212,11 @@ public sealed class SceneImageCaptureService(IDbContextFactory<LogicDbContext> d
             await transaction.FinalizeAsync(cancellationToken);
             var prepared = publication.PrepareAdvance(transaction.FinalEffects.RoomFactsChanged, false);
             var plan = tracked is null ? null : await SharedRoomCommitPlan.PrepareAsync(noneDb, transaction, prepared, cancellationToken, [roomId]);
-            if (tracked is null) await transaction.CommitAsync(() => publication.PublishCommitted(prepared), cancellationToken);
+            string? historyWarning = null;
+            if (tracked is null) historyWarning = (await transaction.CommitAsync(() => publication.PublishCommitted(prepared), cancellationToken)).Warning;
             else await tracked.CommitAsync(transaction, false, publication, plan!, saved.UseSceneImage);
             if (tracked is not null) tracked.SharedPlan = plan;
-            return new(true);
+            return new(true) { HistoryWarning = historyWarning };
         }
         // Replacements publish only when Upload is the final selected source.
         if (!draft.UseUploadedSceneImage) draft = draft with { UploadHandle = null, UploadPreparation = null, OriginalHash = draft.Baseline.OriginalHash };
@@ -271,6 +278,7 @@ public sealed class SceneImageCaptureService(IDbContextFactory<LogicDbContext> d
         var originalReplaced = false;
         var outputReplaced = false;
         var committed = false;
+        string? historyWarning = null;
         Exception? cleanupException = null;
         void RecordCleanup(Exception exception)
         {
@@ -323,7 +331,7 @@ public sealed class SceneImageCaptureService(IDbContextFactory<LogicDbContext> d
             var sharedPlan = tracked is null ? null : await SharedRoomCommitPlan.PrepareAsync(db, transaction, prepared, CancellationToken.None, [roomId]);
             if (tracked is null)
             {
-                await transaction.CommitAsync(() => { committed = true; publication.PublishCommitted(prepared); });
+                historyWarning = (await transaction.CommitAsync(() => { committed = true; publication.PublishCommitted(prepared); })).Warning;
             }
             else await tracked.CommitAsync(transaction,
                 room.SceneMinX != draft.MinX || room.SceneMinY != draft.MinY || room.SceneMaxX != draft.MaxX || room.SceneMaxY != draft.MaxY,
@@ -371,7 +379,7 @@ public sealed class SceneImageCaptureService(IDbContextFactory<LogicDbContext> d
         catch (Exception exception) { RecordCleanup(exception); }
         try { if (originalBackup is not null && File.Exists(originalBackup)) File.Delete(originalBackup); }
         catch (Exception exception) { RecordCleanup(exception); }
-        return new(true, cleanupException);
+        return new(true, cleanupException) { HistoryWarning = historyWarning };
     }
     private static InvalidOperationException InactiveTarget(RoomImageCommitAdmission? tracked) => tracked is null
         ? new InvalidOperationException("The room is no longer active.") : new RoomImageTargetUnavailableException();
@@ -382,6 +390,7 @@ public sealed class SceneImageCaptureService(IDbContextFactory<LogicDbContext> d
         var items = new List<SceneImageRebuildItem>();
         var cleanupExceptions = new List<Exception>();
         var failureExceptions = new List<Exception>();
+        string? historyWarning = null;
         var roomIds = request.PackageRoomIds.Distinct().ToArray();
         foreach (var roomId in roomIds)
         {
@@ -406,7 +415,8 @@ public sealed class SceneImageCaptureService(IDbContextFactory<LogicDbContext> d
                         if (marked != 1) throw new InvalidOperationException("The room scene state changed during image checking. Review its saved settings before retrying.");
                         await transaction.FinalizeAsync(cancellationToken);
                         var prepared = sharedPublication.PrepareAdvance(true, false);
-                        await transaction.CommitAsync(() => sharedPublication.PublishCommitted(prepared), cancellationToken);
+                        var history = await transaction.CommitAsync(() => sharedPublication.PublishCommitted(prepared), cancellationToken);
+                        historyWarning ??= history.Warning;
                         room.IsSceneImageStale = true;
                     }
                     if (request.Mode == SceneImageRebuildMode.MissingOrStale && !room.IsSceneImageStale && recognized)
@@ -420,6 +430,7 @@ public sealed class SceneImageCaptureService(IDbContextFactory<LogicDbContext> d
                 if (draft.UseSceneImage && !draft.UseUploadedSceneImage && !IsSourceReady())
                 { items.Add(new(roomId, SceneImageRebuildItemStatus.Skipped, "scene image source preview or tile manifest is unavailable") { Issue = SceneImageRebuildIssue.MapSourceUnavailable }); continue; }
                 var publication = await GenerateAndPublishAsync(roomId, draft, request.Mode == SceneImageRebuildMode.MissingOrStale, cancellationToken);
+                historyWarning ??= publication.HistoryWarning;
                 if (publication.CleanupException is { } cleanup) cleanupExceptions.Add(cleanup);
                 items.Add(new(roomId, publication.Published ? SceneImageRebuildItemStatus.Generated : SceneImageRebuildItemStatus.Skipped,
                     publication.CleanupException is not null ? "generated; postcommit cleanup failed (see diagnostics)"
@@ -437,11 +448,11 @@ public sealed class SceneImageCaptureService(IDbContextFactory<LogicDbContext> d
             catch (Exception ex)
             {
                 logger?.LogError(ex, "Scene image rebuild interrupted for room {RoomId}", roomId);
-                throw new SceneImageRebuildInterruptedException(new(items.ToArray()) { CleanupExceptions = cleanupExceptions.ToArray(), FailureExceptions = failureExceptions.ToArray() }, ex);
+                throw new SceneImageRebuildInterruptedException(new(items.ToArray()) { CleanupExceptions = cleanupExceptions.ToArray(), FailureExceptions = failureExceptions.ToArray(), HistoryWarning = historyWarning }, ex);
             }
             finally { progress?.Report(new(items.Count, roomIds.Length)); }
         }
-        return new(items) { CleanupExceptions = cleanupExceptions, FailureExceptions = failureExceptions };
+        return new(items) { CleanupExceptions = cleanupExceptions, FailureExceptions = failureExceptions, HistoryWarning = historyWarning };
     }
 
     private async Task<string> GenerateAsync(Guid roomId, SceneImageCaptureDraft draft, CancellationToken token, string? preparedPath = null)

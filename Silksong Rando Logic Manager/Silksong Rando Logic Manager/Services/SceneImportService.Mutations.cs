@@ -96,7 +96,8 @@ public sealed partial class SceneImportService
             request.TransitionUpdates.Select(u => u.Id).Concat(createdTransitions.Select(t => t.Id)).ToArray());
         var plan = await SceneAffectedPublication.PrepareAsync(db, publication, transaction, [room.Id]);
         var committed = new SceneApplyResult(receipt, null, plan.Recovery);
-        await transaction.CommitAsync(() => publication.PublishCommitted(plan.Publication));
+        var history = await transaction.CommitAsync(() => publication.PublishCommitted(plan.Publication));
+        committed = committed with { HistoryWarning = history.Warning };
         try
         {
             // Detach the committed transaction before the fallible read snapshot.

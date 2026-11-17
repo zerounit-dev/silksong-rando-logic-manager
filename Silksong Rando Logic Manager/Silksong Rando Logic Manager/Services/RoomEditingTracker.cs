@@ -353,6 +353,16 @@ internal sealed class RoomEditingTracker(TimeProvider clock, SceneImageFileServi
             results[sequence] = pending with { Receipt = receipt };
         }
 
+        public void RecordHistoryWarning(long sequence, string warning)
+        {
+            if (!results.TryGetValue(sequence, out var pending) || !pending.ProjectionPending
+                || sequence != terminalThrough || sequence <= acknowledgedThrough)
+                throw Invalid("History warning no longer owns unpublished terminal evidence.");
+            var receipt = receipts[sequence] with { HistoryWarning = warning };
+            receipts[sequence] = receipt;
+            results[sequence] = pending with { Receipt = receipt };
+        }
+
         public void InstallProjection(Wire.RoomTerminalResult result)
         {
             if (!receipts.TryGetValue(result.Receipt.Sequence, out var receipt) || receipt != result.Receipt

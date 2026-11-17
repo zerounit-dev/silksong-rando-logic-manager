@@ -31,7 +31,10 @@ public sealed record Location(Guid RoomId, string FriendlyName);
 public sealed record Requirement(Guid RoomId, string Requirements);
 public sealed record RequirementsData(IReadOnlyList<Requirement> Transitions, IReadOnlyList<Requirement> Connections, IReadOnlyList<Requirement> Checks);
 public sealed record SearchData(IReadOnlyList<Location> Locations, RequirementsData Requirements);
-public sealed record MutationResult(SharedMutationSegment Shared, GroupEditor? GroupEditor = null, Guid? CreatedRoomId = null, int? MatchedRoomCount = null);
+public sealed record MutationResult(SharedMutationSegment Shared, GroupEditor? GroupEditor = null, Guid? CreatedRoomId = null, int? MatchedRoomCount = null)
+{
+    public string? HistoryWarning { get; init; }
+}
 public sealed record ApiError(string Code, string Message, string? TraceId = null, SharedMutationSegment? Shared = null, GroupEditor? GroupEditor = null);
 public sealed record SaveGroup([property: JsonRequired] GroupBaseline Baseline, [property: JsonRequired] GroupValues Values);
 public sealed record MoveGroup([property: JsonRequired] int Index, [property: JsonRequired] IReadOnlyList<Guid> ExpectedGroupIds);

@@ -148,8 +148,8 @@ public sealed class DistributedImportApplicationService(IDbContextFactory<LogicD
             using (db.SuppressAuditMetadata()) await db.SaveChangesAsync(ct);
             await tx.FinalizeAsync(ct);
             var prepared = publication.PrepareAdvance(tx.FinalEffects.RoomFactsChanged, false);
-            await tx.CommitAsync(() => publication.PublishCommitted(prepared), ct);
-            return new DistributedImportSweepCompleted(true);
+            var history = await tx.CommitAsync(() => publication.PublishCommitted(prepared), ct);
+            return new DistributedImportSweepCompleted(true) { HistoryWarning = history.Warning };
         }
         catch (DbUpdateException ex) { return new DistributedImportFailed("final-sweep", ex.Message, state); }
     }
@@ -215,7 +215,7 @@ public sealed class DistributedImportApplicationService(IDbContextFactory<LogicD
         using (db.SuppressAuditMetadata()) { await db.SaveChangesAsync(ct); await new LogicReferenceResolver(db).ResolveAsync(ct); }
         await tx.FinalizeAsync(ct);
         var prepared = publication.PrepareAdvance(tx.FinalEffects.RoomFactsChanged, false);
-        await tx.CommitAsync(() => publication.PublishCommitted(prepared), ct);
+        var history = await tx.CommitAsync(() => publication.PublishCommitted(prepared), ct);
         publication.Dispose();
         List<Exception> cleanupFailures = [];
         if (removeOriginal)
@@ -232,9 +232,9 @@ public sealed class DistributedImportApplicationService(IDbContextFactory<LogicD
         {
             var exception = new AggregateException("Imported room committed; image cleanup failed.", cleanupFailures);
             logger.LogError(exception, "Postcommit image cleanup failed for committed imported room {RoomId}.", incoming.Id);
-            return new DistributedImportRoomApplied(incoming.Id, null!) { CleanupException = exception };
+            return new DistributedImportRoomApplied(incoming.Id, null!) { CleanupException = exception, HistoryWarning = history.Warning };
         }
-        return new DistributedImportRoomApplied(incoming.Id, null!);
+        return new DistributedImportRoomApplied(incoming.Id, null!) { HistoryWarning = history.Warning };
     }
 
     private async Task<DistributedImportStageOutcome> ApplyGroupsAsync(DistributedRoomGroupingSnapshot snapshot, int exportVersion, CancellationToken ct)
@@ -263,8 +263,8 @@ public sealed class DistributedImportApplicationService(IDbContextFactory<LogicD
             using (db.SuppressAuditMetadata()) { await db.SaveChangesAsync(ct); await new LogicReferenceResolver(db).ResolveAsync(ct); }
             await tx.FinalizeAsync(ct);
             var prepared = publication.PrepareAdvance(tx.FinalEffects.RoomFactsChanged, false);
-            await tx.CommitAsync(() => publication.PublishCommitted(prepared), ct);
-            return new("room-groupings", true, false, null);
+            var history = await tx.CommitAsync(() => publication.PublishCommitted(prepared), ct);
+            return new("room-groupings", true, false, null) { HistoryWarning = history.Warning };
         }
         catch (DbUpdateException ex) { return new("room-groupings", false, false, "failed:" + ex.Message); }
     }
@@ -315,8 +315,8 @@ public sealed class DistributedImportApplicationService(IDbContextFactory<LogicD
             using (db.SuppressAuditMetadata()) { await db.SaveChangesAsync(ct); await new LogicReferenceResolver(db).ResolveAsync(ct); }
             await tx.FinalizeAsync(ct);
             var prepared = publication.PrepareAdvance(tx.FinalEffects.RoomFactsChanged, false);
-            await tx.CommitAsync(() => publication.PublishCommitted(prepared), ct);
-            return new("area-map", true, false, null);
+            var history = await tx.CommitAsync(() => publication.PublishCommitted(prepared), ct);
+            return new("area-map", true, false, null) { HistoryWarning = history.Warning };
         }
         catch (DbUpdateException ex) { return new("area-map", false, false, "failed:" + ex.Message); }
     }

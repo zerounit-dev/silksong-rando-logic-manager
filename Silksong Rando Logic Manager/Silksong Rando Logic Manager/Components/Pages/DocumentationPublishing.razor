@@ -4,6 +4,7 @@
 @using Silksong_Rando_Logic_Manager.Services.Publishing
 @implements IAsyncDisposable
 @inject DocumentationPublishingService Publishing
+@inject PublishingActivityService Activity
 @inject Silksong_Rando_Logic_Manager.Authentication.LiveAccess Access
 @inject DiagnosticState Diagnostics
 @inject ILogger<DocumentationPublishing> Logger
@@ -19,6 +20,10 @@
     @if (view is not null)
     {
         <p class="publishing-context tool-metadata">@view.Repository · @view.Branch</p>
+        <div class="publishing-activity">
+            <span>Last recorded room edit: @(latestActivity is null ? "Loading…" : !latestActivity.Available ? "History unavailable." : latestActivity.RecordedUtc is { } last ? ActivityTime(last) : "No recorded room edits.")</span>
+            <button @ref="recentLauncher" class="tool-action" type="button" aria-haspopup="dialog" @onclick="OpenRecentEdits">recent edits</button>
+        </div>
         <section class="publishing-card" aria-label="Preparation">
             <h2 class="tool-section-title">prepare</h2>
             <div class="publishing-actions" aria-busy="@EffectiveBusy.ToString().ToLowerInvariant()">
@@ -92,11 +97,97 @@
             </section>
         }
     }
+    <dialog @ref="recentDialog" class="confirmation-modal publishing-activity-modal" aria-labelledby="publishing-activity-title">
+        <h2 id="publishing-activity-title">recent edits</h2>
+        @if (loadingActivity) { <p role="status">Loading recorded room edits…</p> }
+        else if (recentActivity is not { Available: true }) { <p role="status">History unavailable.</p> }
+        else if (recentActivity.Rows.Count == 0) { <p role="status">No recorded room edits in the last 24 hours.</p> }
+        else
+        {
+            <table class="publishing-activity-table">
+                <thead><tr><th scope="col">User</th><th scope="col">Room name</th><th scope="col">Timestamp</th></tr></thead>
+                <tbody>
+                    @foreach (var row in recentActivity.Rows)
+                    {
+                        <tr class="@(row.WithinLastHour ? "publishing-activity-hour" : null)"><td>@row.User</td><td>@row.RoomName</td><td>@ActivityTime(row.RecordedUtc)</td></tr>
+                    }
+                </tbody>
+            </table>
+        }
+        <form method="dialog" class="publishing-activity-close"><button class="tool-action" type="submit" autofocus>close</button></form>
+    </dialog>
 </main>
 <DiagnosticModal />
 
 @code {
     private PublishingView? view;
+    private PublishingLatestActivity? latestActivity;
+    private PublishingRecentActivity? recentActivity;
+    private bool loadingActivity, openActivityPending, initializingActivityDialog;
+    private long activityRead;
+    private readonly CancellationTokenSource activityLifetime = new();
+    private ElementReference recentDialog, recentLauncher;
+    private IJSObjectReference? activityModule, activityDialogOwner;
+    private static string ActivityTime(DateTime utc) => utc.ToString("yyyy-MM-dd HH:mm 'UTC'", System.Globalization.CultureInfo.InvariantCulture);
+
+    private async Task LoadLatestActivity()
+    {
+        try
+        {
+            var next = await Activity.ReadLatestAsync(activityLifetime.Token);
+            if (!disposed) { latestActivity = next; StateHasChanged(); }
+        }
+        catch (OperationCanceledException) when (activityLifetime.IsCancellationRequested) { }
+    }
+
+    private async Task OpenRecentEdits()
+    {
+        if (disposed || loadingActivity || openActivityPending || initializingActivityDialog) return;
+        var read = ++activityRead;
+        recentActivity = null; loadingActivity = true; openActivityPending = true;
+        StateHasChanged();
+        try
+        {
+            // Let the loading dialog render before synchronous SQLite work starts.
+            // Each real open still gets a fresh read; no result cache or polling.
+            await Task.Yield();
+            if (disposed) return;
+            var next = await Activity.ReadRecentAsync(activityLifetime.Token);
+            if (!disposed && read == activityRead) recentActivity = next;
+        }
+        catch (OperationCanceledException) when (activityLifetime.IsCancellationRequested) { }
+        finally { if (!disposed && read == activityRead) { loadingActivity = false; StateHasChanged(); } }
+    }
+
+    private async Task OpenActivityDialogAfterRender()
+    {
+        if (disposed || !openActivityPending || initializingActivityDialog) return;
+        initializingActivityDialog = true;
+        try
+        {
+            if (activityModule is null)
+            {
+                var imported = await JS.InvokeAsync<IJSObjectReference>("import", "./publishing-activity.js");
+                if (disposed) { await imported.DisposeAsync(); return; }
+                activityModule = imported;
+            }
+            if (activityDialogOwner is null)
+            {
+                var created = await activityModule.InvokeAsync<IJSObjectReference>("create", recentDialog, recentLauncher);
+                if (disposed) { await created.InvokeVoidAsync("dispose"); await created.DisposeAsync(); return; }
+                activityDialogOwner = created;
+            }
+            if (disposed) return;
+            openActivityPending = false;
+            await activityDialogOwner.InvokeVoidAsync("open");
+        }
+        catch (Exception exception)
+        {
+            openActivityPending = false;
+            try { Logger.LogWarning(exception, "Opening publisher activity dialog failed; publishing is unaffected."); } catch { }
+        }
+        finally { initializingActivityDialog = false; }
+    }
     private string message = "";
     private string? previewError;
     private readonly Dictionary<string, string> previews = [];
@@ -129,6 +220,7 @@
     private readonly Queue<IReadOnlyList<PublishingTiming>> pendingPreviewTimings = new();
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
+        await OpenActivityDialogAfterRender();
         if (disposed || initializingTimings) return;
         initializingTimings = true;
         try
@@ -208,7 +300,7 @@
         // Subscribe first: a mounting transition either appears in the initial read
         // or requests another pass through the same renderer-owned drain.
         subscription = Publishing.Subscribe(PublishingChanged);
-        await Refresh();
+        await Task.WhenAll(Refresh(), LoadLatestActivity());
     }
     private async Task Refresh()
     {
@@ -366,6 +458,17 @@
     public async ValueTask DisposeAsync()
     {
         disposed = true;
+        activityLifetime.Cancel();
+        if (activityDialogOwner is not null)
+        {
+            try { await activityDialogOwner.InvokeVoidAsync("dispose"); await activityDialogOwner.DisposeAsync(); }
+            catch (Exception exception) { try { Logger.LogWarning(exception, "Retiring publisher activity dialog failed."); } catch { } }
+        }
+        if (activityModule is not null)
+        {
+            try { await activityModule.DisposeAsync(); }
+            catch (Exception exception) { try { Logger.LogWarning(exception, "Retiring publisher activity module failed."); } catch { } }
+        }
         subscription?.Dispose(); subscription = null;
         refreshPending = false;
         pendingTimings = []; pendingPreviewTimings.Clear();

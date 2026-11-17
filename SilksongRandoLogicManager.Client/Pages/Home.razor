@@ -30,7 +30,7 @@
 </section>
 </article>
 
-<MapLinksDialog @ref="mapLinks" Owns="@(() => Current)" CanUse="@(() => Shell.CanUseLanding(this))" ErrorOpen="@(() => Shell.GeneralErrorOpen)"
+<MapLinksDialog @ref="mapLinks" Owns="@(() => Current)" CanUse="@(() => Shell.CanUseLanding(this))" ErrorOpen="@(() => Shell.GeneralErrorOpen)" ReportHistoryWarning="Shell.ReportHistoryWarningAsync"
                 Show="Shell.ShowLandingDialogAsync" Hide="Shell.CloseLandingDialogAsync" Freeze="Shell.FreezeLandingDialogAsync" ReportError="Shell.ReportLandingErrorAsync"
                                  Closed="LinksClosedAsync" Settled="Shell.DrainLandingAsync" />
 @if (overlayDraft is not null && landing?.Surface is { } calibrationMap && calibrationMap.Decoration.Overlay is { } calibrationOverlay)

@@ -110,7 +110,7 @@ else
     <RequirementSyntaxGuideModal Reference="reference" DialogId="v3-room-syntax-guide" Close="CloseGuideAsync" Manage="ManageRequirementsAsync" />
 }
 <div data-v2-requirements-expanded-host></div>
-<MapLinksDialog @ref="mapLinks" Owns="@(() => Current)" CanUse="@(() => RoomLinksCanUse)" ErrorOpen="@(() => Shell.GeneralErrorOpen)"
+<MapLinksDialog @ref="mapLinks" Owns="@(() => Current)" CanUse="@(() => RoomLinksCanUse)" ErrorOpen="@(() => Shell.GeneralErrorOpen)" ReportHistoryWarning="Shell.ReportHistoryWarningAsync"
                 Show="Shell.ShowLandingDialogAsync" Hide="Shell.CloseLandingDialogAsync" Freeze="Shell.FreezeLandingDialogAsync" ReportError="Shell.ReportRoomErrorAsync"
                 Closed="RoomLinksClosedAsync" Settled="Shell.DrainRoomRefreshAsync" />
 }

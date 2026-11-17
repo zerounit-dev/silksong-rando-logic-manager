@@ -413,6 +413,7 @@ public partial class App
         busy = true; pending = action; treeFeedback = null;
         var outcomeConfirmed = false;
         var diagnosticCommitKnown = false;
+        string? historyWarning = null;
         // The immutable body is captured by each caller before the first await.
         StateHasChanged();
         try
@@ -453,6 +454,7 @@ public partial class App
                     || !roomPatch.Replacements.Any(x => x.After.Observation.RoomId == created))) throw new JsonException();
                 if (action == "auto" && result.MatchedRoomCount is not >= 0) throw new JsonException();
                 diagnosticCommitKnown = true;
+                historyWarning = result.HistoryWarning;
                 outcome.OutcomeKnown();
                 if (disposed) return;
                 admission.Publish(result.Shared, source);
@@ -502,7 +504,8 @@ public partial class App
                 try { if (module is not null) await module.InvokeVoidAsync("freezeDialogs", false, groupDialog, deleteDialog); }
                 catch (Exception exception) { await FailAsync(exception, false); }
                 StateHasChanged();
-                await DrainRefreshAsync();
+                try { await DrainRefreshAsync(); }
+                finally { await ReportHistoryWarningAsync(historyWarning); }
             }
         }
     }

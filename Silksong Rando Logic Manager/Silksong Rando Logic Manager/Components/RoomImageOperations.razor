@@ -42,9 +42,10 @@
     {
         if (!IsCurrent(owner)) return;
         checking = true;
-        try { var result = await Task.Run(Operations.ScanAsync); if (IsCurrent(owner)) scan = result; }
+        string? historyWarning = null;
+        try { var result = await Task.Run(Operations.ScanAsync); if (IsCurrent(owner)) { scan = result; historyWarning = result.HistoryWarning; } }
         catch (Exception ex) { if (IsCurrent(owner)) { scan = new([], false); Diagnostics.Show(ex.ToString()); } }
-        finally { if (IsCurrent(owner)) checking = false; }
+        finally { if (IsCurrent(owner)) { checking = false; ShowHistoryWarning(historyWarning); } }
     }
     private async Task Regenerate(SceneImageRebuildMode mode)
     {
@@ -52,11 +53,13 @@
         var owner = ++lifetime;
         busy = true; generating = true; confirm = false; blockers = []; status = "Rebuilding images 0 of 0"; statusError = false;
         var completed = false;
+        string? historyWarning = null;
         var progress = new ImageProgress(value => _ = PublishProgress(owner, value));
         try
         {
             var result = await Task.Run(() => Operations.RegenerateAsync(mode, progress));
             if (!IsCurrent(owner)) return;
+            historyWarning = result.HistoryWarning;
             generating = false;
             status = result.Generated == 0 && result.Failed == 0 && result.Blockers.Count == 0 && !result.Interrupted ? "No images need rebuilding" : $"Rebuilt {result.Generated} images";
             blockers = result.Blockers;
@@ -67,7 +70,7 @@
             completed = true;
         }
         catch (Exception ex) { if (IsCurrent(owner)) { generating = false; statusError = true; status = "Image rebuilding stopped unexpectedly. Some images may already have been rebuilt; those changes were not undone. See error details."; Diagnostics.Show(ex.ToString()); } }
-        finally { try { if (completed && IsCurrent(owner)) await RefreshScan(owner); } finally { if (IsCurrent(owner)) busy = false; } }
+        finally { try { if (completed && IsCurrent(owner)) await RefreshScan(owner); } finally { if (IsCurrent(owner)) { busy = false; ShowHistoryWarning(historyWarning); } } }
     }
     private async Task PublishProgress(long owner, SceneImageRebuildProgress value)
     {
@@ -91,17 +94,26 @@
         var owner = ++lifetime;
         busy = true; confirm = false; blockers = []; statusError = false;
         var completed = false;
+        string? historyWarning = null;
         try
         {
             var result = await Task.Run(() => Operations.DeleteUnusedAsync(confirmed));
             if (!IsCurrent(owner)) return;
+            historyWarning = result.HistoryWarning;
             status = $"Deleted {result.Deleted} unused files / freed {Size(result.Bytes)}";
             statusError = result.Failures.Count != 0;
             if (result.Failures.Count != 0) { status += "; some files could not be removed. See error details."; Diagnostics.Show(new AggregateException(result.Failures).ToString()); }
             completed = true;
         }
         catch (Exception ex) { if (IsCurrent(owner)) { statusError = true; status = "Image cleanup stopped unexpectedly. Some files may already have been deleted. See error details."; Diagnostics.Show(ex.ToString()); } }
-        finally { try { if (completed && IsCurrent(owner)) await RefreshScan(owner); } finally { if (IsCurrent(owner)) busy = false; } }
+        finally { try { if (completed && IsCurrent(owner)) await RefreshScan(owner); } finally { if (IsCurrent(owner)) { busy = false; ShowHistoryWarning(historyWarning); } } }
+    }
+    private void ShowHistoryWarning(string? warning)
+    {
+        if (warning is null) return;
+        var existing = Diagnostics.ErrorDetails;
+        if (existing?.Contains(warning, StringComparison.Ordinal) == true) return;
+        Diagnostics.Show(existing is null ? warning : existing + Environment.NewLine + warning);
     }
     public void Dispose() { disposed = true; lifetime++; }
     private static string Size(long bytes) => $"{bytes / 1048576d:0.##} MiB";

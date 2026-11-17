@@ -107,6 +107,7 @@ public partial class Home
         using var outcome = Runtime.ObserveMutation();
         pending = true; pendingAction = action; feedback = null;
         var operation = ++generation; var acknowledged = false;
+        string? historyWarning = null;
         StateHasChanged();
         try
         {
@@ -136,6 +137,7 @@ public partial class Home
                 decodeTiming.End(TimingOutcome.ResponseDecoded);
                 if (!result.Committed) throw new JsonException();
                 acknowledged = true;
+                historyWarning = result.HistoryWarning;
                 outcome.OutcomeKnown();
                 if (!Current || operation != generation) return;
                 try
@@ -158,6 +160,8 @@ public partial class Home
         finally
         {
             pending = false; pendingAction = "";
+            try
+            {
             if (Current)
             {
                 try { if (overlayDraft is not null) await Shell.FreezeLandingDialogAsync(overlayDialog, false); }
@@ -166,6 +170,8 @@ public partial class Home
                 await Shell.DrainLandingAsync(); StateHasChanged();
             }
             LocalMapChanged();
+            }
+            finally { if (Current) await Shell.ReportHistoryWarningAsync(historyWarning); }
         }
     }
     private async Task OpenOverlayAsync()

@@ -25,6 +25,17 @@ public sealed partial class AccountsService(IDbContextFactory<AccountsDbContext>
     }
     private static string Stamp() => Guid.NewGuid().ToString("N");
     private static string GenerateCredential() => WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(24));
+    // Publisher-only scalar projection, not managed account listing or account metadata.
+    internal async Task<IReadOnlyDictionary<Guid, string>> ReadPublishingActivityNamesAsync(Guid[] ids, CancellationToken token)
+    {
+        await access.RequireAsync(AccessPolicies.PublishDocumentation, token);
+        ids = ids.Where(id => id != Guid.Empty).Distinct().ToArray();
+        if (ids.Length == 0) return new Dictionary<Guid, string>();
+        await using var db = await contexts.CreateDbContextAsync(token);
+        return await db.Users.AsNoTracking().Where(x => ids.Contains(x.Id) && x.UserName != null)
+            .Select(x => new { x.Id, x.UserName }).ToDictionaryAsync(x => x.Id, x => x.UserName!, token);
+    }
+
     public async Task<IReadOnlyList<AccountView>> ListAsync()
     {
         await access.RequireAsync(AccessPolicies.ManageAccounts);

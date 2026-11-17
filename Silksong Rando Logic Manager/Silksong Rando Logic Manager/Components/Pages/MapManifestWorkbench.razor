@@ -115,9 +115,11 @@
         if (reconciliationPlan is null) return;
         processingText = "Applying map manifest…";
         isProcessing = true;
+        string? historyWarning = null;
         try
         {
             result = await ManifestService.ApplyPlanAsync(reconciliationPlan);
+            historyWarning = result.HistoryWarning;
             reconciliationPlan = null;
             reviewState = null;
             reviewNavigation.BackToSummary();
@@ -128,7 +130,12 @@
             uploadError = "Could not apply map manifest. See error details.";
             Diagnostics.Show(exception.ToString());
         }
-        finally { isProcessing = false; }
+        finally
+        {
+            isProcessing = false;
+            if (historyWarning is not null)
+                Diagnostics.Show(Diagnostics.ErrorDetails is { } existing ? existing + Environment.NewLine + historyWarning : historyWarning);
+        }
     }
 
     private void SetRowSelection(MapReconciliationPlanRow row, bool selected) => reviewState!.SetRowSelected(row, selected);

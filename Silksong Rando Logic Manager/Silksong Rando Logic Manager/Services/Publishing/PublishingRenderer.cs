@@ -42,20 +42,22 @@ internal static class PublishingRenderer
         decode.Complete();
         using var geometryTime = timing.Segment(PublishingMetric.Geometry);
         var frames = new Dictionary<Guid, Rect>();
-        var subs = data.Subrooms.Where(x => x.RoomId == room.Id).ToArray();
+        var subs = data.SubroomsByRoom[room.Id].ToArray();
+        var subroomNumbers = new Dictionary<Guid, int>();
+        for (var i = 0; i < subs.Length; i++) subroomNumbers.TryAdd(subs[i].Id, i + 1);
         foreach (var s in subs)
             if (s.EnableAnnotation && Finite(s.SceneUnitX, s.SceneUnitY, s.SceneUnitWidth, s.SceneUnitHeight) && s.SceneUnitWidth > 0 && s.SceneUnitHeight > 0 &&
                 Finite(s.SceneUnitX + s.SceneUnitWidth, s.SceneUnitY + s.SceneUnitHeight))
                 frames[s.Id] = new(s.SceneUnitX!.Value, s.SceneUnitY!.Value, (s.SceneUnitX + s.SceneUnitWidth)!.Value, (s.SceneUnitY + s.SceneUnitHeight)!.Value);
         var markers = new List<Marker>();
-        foreach (var t in data.Transitions.Where(x => x.RoomId == room.Id && x.EnableAnnotation && Finite(x.AnnotationSceneUnitX, x.AnnotationSceneUnitY)))
+        foreach (var t in data.TransitionsByRoom[room.Id].Where(x => x.EnableAnnotation && Finite(x.AnnotationSceneUnitX, x.AnnotationSceneUnitY)))
             markers.Add(new("transitions", [t.Id], t.AnnotationSceneUnitX!.Value, t.AnnotationSceneUnitY!.Value, t.Alias, [t.ResolvedSourceSubroomId], false));
-        var checks = data.Checks.Where(x => x.RoomId == room.Id).ToArray();
+        var checks = data.ChecksByRoom[room.Id].ToArray();
         foreach (var (c, i) in checks.Select((c, i) => (c, i)))
             if (c.EnableAnnotation && Finite(c.AnnotationSceneUnitX, c.AnnotationSceneUnitY))
                 markers.Add(new("checks", [c.Id], c.AnnotationSceneUnitX!.Value, c.AnnotationSceneUnitY!.Value, (i + 1).ToString(System.Globalization.CultureInfo.InvariantCulture), [c.ResolvedSubroomId],
                     new[] { "boss", "miniboss", "gauntlet", "enemy" }.Contains(c.LocationType?.Trim().ToLowerInvariant())));
-        var connections = data.Connections.Where(x => x.RoomId == room.Id).ToArray();
+        var connections = data.ConnectionsByRoom[room.Id].ToArray();
         if (subs.Length > 0)
             foreach (var grouping in connections.GroupBy(x => x.Alias.Trim(), StringComparer.OrdinalIgnoreCase))
             {
@@ -90,6 +92,8 @@ internal static class PublishingRenderer
         var fit = false;
         geometryTime.Complete();
         using var layoutTime = timing.Segment(PublishingMetric.Layout);
+        // Keep only scalar results, never native metric objects, for this room/font.
+        var fontMetrics = new Dictionary<(string Text, double Size), (double TextWidth, double Ascent, double Descent)>();
         for (var attempt = 0; attempt < 12; attempt++)
         {
             timing.Attempts = (timing.Attempts ?? 0) + 1;
@@ -106,13 +110,18 @@ internal static class PublishingRenderer
                     occupied.Add((marker.Ids[0], new(x - rx, y - ry, x + rx, y + ry)));
                 }
                 var entries = frames.Select(f => new Marker("frame", [f.Key], (f.Value.L + f.Value.R) / 2, (f.Value.B + f.Value.T) / 2,
-                    "S" + (Array.FindIndex(subs, x => x.Id == f.Key) + 1), [], false)).Concat(visible);
+                    "S" + subroomNumbers[f.Key], [], false)).Concat(visible);
                 foreach (var entry in entries)
                 {
                     var (px, py) = Project(entry.X, entry.Y);
                     timing.Labels = (timing.Labels ?? 0) + 1;
-                    var metrics = timing.Measure(PublishingMetric.FontMetrics, () => new Drawables().Font(font).FontPointSize(fontSize).FontTypeMetrics(entry.Text))
-                        ?? throw new PublishingBlock($"{PublishingDocuments.Title(room)} (room {room.Id:D}): the pinned font returned no metrics for a {entry.Kind} label on record {entry.Ids[0]:D}, at font size {fontSize}. Check the matching application's Assets/Publishing/NotoSans-Bold.ttf and native rendering dependencies before preparing again; this does not establish an image-decoding failure.");
+                    if (!fontMetrics.TryGetValue((entry.Text, fontSize), out var metrics))
+                    {
+                        var nativeMetrics = timing.Measure(PublishingMetric.FontMetrics, () => new Drawables().Font(font).FontPointSize(fontSize).FontTypeMetrics(entry.Text))
+                            ?? throw new PublishingBlock($"{PublishingDocuments.Title(room)} (room {room.Id:D}): the pinned font returned no metrics for a {entry.Kind} label on record {entry.Ids[0]:D}, at font size {fontSize}. Check the matching application's Assets/Publishing/NotoSans-Bold.ttf and native rendering dependencies before preparing again; this does not establish an image-decoding failure.");
+                        metrics = (nativeMetrics.TextWidth, nativeMetrics.Ascent, nativeMetrics.Descent);
+                        fontMetrics.Add((entry.Text, fontSize), metrics);
+                    }
                     var tw = metrics.TextWidth + 6; var th = metrics.Ascent - metrics.Descent + 6;
                     if (entry.Kind == "checks") tw = th = Math.Max(Math.Max(tw, th), 6 * scale);
                     var obstacles = occupied.Where(x => x.Id != entry.Ids[0]).Select(x => x.Box).ToArray();

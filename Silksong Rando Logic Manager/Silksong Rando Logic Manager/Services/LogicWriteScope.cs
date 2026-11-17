@@ -86,7 +86,7 @@ internal sealed class LogicWriteScope : IAsyncDisposable
         effects = finalizedEffects;
     }
 
-    internal async Task CommitAsync(Action? recordReliableReceipt = null, CancellationToken token = default)
+    internal async Task<HistoryWriteOutcome> CommitAsync(Action? recordReliableReceipt = null, CancellationToken token = default)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
         _ = admission.Cache;
@@ -96,6 +96,7 @@ internal sealed class LogicWriteScope : IAsyncDisposable
         // recovery retains/invalidate its receipt/tracker evidence as appropriate.
         commitAttempted = true;
         await transaction.CommitAsync(token);
+        var historyOutcome = HistoryWriteOutcome.Success;
         try { recordReliableReceipt?.Invoke(); }
         finally
         {
@@ -104,9 +105,10 @@ internal sealed class LogicWriteScope : IAsyncDisposable
             {
                 // Never use request cancellation here; callback/cache errors retain
                 // their original propagation while independent history is attempted.
-                if (records is not null) await records.AppendCommittedAsync(actor, final);
+                if (records is not null) historyOutcome = await records.AppendCommittedAsync(actor, final);
             }
         }
+        return historyOutcome;
     }
 
     public async ValueTask DisposeAsync()

@@ -304,9 +304,9 @@ public sealed partial class SceneImportService
         }
         await transaction.FinalizeAsync(cancellationToken);
         var prepared = publication.PrepareAdvance(transaction.FinalEffects.RoomFactsChanged, false);
-        await transaction.CommitAsync(() => publication.PublishCommitted(prepared), cancellationToken);
+        var history = await transaction.CommitAsync(() => publication.PublishCommitted(prepared), cancellationToken);
         return new SceneImportResult(targetRoom.Id, importedTransitions.Select(x => x.Id).ToArray(), importedChecks.Select(x => x.Id).ToArray())
-        { AppliedExitIds = appliedExits.ToArray() };
+        { AppliedExitIds = appliedExits.ToArray(), HistoryWarning = history.Warning };
 
         InvalidOperationException AdmissionFailure(string message) => workbench is null
             ? new InvalidOperationException(message) : new SceneWorkbenchValidationException(message);

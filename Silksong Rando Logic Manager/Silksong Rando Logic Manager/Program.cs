@@ -61,6 +61,7 @@ builder.Services.AddScoped<SharedCatalogueService>();
 builder.Services.AddSingleton<RequirementCatalogueWriteCoordinator>();
 builder.Services.AddSingleton<SharedPublicationCoordinator>();
 builder.Services.AddSingleton<RecordHistoryStore>();
+Silksong_Rando_Logic_Manager.Services.Publishing.PublishingActivityService.Register(builder.Services);
 builder.Services.AddScoped<LogicCacheTransfer>();
 builder.Services.AddScoped<RequirementCatalogueService>();
 builder.Services.AddScoped<RequirementCatalogueExportService>();

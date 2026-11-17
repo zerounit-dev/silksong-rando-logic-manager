@@ -53,7 +53,7 @@ public static partial class V3CatalogueHttp
         if (!replace) { await WriteCacheResultAsync(context, 200, new Wire.RequirementOperationResult("committed", [])); return; }
         var result = await services.GetRequiredService<RequirementCatalogueImportService>().ReplaceConfirmedAsync(parsed.Snapshot!, CancellationToken.None);
         await WriteCacheResultAsync(context, 200, new Wire.RequirementOperationResult(Status(result.Status.ToString()), result.ValidationIssues, result.Message,
-            Shared: result.Shared is { } shared ? new(null, shared) : null));
+            Shared: result.Shared is { } shared ? new(null, shared) : null) { HistoryWarning = result.HistoryWarning });
     }
 
     private static async Task RequirementRecheckAsync(HttpContext context, RequirementValidationService validation, SharedCatalogueService shared)
@@ -61,7 +61,7 @@ public static partial class V3CatalogueHttp
         try
         {
             var result = await validation.RecheckAllForClientAsync(shared, CancellationToken.None);
-            await WriteCacheResultAsync(context, 200, new Wire.RequirementOperationResult("committed", [], Counts: new(result.Successful, result.Failed, result.Unknown), Shared: result.Shared));
+            await WriteCacheResultAsync(context, 200, new Wire.RequirementOperationResult("committed", [], Counts: new(result.Successful, result.Failed, result.Unknown), Shared: result.Shared) { HistoryWarning = result.HistoryWarning });
         }
         catch (RequirementValidationOperationException exception) when (!context.Response.HasStarted)
         { await WriteCacheResultAsync(context, 200, new Wire.RequirementOperationResult("failed", [], exception.Message)); }
@@ -95,7 +95,7 @@ public static partial class V3CatalogueHttp
     private static async Task RequirementOutcomeAsync(HttpContext context, RequirementCatalogueCommandOutcome outcome)
     {
         await WriteCacheResultAsync(context, 200, new Wire.RequirementOperationResult(Status(outcome.Status.ToString()), outcome.ValidationIssues, outcome.Message,
-            Shared: outcome.Shared is { } sharedPatch ? new(null, sharedPatch) : null));
+            Shared: outcome.Shared is { } sharedPatch ? new(null, sharedPatch) : null) { HistoryWarning = outcome.HistoryWarning });
     }
 
     private static string Status(string value) => value switch

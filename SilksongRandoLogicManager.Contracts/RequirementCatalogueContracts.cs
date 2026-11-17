@@ -180,6 +180,7 @@ public sealed record RequirementCatalogueCommandOutcome(
     string? Message = null)
 {
     public SilksongRandoLogicManager.Contracts.VocabularyMutationPatch? Shared { get; init; }
+    public string? HistoryWarning { get; init; }
     public static RequirementCatalogueCommandOutcome Committed() => new(RequirementCatalogueCommandStatus.Committed, []);
     public static RequirementCatalogueCommandOutcome ValidationRejected(IReadOnlyList<RequirementCatalogueValidationIssue> issues) => new(RequirementCatalogueCommandStatus.ValidationRejected, issues);
     public static RequirementCatalogueCommandOutcome Missing(string message) => new(RequirementCatalogueCommandStatus.Missing, [], message);

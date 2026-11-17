@@ -89,7 +89,7 @@ public partial class App
             && roomBlocksUnattendedReplacement?.Invoke() != true;
     }
 
-    public async Task CompleteSceneAsync(object owner, SceneAppliedReceipt receipt, Exception? publicationFailure)
+    public async Task CompleteSceneAsync(object owner, SceneAppliedReceipt receipt, Exception? publicationFailure, string? historyWarning)
     {
         if (!CanInteract) return;
         using var timing = OperationTiming.Start("scene.completion");
@@ -114,6 +114,7 @@ public partial class App
         finally
         {
             if (sceneInverse is null && sceneExitQueue.Count == 0) ReleaseScene(sceneCompletionOwner);
+            await ReportHistoryWarningAsync(historyWarning);
         }
     }
 
@@ -161,6 +162,7 @@ public partial class App
         if (!CanAuthor || sceneInverseBusy || errorOpen || sceneInverse is not { } proposal) return;
         using var outcome = Runtime.ObserveMutation();
         sceneInverseBusy = true;
+        string? historyWarning = null;
         try
         {
             if (update)
@@ -183,6 +185,7 @@ public partial class App
                     if (!response.IsSuccessStatusCode) throw new InvalidOperationException("Inverse confirmation outcome is unconfirmed.");
                     var received = await LogicBrowserCache.DecodeAsync<SceneInverseResult>(response, cacheRequest);
                     var result = received.Result;
+                    historyWarning = result.HistoryWarning;
                     outcome.OutcomeKnown();
                     try
                     {
@@ -215,6 +218,8 @@ public partial class App
         finally
         {
             sceneInverseBusy = false;
+            try
+            {
             if (!disposed)
             {
                 if (module is not null) await module.InvokeVoidAsync("closeDialogs", sceneInverseDialog);
@@ -223,6 +228,8 @@ public partial class App
                 if (sceneInverse is null && module is not null) await module.InvokeVoidAsync("restoreInitiator");
                 StateHasChanged();
             }
+            }
+            finally { await ReportHistoryWarningAsync(historyWarning); }
         }
     }
 }

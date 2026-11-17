@@ -61,11 +61,12 @@ internal sealed class RoomEditingMutationScope
         // notification or projection can intervene after a known successful commit.
         try
         {
-            await transaction.CommitAsync(() =>
+            var history = await transaction.CommitAsync(() =>
             {
                 try { entry.RecordReceipt(receipt); }
                 finally { publication.PublishCommitted(prepared); }
             });
+            if (history.Warning is { } warning) entry.RecordHistoryWarning(operation.Sequence, warning);
         }
         catch
         {

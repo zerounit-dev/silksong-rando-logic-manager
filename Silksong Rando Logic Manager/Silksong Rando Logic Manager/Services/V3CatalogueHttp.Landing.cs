@@ -12,7 +12,7 @@ public static partial class V3CatalogueHttp
         api.MapPost("/map-links/merge", async (HttpContext context, MapLinkService links) =>
         {
             var result = await links.MergeBlankMapScenesIntoRoomsAsync(CancellationToken.None);
-            await WriteCacheResultAsync(context, 200, new LandingCommit(true, result.MergedCount, result.Shared));
+            await WriteCacheResultAsync(context, 200, new LandingCommit(true, result.MergedCount, result.Shared) { HistoryWarning = result.HistoryWarning });
         }).RequireAuthorization(AccessPolicies.Author);
         api.MapPost("/map-links/apply", async (HttpContext context, ApplyLandingLinks command, MapLinkService links) =>
         {
@@ -21,7 +21,7 @@ public static partial class V3CatalogueHttp
             try { result = await links.SaveAsync(command.Drafts.Select(x => new MapLinkDraft(x.MapSceneId, x.RoomReferenceText)).ToArray(), CancellationToken.None); }
             catch (MapLinkTargetMissingException)
             { await ErrorAsync(context, 404, "missing", "A map scene no longer exists. Close and reopen map links to review current rows."); return; }
-            await WriteCacheResultAsync(context, 200, new LandingCommit(true, Shared: result.Shared));
+            await WriteCacheResultAsync(context, 200, new LandingCommit(true, Shared: result.Shared) { HistoryWarning = result.HistoryWarning });
         }).RequireAuthorization(AccessPolicies.Author);
         api.MapPost("/map-overlay/placement", LandingPlacementAsync).RequireAuthorization(AccessPolicies.Author);
     }
@@ -39,9 +39,10 @@ public static partial class V3CatalogueHttp
             || !context.RequestServices.GetRequiredService<MapOverlayPlacementService>().TryProject(minX, minY, maxX, maxY, placement.ScaleXPercent, placement.ScaleYPercent, placement.LeftOffsetPercent, placement.BottomOffsetPercent, asset.AspectRatio, out var projected)
             || !double.IsFinite(projected.X) || !double.IsFinite(projected.Y) || !double.IsFinite(projected.Width) || projected.Width <= 0 || !double.IsFinite(projected.Height) || projected.Height <= 0)
         { await ErrorAsync(context, 400, "invalid", "Scale must be finite and positive; offsets and projected placement must be finite."); return; }
-        try { await context.RequestServices.GetRequiredService<MapOverlayService>().SavePlacementAsync(new(placement.MapId, placement.ScaleXPercent, placement.ScaleYPercent, placement.LeftOffsetPercent, placement.BottomOffsetPercent), CancellationToken.None); }
+        string? historyWarning;
+        try { historyWarning = await context.RequestServices.GetRequiredService<MapOverlayService>().SavePlacementAsync(new(placement.MapId, placement.ScaleXPercent, placement.ScaleYPercent, placement.LeftOffsetPercent, placement.BottomOffsetPercent), CancellationToken.None); }
         catch (MapOverlayMissingException)
         { await ErrorAsync(context, 404, "missing", "This map no longer has an image overlay."); return; }
-        await WriteCacheResultAsync(context, 200, new LandingCommit(true));
+        await WriteCacheResultAsync(context, 200, new LandingCommit(true) { HistoryWarning = historyWarning });
     }
 }

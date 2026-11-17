@@ -194,6 +194,8 @@
         using var timing = OperationTiming.Start("scene.apply");
         using var outcome = Runtime.ObserveMutation();
         var diagnosticCommitted = false;
+        string? historyWarning = null;
+        var historyWarningHandled = false;
         applying = true; feedback = null;
         try
         {
@@ -221,6 +223,7 @@
                     throw new InvalidOperationException("Incomplete scene commit receipt.");
                 // Retire inside admission, BEFORE fallible publication or navigation.
                 diagnosticCommitted = true;
+                historyWarning = result.HistoryWarning;
                 outcome.OutcomeKnown();
                 review = null; evidence = null; uncertain = false; committedNavigation = true;
                 try
@@ -233,7 +236,11 @@
                 finally { admission.PublishCache(received); }
             }, CancellationToken.None);
             if (receipt is null) throw new InvalidOperationException("Missing scene commit receipt.");
-            if (!disposed) await App.CompleteSceneAsync(this, receipt, publicationFailure);
+            if (!disposed)
+            {
+                try { await App.CompleteSceneAsync(this, receipt, publicationFailure, historyWarning); }
+                finally { historyWarningHandled = true; }
+            }
             timing.End(disposed ? TimingOutcome.Retired : publicationFailure is not null ? TimingOutcome.KnownCommitFollowupFailed : TimingOutcome.Complete);
         }
         catch (SceneWorkbenchValidationException exception) { timing.End(TimingOutcome.Rejected); if (!disposed) feedback = exception.Message; }
@@ -255,7 +262,15 @@
                 await FailAsync(exception);
             }
         }
-        finally { applying = false; App.ReleaseScene(this); if (!disposed) StateHasChanged(); }
+        finally
+        {
+            applying = false; App.ReleaseScene(this);
+            if (!disposed)
+            {
+                StateHasChanged();
+                if (!historyWarningHandled) await App.ReportHistoryWarningAsync(historyWarning);
+            }
+        }
     }
     private async Task AcknowledgeUncertainAsync()
     {

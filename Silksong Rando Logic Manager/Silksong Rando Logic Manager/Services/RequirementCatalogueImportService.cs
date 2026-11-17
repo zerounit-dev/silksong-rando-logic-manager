@@ -65,6 +65,7 @@ public sealed class RequirementCatalogueImportService(RequirementCatalogueWriteC
                 await db.SaveChangesAsync(ct);
                 return RequirementCatalogueImportOutcome.Committed();
             }, (result, patch) => result.Status == RequirementCatalogueImportStatus.Committed ? result with { Shared = patch } : result,
+                (result, warning) => result with { HistoryWarning = warning },
                 true, cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }

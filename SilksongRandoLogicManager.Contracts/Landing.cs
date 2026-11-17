@@ -28,5 +28,8 @@ public sealed record LandingLinkRow(Guid MapSceneId, string ZoneInGameId, string
 public sealed record LandingLinks(IReadOnlyList<LandingLinkRow> Rows, IReadOnlyList<string> RoomReferences);
 public sealed record LandingLinkDraft(Guid MapSceneId, string? RoomReferenceText);
 public sealed record ApplyLandingLinks(IReadOnlyList<LandingLinkDraft> Drafts);
-public sealed record LandingCommit(bool Committed, int? MergedCount = null, SharedMutationSegment? Shared = null);
+public sealed record LandingCommit(bool Committed, int? MergedCount = null, SharedMutationSegment? Shared = null)
+{
+    public string? HistoryWarning { get; init; }
+}
 public sealed record LandingPlacement(Guid MapId, double ScaleXPercent, double ScaleYPercent, double LeftOffsetPercent, double BottomOffsetPercent);

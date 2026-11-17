@@ -42,6 +42,7 @@ public partial class RoomWorkspaceEditor
         public ConfirmedCatalogue.MutationReadContext? Execution;
         public ConfirmedCatalogue.MutationReadContext? ProjectionRead;
         public bool Usable;
+        public bool HistoryWarningPresented;
         public ConfirmedCatalogue.MutationReadContext? Result;
     }
     private readonly Dictionary<RoomOperationIdentity, RoomResultSource> roomResultSources = [];
@@ -235,7 +236,8 @@ public partial class RoomWorkspaceEditor
         roomLinksOpen = false;
         if (Current) { StateHasChanged(); await Shell.DrainRoomRefreshAsync(); }
     }
-    private void IncorporateRoomResponse(ReceivedCacheResult<RoomTrackingResponse> received, ConfirmedCatalogue.MutationAdmission admission)
+    private void IncorporateRoomResponse(ReceivedCacheResult<RoomTrackingResponse> received, ConfirmedCatalogue.MutationAdmission admission,
+        Action<string> retainHistoryWarning)
     {
         var response = received.Result;
         observingRoomResponse = true;
@@ -276,7 +278,21 @@ public partial class RoomWorkspaceEditor
         catch { roomResponseObservationFailed = true; throw; }
         finally
         {
-            observingRoomResponse = false; NotifyRoomActions();
+            try { observingRoomResponse = false; NotifyRoomActions(); }
+            finally
+            {
+                // Incorporation may already have settled the receipt when a later
+                // observer fails. Retain its warning in this request's local outcome;
+                // the outer handler presents it after ACK/cache/error settlement.
+                foreach (var result in response.Results.Where(x => x.Receipt.Sequence > workspace.Queue.AcknowledgedThrough
+                    && x.Receipt.Sequence <= workspace.Queue.IncorporatedThrough && x.Receipt.HistoryWarning is not null))
+                {
+                    var source = ResultSource(new(result.Receipt.Sequence, result.Receipt.OperationId));
+                    if (source.HistoryWarningPresented || !Current) continue;
+                    retainHistoryWarning(result.Receipt.HistoryWarning!);
+                    source.HistoryWarningPresented = true;
+                }
+            }
         }
     }
     private void PublishReceivedRoomCache(ReceivedCacheResult<RoomTrackingResponse> received, ConfirmedCatalogue.MutationAdmission admission)

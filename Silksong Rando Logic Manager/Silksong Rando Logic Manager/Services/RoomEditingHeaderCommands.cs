@@ -224,12 +224,13 @@ internal sealed class RoomEditingHeaderCommands(IDbContextFactory<LogicDbContext
                     SharedOriginalRooms = plan.OriginalRooms };
             var advances = plan.Advances;
             commitAttempted = true;
-            await tx.CommitAsync(() =>
+            var history = await tx.CommitAsync(() =>
             {
                 try { entry.RecordReceipt(receipt); }
                 finally { publication.PublishCommitted(prepared); }
             });
             receipted = true;
+            if (history.Warning is { } warning) entry.RecordHistoryWarning(item.Sequence, warning);
             return new(roomId, affected, referenceChanged || anyTargetChange, mapChanged, advances)
             { SharedPlan = plan };
         }

@@ -43,5 +43,6 @@ public sealed record SceneImportInstruction(Guid ObjectId, SceneImportMode Mode,
 public enum SceneImportMode { Create, Update }
 public sealed record SceneImportResult(Guid RoomId, IReadOnlyList<Guid> TransitionIds, IReadOnlyList<Guid> CheckIds)
 {
+    public string? HistoryWarning { get; init; }
     public IReadOnlyList<Guid> AppliedExitIds { get; init; } = [];
 }
