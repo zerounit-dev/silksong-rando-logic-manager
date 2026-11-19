@@ -4,7 +4,7 @@ using System.Text;
 
 namespace Silksong_Rando_Logic_Manager.Services;
 
-/// <summary>Bounded lexical descriptors, derived only from the twenty-five approved choices.
+/// <summary>Bounded lexical descriptors, derived only from the twenty-six approved choices.
 /// No identity resolution or parser-result sharing between the independent parsers.</summary>
 internal static class RequirementOperandSyntax
 {
@@ -27,7 +27,8 @@ internal static class RequirementOperandSyntax
         RequirementInputSyntax.PredicateThenOptionalDirectionThenOptionalQuantity or
         RequirementInputSyntax.RequiredDifficultyThenPredicateThenOptionalQuantity or
         RequirementInputSyntax.RequiredDifficultyThenPredicateThenQuantity or
-        RequirementInputSyntax.RequiredDifficultyThenMethodThenPredicateThenOptionalQuantity;
+        RequirementInputSyntax.RequiredDifficultyThenMethodThenPredicateThenOptionalQuantity or
+        RequirementInputSyntax.RequiredDifficultyThenCrestThenPredicateThenOptionalQuantity;
 
     internal static bool UsesOperands(RequirementInputSyntax syntax) => HasComposedQuantity(syntax) || HasAlternatives(syntax);
 

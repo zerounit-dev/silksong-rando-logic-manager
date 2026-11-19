@@ -10,22 +10,23 @@ public static class RequirementCatalogueLanguage
         new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateOnly, "{predicate}", "Predicate only", "Basic"),
         new RequirementInputSyntaxOption(RequirementInputSyntax.OptionalDifficultyThenPredicate, "{difficulty?} {predicate}", "Optional difficulty", "Basic"),
         new RequirementInputSyntaxOption(RequirementInputSyntax.RequiredDifficultyThenPredicate, "{difficulty} {predicate}", "Required difficulty", "Basic"),
+        new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenOptionalDirection, "{predicate} [{direction?}]", "Optional direction", "Direction"),
         new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenDirection, "{predicate} [{direction}]", "Required direction", "Direction"),
         new RequirementInputSyntaxOption(RequirementInputSyntax.RequiredDifficultyThenPredicateThenDirection, "{difficulty} {predicate} [{direction}]", "Difficulty + required direction", "Direction"),
-        new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenOptionalDirection, "{predicate} [{direction?}]", "Optional direction", "Direction"),
-        new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenDirectionThenOptionalQuantity, "{predicate} [{direction}] {quantity?}", "Required direction + optional quantity", "Direction"),
         new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenOptionalDirectionThenOptionalQuantity, "{predicate} [{direction?}] {quantity?}", "Optional direction + optional quantity", "Direction"),
-        new RequirementInputSyntaxOption(RequirementInputSyntax.CrestThenPredicateThenDirection, "[{crest}] {predicate} {direction}", "Crest + direction", "Crest"),
+        new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenDirectionThenOptionalQuantity, "{predicate} [{direction}] {quantity?}", "Required direction + optional quantity", "Direction"),
         new RequirementInputSyntaxOption(RequirementInputSyntax.OptionalCrestThenPredicateThenDirection, "[{crest?}] {predicate} {direction}", "Optional crest + direction", "Crest"),
-        new RequirementInputSyntaxOption(RequirementInputSyntax.RequiredDifficultyThenCrestThenPredicate, "{difficulty} [{crest}] {predicate}", "Difficulty + crest", "Crest"),
+        new RequirementInputSyntaxOption(RequirementInputSyntax.CrestThenPredicateThenDirection, "[{crest}] {predicate} {direction}", "Crest + direction", "Crest"),
         new RequirementInputSyntaxOption(RequirementInputSyntax.RequiredDifficultyThenOptionalCrestThenPredicate, "{difficulty} [{crest?}] {predicate}", "Difficulty + optional crest", "Crest"),
+        new RequirementInputSyntaxOption(RequirementInputSyntax.RequiredDifficultyThenCrestThenPredicate, "{difficulty} [{crest}] {predicate}", "Difficulty + crest", "Crest"),
+        new RequirementInputSyntaxOption(RequirementInputSyntax.RequiredDifficultyThenCrestThenPredicateThenOptionalQuantity, "{difficulty} [{crest}] {predicate} {quantity?}", "Difficulty + crest + optional quantity", "Crest"),
         new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenMethod, "{predicate} [{method}]", "Required method", "Method"),
         new RequirementInputSyntaxOption(RequirementInputSyntax.RequiredDifficultyThenMethodThenPredicate, "{difficulty} [{method}] {predicate}", "Difficulty + method", "Method"),
         new RequirementInputSyntaxOption(RequirementInputSyntax.RequiredDifficultyThenMethodThenPredicateThenOptionalQuantity, "{difficulty} [{method}] {predicate} {quantity?}", "Difficulty + method + optional quantity", "Method"),
         new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenItem, "{predicate} {item}", "Item", "Item / Location"),
         new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenCheck, "{predicate} {check}", "Check dependency", "Item / Location"),
-        new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenQuantity, "{predicate} {quantity}", "Quantity only", "Quantity"),
         new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenOptionalQuantity, "{predicate} {quantity?}", "Optional quantity", "Quantity"),
+        new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenQuantity, "{predicate} {quantity}", "Quantity only", "Quantity"),
         new RequirementInputSyntaxOption(RequirementInputSyntax.RequiredDifficultyThenPredicateThenOptionalQuantity, "{difficulty} {predicate} {quantity?}", "Difficulty + optional quantity", "Quantity"),
         new RequirementInputSyntaxOption(RequirementInputSyntax.RequiredDifficultyThenPredicateThenQuantity, "{difficulty} {predicate} {quantity}", "Difficulty + required quantity", "Quantity"),
         new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenQuantityThenCountable, "{predicate} {quantity} {countable}", "Quantity then countable", "Quantity"),
@@ -160,6 +161,7 @@ public static class RequirementCatalogueLanguage
         RequirementInputSyntax.PredicateThenDirectionThenOptionalQuantity or RequirementInputSyntax.PredicateThenOptionalDirectionThenOptionalQuantity => new HashSet<RequirementOutputPlaceholder> { RequirementOutputPlaceholder.Direction, RequirementOutputPlaceholder.Quantity },
         RequirementInputSyntax.RequiredDifficultyThenPredicateThenOptionalQuantity or RequirementInputSyntax.RequiredDifficultyThenPredicateThenQuantity => new HashSet<RequirementOutputPlaceholder> { RequirementOutputPlaceholder.Difficulty, RequirementOutputPlaceholder.Quantity },
         RequirementInputSyntax.RequiredDifficultyThenMethodThenPredicateThenOptionalQuantity => new HashSet<RequirementOutputPlaceholder> { RequirementOutputPlaceholder.Difficulty, RequirementOutputPlaceholder.Method, RequirementOutputPlaceholder.Quantity },
+        RequirementInputSyntax.RequiredDifficultyThenCrestThenPredicateThenOptionalQuantity => new HashSet<RequirementOutputPlaceholder> { RequirementOutputPlaceholder.Difficulty, RequirementOutputPlaceholder.Crest, RequirementOutputPlaceholder.Quantity },
         RequirementInputSyntax.RequiredDifficultyThenPredicateThenSoul => new HashSet<RequirementOutputPlaceholder> { RequirementOutputPlaceholder.Difficulty, RequirementOutputPlaceholder.Soul },
         RequirementInputSyntax.PredicateThenSoul => new HashSet<RequirementOutputPlaceholder> { RequirementOutputPlaceholder.Soul },
         RequirementInputSyntax.PredicateThenQuantityThenCountable => new HashSet<RequirementOutputPlaceholder> { RequirementOutputPlaceholder.Quantity, RequirementOutputPlaceholder.Countable },
@@ -194,7 +196,7 @@ public sealed record RequirementOutputPlaceholderToken(RequirementOutputPlacehol
 
 public static class RequirementOutputTemplate
 {
-    // ONS1, RM1 and PMD1 input list markers never become output placeholder markers.
+    // ONS1, RM1, PMD1 and CQ1 input list markers never become output placeholder markers.
     // Keep literal-output handling of the other choices unchanged.
     internal static bool HasBracketedOns1Placeholder(RequirementInputSyntax syntax, string template) =>
         syntax == RequirementInputSyntax.RequiredDifficultyThenOptionalCrestThenPredicate &&
@@ -204,6 +206,7 @@ public static class RequirementOutputTemplate
         syntax == RequirementInputSyntax.PredicateThenMethod && template.Contains("[{method}]", StringComparison.Ordinal) ||
         syntax == RequirementInputSyntax.RequiredDifficultyThenPredicateThenDirection &&
         (template.Contains("[{difficulty}]", StringComparison.Ordinal) || template.Contains("[{direction}]", StringComparison.Ordinal)) ||
+        syntax == RequirementInputSyntax.RequiredDifficultyThenCrestThenPredicateThenOptionalQuantity && template.Contains("[{crest}]", StringComparison.Ordinal) ||
         RequirementOperandSyntax.HasComposedQuantity(syntax) &&
         new[] { "quantity", "difficulty", "direction", "method" }.Any(role => template.Contains("[{" + role + "}]", StringComparison.Ordinal));
 
