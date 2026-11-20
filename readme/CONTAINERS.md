@@ -2,13 +2,12 @@
 
 The container is an additional application delivery format. The Windows x64 ZIP,
 Linux x64 tarball and macOS ARM64 tarball remain unchanged. There is no Scene Dumper
-or generated-logic publication in this workflow. This guide is not a deployment or
-runtime-validation receipt.
+or generated-logic publication in this workflow.
 
 ## Build and optional GHCR publication (release owner only)
 
-1. Agree the application release version/release notes with the user. After approval,
-   invoke the helper from the development workspace root (version illustrative):
+1. Select the application release version and release notes. Invoke the helper from
+   the separate development suite root (version illustrative):
 
    ```powershell
    ./logic-manager/project/tools/SetReleaseVersion.ps1 -Version 1.2.3
@@ -21,28 +20,21 @@ runtime-validation receipt.
    `publish-logic-manager-release.ps1` source mirror/review.
    That mirror generates sanitized required-mode settings and a consistent public
    SQLite seed with allowlisted scene assets. It does not build or push an image.
-    Declare any custom in-source private roots to the mirror's `-PrivateRoots`.
-    During an authorized release, old local archives, extracted packages and temporary
-    build outputs are disposable; the release owner has standing approval to replace
-    them. Inspect destination status and ignored files first. If only verified generated
-    outputs block the mirror, use `-Force` without another confirmation or archiving
-    obsolete packages. Ignored status alone is not proof of generated content. Preserve
-    source changes, unknown/unrelated files, private data and `.git`; obtain specific
-    authorization if they would be overwritten. Keep successful current-release outputs
-    needed for resumption. This local replacement never authorizes rewriting a published
-    GitHub release or tag.
+   Declare any custom in-source private roots to the mirror's `-PrivateRoots`.
+   Inspect destination status and ignored files before replacement. Use `-Force` only
+   when every overwritten file is confirmed disposable generated output. Preserve
+   source changes, unknown files, private data, `.git`, and current-release outputs
+   needed for resumption. Do not rewrite a published GitHub release or tag.
    The actual source release origin is
    `https://github.com/zerounit-dev/silksong-rando-logic-manager.git`, so the image
    repository is `ghcr.io/zerounit-dev/silksong-rando-logic-manager` unless explicitly
    overridden. Image address and intended public visibility follow that public
-   application repository; neither requires a new user decision. Verify actual GHCR
+   application repository. Verify actual GHCR
    visibility during publication rather than assuming a first push is public.
 2. Review/commit the curated source repository as usual. Never edit mirrored files
    directly. Use that same independent source release checkout for all three standalone
    packages and this image. Keep credentials out of source and the public logic seed.
-3. One authorized application release includes its image push; there is no additional
-   approval gate for each packaging step. This source-delivery guide itself does not
-   authorize publication. For an authorized release, authenticate Docker to GHCR outside
+3. To publish the container image, authenticate Docker to GHCR outside
    the script using the owner's approved credential method and minimum package-write
    access; never pass credentials as script/build arguments or commit them. With
    PowerShell, .NET 10 SDK and a running Docker Linux engine with Buildx available,
@@ -163,7 +155,7 @@ permissions, corruption, unavailable mounts and account/key failures are not per
 to reseed, downgrade auth or automatically reset storage. See the authentication guide
 for full backup, native cookie cutover and recovery limitations.
 
-## Required manual acceptance (not performed by source delivery)
+## Release and deployment validation
 
 - Build all three standalone variants once using the release sequence above and verify
   unchanged archive/launch behavior. Build Linux AMD64 image (load locally or push as

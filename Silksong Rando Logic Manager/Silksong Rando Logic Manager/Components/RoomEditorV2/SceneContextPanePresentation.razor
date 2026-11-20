@@ -7,7 +7,7 @@
 
 <div class="room-context-scene-pane" aria-label="Scene layout pane" data-scene-authoring-allowed="@AuthoringAllowed.ToString().ToLowerInvariant()" data-scene-selected-kind="@(SelectedItem is { } selectedIntent ? KindText(selectedIntent.Kind) : null)" data-scene-selected-id="@SelectedItem?.EntityId">
     @{ var scene = View ?? new SceneLayoutView(false, 0, 0, null, null, [], []); var viewport = SceneViewportMath.Initial(scene); if (UseCurrentViewportBasis && mountedViewport is null && BrowserSetupAdmitted) mountedViewport = viewport; var viewFrame = UseCurrentViewportBasis ? mountedViewport ?? viewport : viewport; }
-    <svg @ref="canvas" class="@($"scene-layout {(placement is null ? "" : "scene-layout-placement-armed")}")" viewBox="@Box(viewFrame)" role="img" aria-label="Scene layout canvas" data-scene-layout-canvas="true" data-scene-initial-viewbox="@Box(viewport)" data-scene-viewport-key="@RoomId" data-scene-owner-generation="@ownerGeneration" data-scene-min-x="@N(scene.SceneMinX)" data-scene-min-y="@N(scene.SceneMinY)" data-scene-max-x="@N(scene.SceneMaxX ?? 0)" data-scene-max-y="@N(scene.SceneMaxY ?? 0)" data-scene-placement-armed="@(placement is null ? null : "true")" tabindex="0">
+    <svg @ref="canvas" class="@($"scene-layout {(placement is null ? "" : "scene-layout-placement-armed")}")" viewBox="@Box(viewFrame)" role="img" aria-label="Scene layout canvas" data-scene-layout-canvas="true" data-scene-initial-viewbox="@Box(viewport)" data-scene-viewport-key="@RoomId" data-scene-owner-generation="@ownerGeneration" data-scene-pointer-receipts="@RenderedPointerReceipts()" data-scene-min-x="@N(scene.SceneMinX)" data-scene-min-y="@N(scene.SceneMinY)" data-scene-max-x="@N(scene.SceneMaxX ?? 0)" data-scene-max-y="@N(scene.SceneMaxY ?? 0)" data-scene-placement-armed="@(placement is null ? null : "true")" tabindex="0">
         @if (scene.HasValidBounds && scene.Image?.IsAvailable == true && scene.SceneUnitWidth is double imageWidth && scene.SceneUnitHeight is double imageHeight) { <image class="scene-layout-image" data-scene-layout-image="true" href="@($"/data/scenes/{RoomId:D}.webp?v={scene.Image.ImageVersion}")" x="@N(scene.SceneMinX)" y="@N(-scene.SceneMaxY!.Value)" width="@N(imageWidth)" height="@N(imageHeight)" preserveAspectRatio="none" /> }
         @if (scene.HasValidBounds && scene.SceneUnitWidth is double width && scene.SceneUnitHeight is double height)
         {
@@ -18,9 +18,9 @@
             <rect class="scene-layout-room-bounds-edge edge-w" data-scene-snap-room-edge="l" x="@N(scene.SceneMinX-1)" y="@N(-scene.SceneMaxY!.Value)" width="1" height="@N(height)" />
         }
         <g data-scene-annotations="true">
-            @foreach (var frame in scene.Frames) { <g class="scene-layout-subroom" data-scene-layout-frame="true" data-scene-selection-kind="subroom" data-scene-id="@frame.EntityId" data-scene-frame-x="@N(frame.X)" data-scene-frame-y="@N(frame.Y)" data-scene-frame-width="@N(frame.Width)" data-scene-frame-height="@N(frame.Height)"><title>@frame.Title</title><rect class="scene-layout-subroom-body" data-scene-frame-target="move" x="@N(frame.X)" y="@N(-frame.Y-frame.Height)" width="@N(frame.Width)" height="@N(frame.Height)" /><rect class="scene-layout-subroom-edge edge-n" data-scene-frame-target="t" x="@N(frame.X)" y="@N(-frame.Y-frame.Height-1)" width="@N(frame.Width)" height="1" /><rect class="scene-layout-subroom-edge edge-s" data-scene-frame-target="b" x="@N(frame.X)" y="@N(-frame.Y)" width="@N(frame.Width)" height="1" /><rect class="scene-layout-subroom-edge edge-e" data-scene-frame-target="r" x="@N(frame.X+frame.Width)" y="@N(-frame.Y-frame.Height)" width="1" height="@N(frame.Height)" /><rect class="scene-layout-subroom-edge edge-w" data-scene-frame-target="l" x="@N(frame.X-1)" y="@N(-frame.Y-frame.Height)" width="1" height="@N(frame.Height)" /><rect class="scene-layout-subroom-corner corner-nw" data-scene-frame-target="tl" x="@N(frame.X-1)" y="@N(-frame.Y-frame.Height-1)" width="2" height="2" /><rect class="scene-layout-subroom-corner corner-ne" data-scene-frame-target="tr" x="@N(frame.X+frame.Width-1)" y="@N(-frame.Y-frame.Height-1)" width="2" height="2" /><rect class="scene-layout-subroom-corner corner-sw" data-scene-frame-target="bl" x="@N(frame.X-1)" y="@N(-frame.Y-1)" width="2" height="2" /><rect class="scene-layout-subroom-corner corner-se" data-scene-frame-target="br" x="@N(frame.X+frame.Width-1)" y="@N(-frame.Y-1)" width="2" height="2" /><text x="@N(frame.X+frame.Width/2)" y="@N(-frame.Y-frame.Height/2)" text-anchor="middle" dominant-baseline="central">@frame.Label</text></g> }
+            @foreach (var frame in scene.Frames) { <g @key="PointerFrameKey(frame.EntityId)" class="scene-layout-subroom" data-scene-layout-frame="true" data-scene-selection-kind="subroom" data-scene-id="@frame.EntityId" data-scene-frame-x="@N(frame.X)" data-scene-frame-y="@N(frame.Y)" data-scene-frame-width="@N(frame.Width)" data-scene-frame-height="@N(frame.Height)"><title>@frame.Title</title><rect class="scene-layout-subroom-body" data-scene-frame-target="move" x="@N(frame.X)" y="@N(-frame.Y-frame.Height)" width="@N(frame.Width)" height="@N(frame.Height)" /><rect class="scene-layout-subroom-edge edge-n" data-scene-frame-target="t" x="@N(frame.X)" y="@N(-frame.Y-frame.Height-1)" width="@N(frame.Width)" height="1" /><rect class="scene-layout-subroom-edge edge-s" data-scene-frame-target="b" x="@N(frame.X)" y="@N(-frame.Y)" width="@N(frame.Width)" height="1" /><rect class="scene-layout-subroom-edge edge-e" data-scene-frame-target="r" x="@N(frame.X+frame.Width)" y="@N(-frame.Y-frame.Height)" width="1" height="@N(frame.Height)" /><rect class="scene-layout-subroom-edge edge-w" data-scene-frame-target="l" x="@N(frame.X-1)" y="@N(-frame.Y-frame.Height)" width="1" height="@N(frame.Height)" /><rect class="scene-layout-subroom-corner corner-nw" data-scene-frame-target="tl" x="@N(frame.X-1)" y="@N(-frame.Y-frame.Height-1)" width="2" height="2" /><rect class="scene-layout-subroom-corner corner-ne" data-scene-frame-target="tr" x="@N(frame.X+frame.Width-1)" y="@N(-frame.Y-frame.Height-1)" width="2" height="2" /><rect class="scene-layout-subroom-corner corner-sw" data-scene-frame-target="bl" x="@N(frame.X-1)" y="@N(-frame.Y-1)" width="2" height="2" /><rect class="scene-layout-subroom-corner corner-se" data-scene-frame-target="br" x="@N(frame.X+frame.Width-1)" y="@N(-frame.Y-1)" width="2" height="2" /><text x="@N(frame.X+frame.Width/2)" y="@N(-frame.Y-frame.Height/2)" text-anchor="middle" dominant-baseline="central">@frame.Label</text></g> }
             @foreach (var thread in scene.RelationshipThreads) { <line class="@($"scene-layout-relationship-thread{(thread.IsOneWayConnection ? " scene-layout-relationship-thread-one-way" : "")}")" data-scene-relationship-thread="true" data-scene-thread-marker-id="@thread.MarkerEntityId" data-scene-thread-frame-id="@thread.FrameEntityId" data-scene-thread-marker-x="@N(thread.MarkerX)" data-scene-thread-marker-y="@N(thread.MarkerY)" data-scene-thread-frame-x="@N(thread.FrameX)" data-scene-thread-frame-y="@N(thread.FrameY)" data-scene-thread-frame-width="@N(thread.FrameWidth)" data-scene-thread-frame-height="@N(thread.FrameHeight)" x1="@N(thread.MarkerX)" y1="@N(-thread.MarkerY)" x2="@N(NearestX(thread))" y2="@N(-NearestY(thread))" style="@ThreadStyle(thread)" /> }
-            @foreach (var marker in scene.Markers) { var y = -marker.Y; <g class="@($"scene-layout-marker scene-layout-{marker.Kind}{(marker.IsEnemy ? " scene-layout-enemy" : "")}")" data-scene-layout-marker="@marker.Kind" data-scene-selection-kind="@marker.Kind" data-scene-id="@marker.EntityId" data-scene-marker-x="@N(marker.X)" data-scene-marker-y="@N(marker.Y)"><title>@marker.Title</title>@if (marker.Kind == "check") { <circle cx="@N(marker.X)" cy="@N(y)" r="1.5" /> } else { <rect x="@N(marker.X-5.25)" y="@N(y-3)" width="10.5" height="6" rx=".6" /><svg:text x="@N(marker.X)" y="@N(y)" text-anchor="middle" dominant-baseline="central">@marker.Label</svg:text> }</g> }
+            @foreach (var marker in scene.Markers) { var y = -marker.Y; <g @key="PointerItemKey(marker.Kind, marker.EntityId)" class="@($"scene-layout-marker scene-layout-{marker.Kind}{(marker.IsEnemy ? " scene-layout-enemy" : "")}")" data-scene-layout-marker="@marker.Kind" data-scene-selection-kind="@marker.Kind" data-scene-id="@marker.EntityId" data-scene-marker-x="@N(marker.X)" data-scene-marker-y="@N(marker.Y)"><title>@marker.Title</title>@if (marker.Kind == "check") { <circle cx="@N(marker.X)" cy="@N(y)" r="1.5" /> } else { <rect x="@N(marker.X-5.25)" y="@N(y-3)" width="10.5" height="6" rx=".6" /><svg:text x="@N(marker.X)" y="@N(y)" text-anchor="middle" dominant-baseline="central">@marker.Label</svg:text> }</g> }
             <g class="row-annotation-foreground" data-v2-row-annotation-foreground="true" aria-hidden="true" pointer-events="none"></g>
         </g>
     </svg>
@@ -61,6 +61,33 @@
     [Parameter] public Func<Guid, long, Task>? NudgeRetryRequested { get; set; }
     private Task RetryKeyboardAsync() => !viewportDisposed && !presentationRetired && SettleKeyboardNudges
         ? NudgeRetryRequested?.Invoke(mountedRoomId, ownerGeneration) ?? Task.CompletedTask : Task.CompletedTask;
+
+    public sealed record PointerDrop(long Revision, string Kind, Guid EntityId, double X, double Y, double? Width, double? Height, long? RetryOf);
+    public sealed record PointerGeometry(double X, double Y, double? Width, double? Height);
+    public sealed record PointerReceipt(long AttemptOwner, long Revision, string Kind, Guid EntityId, string State, long? Sequence = null, Guid? OperationId = null, PointerGeometry? Geometry = null);
+    [Parameter] public Func<Guid, long, PointerDrop, bool, PointerReceipt?>? PointerDropAdmission { get; set; }
+    [Parameter] public Func<long, PointerReceipt[]>? PointerDropReceipts { get; set; }
+    private object? PointerItemKey(string kind, Guid id) => PointerDropAdmission is null ? null : (kind, id);
+    private object? PointerFrameKey(Guid id) => PointerItemKey("subroom", id);
+    public void RestoreDefinitePointerFailures(Guid room, long generation, PointerReceipt[] receipts)
+    {
+        if (IsReadyOwner(room, generation) && PointerDropAdmission is not null && JS is IJSInProcessRuntime browser)
+            browser.InvokeVoid("restoreV3ScenePointerFailures", canvas, room.ToString("N"), generation, receipts);
+    }
+    private static readonly System.Text.Json.JsonSerializerOptions PointerJson = new(System.Text.Json.JsonSerializerDefaults.Web);
+    private long pointerRenderGeneration;
+    private string? RenderedPointerReceipts() => PointerDropReceipts is { } receipts
+        ? System.Text.Json.JsonSerializer.Serialize(new { Render = ++pointerRenderGeneration, Receipts = receipts(ownerGeneration) }, PointerJson) : null;
+    private DotNetObjectReference<PointerReceiptReader>? pointerReader;
+    // Separate read/fence reference, not a retry of the scene callback. The live
+    // WASM admission is synchronous, so after it unwinds no admission can arrive late.
+    public sealed class PointerReceiptReader(SceneContextPanePresentation pane)
+    {
+        [JSInvokable] public PointerReceipt? Inspect(string room, long owner, PointerDrop drop) => pane.ReceivePointerDrop(room, owner, drop, inspectOnly: true);
+    }
+    [JSInvokable] public PointerReceipt? AdmitPointerDrop(string room, long owner, PointerDrop drop) => ReceivePointerDrop(room, owner, drop, inspectOnly: false);
+    private PointerReceipt? ReceivePointerDrop(string room, long owner, PointerDrop drop, bool inspectOnly) =>
+        OwnsMountedOwner(room, owner) ? PointerDropAdmission?.Invoke(mountedRoomId, owner, drop, inspectOnly) : null;
     private SceneViewportBounds? mountedViewport;
     [Parameter] public Guid RoomId { get; set; }
     [Parameter] public SceneAnnotationPlacementRequest? Placement { get; set; }
@@ -142,7 +169,12 @@
         await (OwnerMounted?.Invoke(room, generation) ?? Task.CompletedTask);
         if (!StillAdmitted()) return;
         nativeInitializationAttempted = true;
-        if (SettleKeyboardNudges || UseCurrentViewportBasis)
+        if (PointerDropAdmission is not null)
+        {
+            pointerReader ??= DotNetObjectReference.Create(new PointerReceiptReader(this));
+            await JS.InvokeVoidAsync("initializeV2SceneViewport", renderedCanvas, room.ToString("N"), generation, placementCallback, UseCurrentViewportBasis, SettleKeyboardNudges, pointerReader);
+        }
+        else if (SettleKeyboardNudges || UseCurrentViewportBasis)
             await JS.InvokeVoidAsync("initializeV2SceneViewport", renderedCanvas, room.ToString("N"), generation, placementCallback, UseCurrentViewportBasis, SettleKeyboardNudges);
         else
             await JS.InvokeVoidAsync("initializeV2SceneViewport", renderedCanvas, room.ToString("N"), generation, placementCallback);
@@ -250,7 +282,7 @@
             }
         }
         catch (JSDisconnectedException) { }
-        finally { placementCallback?.Dispose(); placementCallback = null; }
+        finally { placementCallback?.Dispose(); placementCallback = null; pointerReader?.Dispose(); pointerReader = null; }
     }
     public async ValueTask DisposeAsync() { if (viewportDisposed) return; viewportDisposed = true; await RetirePresentationAsync(); }
     private static string N(double value) => value.ToString("R", CultureInfo.InvariantCulture); private static string Box(SceneViewportBounds value) => $"{N(value.X)} {N(value.Y)} {N(value.Width)} {N(value.Height)}";

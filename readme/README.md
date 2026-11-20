@@ -10,7 +10,7 @@ way to begin a room is by importing information collected by the Scene Dumper.
 Read [authentication setup and recovery](AUTHENTICATION.md) before sharing the
 application. Portable packages deliberately use local **bypass** mode; change to
 required mode before exposing through a tunnel. Source checkouts contain actual nonsecret
-`Config/appsettings.json` and Development defaults; the workspace merge preserves its
+`Config/appsettings.json` and Development defaults; retain the installation's
 existing explicit mode, while source publication independently generates required-mode
 defaults. Environment/CLI can override the file; no missing-mode default is inferred.
 Keep credentials outside tracked settings using env/CLI or an external config locator.
@@ -22,7 +22,7 @@ server interface is at `/v2/`; its room, catalogue and scene pages are respectiv
 `/v2/rooms/{id}`, `/v2/requirements` and `/v2/scene-import`. The authoritative room
 import and map-manifest tools remain `/tools/room-import` and `/tools/map-manifest`.
 The former `/v3/` UI URLs are removed without redirects. API, image and download
-URLs are unchanged; neither interface's feature/manual acceptance is implied.
+URLs are unchanged.
 
 1. Extract the release archive into a folder. On Windows, extract the
    `win-x64` ZIP. On mainstream glibc Linux, extract the `linux-x64` tarball;

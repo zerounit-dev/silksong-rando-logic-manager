@@ -2,21 +2,20 @@
 
 Authentication setup, private state, upgrade and recovery instructions:
 [Authentication guide](readme/AUTHENTICATION.md).
-AUTH-NATIVE1 replaces custom sessions with native Identity cookies: 30-minute HTTP/
+Authentication uses native Identity cookies: 30-minute HTTP/
 circuit stamp validation, persistent 400-day sliding tickets, and current-browser
 cookie logout (not copied-cookie/other-circuit revocation). The cutover requires one
 fresh login and an accounts-only forward migration; private account/key backups and
-operator-controlled maintenance are required. Source delivery/review and user manual
-acceptance are separate; this guide is not a deployment or acceptance receipt.
+operator-controlled maintenance are required.
 
-AUTH-PERM1 replaces enforced roles with four independent account permissions:
+Access is controlled by four independent account permissions:
 Manage admins, Manage users, Edit logic, Publish documentation. Admin (all four),
 Contributor (Edit logic only), Read only (none) and derived Custom are checkbox presets,
 not authority. Accounts entry needs either manager; commands also check current target
 and requested protection grants. Publishing needs Publish documentation, not management
-or editing. The source-only forward migration backfills those approved old-role mappings,
-rotates stamps and drops Role after RemoveSessions. One fresh login is expected; no live
-migration/deployment is claimed. Custom cannot be losslessly downgraded; rollback requires
+or editing. The forward migration backfills the old-role mappings,
+rotates stamps and drops Role after RemoveSessions. One fresh login is expected.
+Custom cannot be losslessly downgraded; rollback requires
 matching consistent private account/key state and binaries, not merely an old image.
 
 ## Operator configuration and state
@@ -26,8 +25,8 @@ The actual project settings are `Config/appsettings.json` and native environment
 followed by unprefixed environment and CLI overrides. Explicit `Authentication:Mode` is required;
 there is no automatic bypass. Mutable state defaults to `Storage/`, configurable via
 `Storage:DataRoot`; `Data/` retains C# definitions/migrations only (plus the untouched
-offline test fixture). The workspace runtime DBs/backups/keys/images/history have moved
-to Storage; prior destination state was retained in private ignored relocation rollback.
+offline test fixture). Runtime databases, backups, keys, images, and history belong
+under the selected Storage root; preserve existing state when relocating an installation.
 Select container `/config` through `LogicManager__ConfigDirectory` and `/data` through
 `Storage__DataRoot`. See the authentication guide for deliberate transition, native
 hosting/array precedence, recovery, permissions, consistent backups and exact
@@ -145,8 +144,7 @@ then revalidate or prepare/review anew. Do not blindly delete staging or edit th
 journal. No automatic reset, clean, merge, rebase, force push or destructive fallback
 exists. If a push response was lost, retry the retained commit before attempting a
 new publication. The ordinary logic backup-on-build hook remains unchanged and does
-not back up private publishing credentials/evidence. PUB1 P01–P09 runtime/visual
-acceptance remains user-owned; compilation/source inspection cannot prove those cases.
+not back up private publishing credentials/evidence.
 
 Silksong Rando Logic Manager is a local, single-user tool for documenting
 Silksong rooms and the logic used to traverse them. It manages rooms, exits,
@@ -217,9 +215,7 @@ The internal identity and executable graph are generated only in an admitted app
 Build, before compilation and native static-asset discovery. Design-time work, reference/
 asset getters and publishing existing outputs must reuse completed outputs, not mint
 another identity. Shared compiler/IDE dependencies preserve coherent incremental builds
-without requiring Clean/Rebuild or disabling the IDE up-to-date check. COHERENCE1 evidence
-and outstanding IDE/runtime acceptance are recorded in the stamp implementation evidence
-and manual acceptance register; compilation alone does not establish those outcomes.
+without requiring Clean/Rebuild or disabling the IDE up-to-date check.
 
 ## Data and upgrades
 

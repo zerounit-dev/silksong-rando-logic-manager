@@ -5,8 +5,8 @@ Before startup, explicitly set `Authentication:Mode` to exactly `required` or
 explicit environment/command-line key. `appsettings.example.json` beside this guide
 is a nonsecret example, not a runtime file. The project now contains actual tracked,
 vetted nonsecret settings under Config, not root appsettings files or a separate auth
-mode file. The local source restructure preserves its prior explicit mode exactly;
-it is not a new choice of mode. Missing/invalid mode stops startup before
+mode file. Preserve the installation's explicit mode when upgrading.
+Missing/invalid mode stops startup before
 application startup writes; there is no automatic bypass or legacy-file fallback.
 
 ## Configuration, paths and precedence
@@ -55,14 +55,11 @@ adds no blanket hot-reload or restart-only rule.
 
 ### Deliberate transition and updates
 
-The source project restructure merges its old root settings and auth mode, relocates
-Development defaults, retires those old source files and tracks an empty Storage marker.
-The authorized one-time workspace restructure also selectively moved runtime DBs with
-all sidecars, backups, keys, history and scene stores into Storage without initialization.
-The preexisting destination state is preserved together in private ignored
-`Storage/_relocation-rollback/`, with an exact private manifest; never distribute it.
-No application startup migration/move/merge was added. Keep that rollback material private
-until its owner deliberately decides its disposition; no automatic retention/deletion exists.
+Older installations may keep settings and state in the previous root/Data locations.
+Relocation is an explicit operator task, not an automatic startup migration or merge.
+Preserve complete consistent copies of the previous and destination state, including
+SQLite sidecars, backups, keys, history, and scene stores, before moving anything.
+Keep recovery copies and relocation manifests private; never distribute them.
 For a separate older deployed installation, in an operator-controlled copy consolidate the old auth `mode` as
 `Authentication:Mode`; retain its exact required/bypass choice. Consolidate previous
 image/native settings and `data/Publishing/settings.private.json` under the existing
@@ -119,7 +116,7 @@ dotnet build "Silksong Rando Logic Manager/Silksong Rando Logic Manager/Silksong
 ./tools/PackagePortableRelease.ps1 -RuntimeIdentifier win-x64 -PrivateRoots @('LocalPrivate')
 ```
 
-From the umbrella workspace (publication-owner action, not an acceptance-build step):
+When using the separate development suite's source-publication helper:
 
 ```powershell
 ./publish-logic-manager-release.ps1 -PrivateRoots @('LocalPrivate')
@@ -334,8 +331,7 @@ are never replayed automatically.
 
 ### Native-cookie cutover
 
-Source engineering does not deploy, restart or migrate a live installation. The operator
-owns the later maintenance action and matching-artifact sign-in checks. Before upgrading,
+Schedule the upgrade and sign-in checks as operator-controlled maintenance. Before upgrading,
 make the consistent private account/key/config backup described above; the logic-only
 build backup does not protect accounts. Retain matching pre-cutover binaries if rollback
 is needed.
@@ -354,9 +350,9 @@ Restoring both old account stamps/passwords and keys unchanged can restore crede
 validity; do not assume cryptographic revocation survives that restoration. Explicit
 bypass recovery rotates stamps, which are detected at native validation boundaries.
 
-### Permissions cutover (AUTH-PERM1)
+### Permissions cutover
 
-The source candidate adds `20261114010000_AccountPermissions` after RemoveSessions.
+The `20261114010000_AccountPermissions` migration follows RemoveSessions.
 It adds four Boolean account fields, backfills existing Admin to all four, Contributor
 to Edit logic only and ReadOnly to none, changes security/concurrency stamps, then removes
 Role. Unsupported historical role values fail the migration transaction with an actionable
@@ -365,7 +361,7 @@ replacement/lockout state, hashes, Identity support data, keys and private locat
 New databases reach the same target through the complete migration chain.
 
 Operator maintenance/consistent private account+key backup is required before applying
-this migration; it was **not** run during source delivery. The logic-only build backup
+this migration. The logic-only build backup
 does not protect accounts. Old role cookies cannot authorize permissions and rotated
 stamps require one fresh login at native detection. Stale open documents/forms may need
 reload/reopen. HTTP/circuit timing, 400-day sliding cookies and logout limits above remain.

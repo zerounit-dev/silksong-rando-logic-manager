@@ -79,6 +79,7 @@ public partial class RoomWorkspaceEditor
     {
         readinessTiming = Shell.TakeRoomEntryTiming(EntryStarted);
         workspace = new(Entry);
+        workspace.AcceptanceObserved += ObservePointerAcceptancePause;
         workspace.AcceptanceObserved += NotifyRoomActions;
         if (workspace.AdmittedQueue is { } queue) queue.IntentAppended += ObserveAppendedRoomIntent;
         InstallRoomMap(MapContext);
@@ -314,6 +315,7 @@ public partial class RoomWorkspaceEditor
                     {
                         workspace.Queue.MarkBatchSent(batch.RequestId);
                         RetainReleasedRoomUncertainty();
+                        ObservePointerDropDispatch();
                         RetainBatchSource(source);
                     });
                     try
@@ -328,16 +330,17 @@ public partial class RoomWorkspaceEditor
             }
             timing.End(QueueTimingOutcome);
         }
-        catch (ConfirmedCatalogue.RoomTrackingUnavailableException) { timing.End(TimingOutcome.Uncertain); if (Current) { workspace.Queue.LoseTracking(); ObserveRoomRequestFailure(); ObserveKeyboardFailure(); StateHasChanged(); } }
+        catch (ConfirmedCatalogue.RoomTrackingUnavailableException) { timing.End(TimingOutcome.Uncertain); if (Current) { workspace.Queue.LoseTracking(); ObservePointerDropFailure(); ObserveRoomRequestFailure(); ObserveKeyboardFailure(); StateHasChanged(); } }
         catch (Exception exception)
         {
             workspace.Queue.RequestFailed();
+            ObservePointerDropFailure();
             ObserveRoomRequestFailure();
             ObserveKeyboardFailure();
             timing.End(QueueTimingOutcome == TimingOutcome.Complete ? TimingOutcome.FailedOrRetired : QueueTimingOutcome);
-            if (Current) await Shell.ReportRoomErrorAsync(exception, workspace.Queue.ProjectionPending
+            if (Current) await Shell.ReportRoomErrorAsync(exception, PointerRoomFailureMessage(workspace.Queue.ProjectionPending
                 ? "Saved; authoritative refresh failed. Retry reads the retained result and does not repeat the write."
-                : "The room request could not be completed. Pending work has been retained; Retry recovers progress before any further write.");
+                : "The room request could not be completed. Pending work has been retained; Retry recovers progress before any further write."));
         }
         finally
         {
@@ -388,7 +391,11 @@ public partial class RoomWorkspaceEditor
                         // head. The tracker serializes/deduplicates a late original POST.
                         workspace.Queue.BeginControlRequest();
                         RetainResolutionSource(request, admission);
-                        var saved = await admission.ResolveRoomHeadAsync(workspace.Queue.Identity, request, () => ObserveResolutionDispatch(request));
+                        var saved = await admission.ResolveRoomHeadAsync(workspace.Queue.Identity, request, () =>
+                        {
+                            ObserveResolutionDispatch(request);
+                            ObservePointerDropDispatch(request);
+                        });
                         resolved = saved.Received;
                         if (!Current) return;
                         IncorporateRoomSaveResponse(saved, admission, warning => historyWarning ??= warning);
@@ -406,8 +413,8 @@ public partial class RoomWorkspaceEditor
             }, lifetime.Token);
             timing.End(QueueTimingOutcome);
         }
-        catch (ConfirmedCatalogue.RoomTrackingUnavailableException) { timing.End(TimingOutcome.Uncertain); if (Current) { workspace.Queue.LoseTracking(); ObserveRoomRequestFailure(); ObserveKeyboardFailure(); } }
-        catch (Exception exception) { workspace.Queue.RequestFailed(); ObserveRoomRequestFailure(); ObserveKeyboardFailure(); timing.End(QueueTimingOutcome == TimingOutcome.Complete ? TimingOutcome.FailedOrRetired : QueueTimingOutcome); if (Current) await Shell.ReportRoomErrorAsync(exception, "Room progress could not be recovered. No write was repeated."); }
+        catch (ConfirmedCatalogue.RoomTrackingUnavailableException) { timing.End(TimingOutcome.Uncertain); if (Current) { workspace.Queue.LoseTracking(); ObservePointerDropFailure(); ObserveRoomRequestFailure(); ObserveKeyboardFailure(); } }
+        catch (Exception exception) { workspace.Queue.RequestFailed(); ObservePointerDropFailure(); ObserveRoomRequestFailure(); ObserveKeyboardFailure(); timing.End(QueueTimingOutcome == TimingOutcome.Complete ? TimingOutcome.FailedOrRetired : QueueTimingOutcome); if (Current) await Shell.ReportRoomErrorAsync(exception, PointerRoomFailureMessage("Room progress could not be recovered. No write was repeated.")); }
         finally
         {
             try { controlPending = false; if (Current) { StateHasChanged(); await Shell.DrainRoomRefreshAsync(); } }
@@ -435,7 +442,11 @@ public partial class RoomWorkspaceEditor
             {
                 admissionTiming.End();
                 RetainResolutionSource(request, admission);
-                var response = await admission.ResolveRoomHeadAsync(identity, request, () => ObserveResolutionDispatch(request));
+                var response = await admission.ResolveRoomHeadAsync(identity, request, () =>
+                {
+                    ObserveResolutionDispatch(request);
+                    ObservePointerDropDispatch(request);
+                });
                 try
                 {
                     if (!Current) return;
@@ -448,8 +459,8 @@ public partial class RoomWorkspaceEditor
             }, lifetime.Token);
             timing.End(QueueTimingOutcome);
         }
-        catch (ConfirmedCatalogue.RoomTrackingUnavailableException) { timing.End(TimingOutcome.Uncertain); if (Current) { workspace.Queue.LoseTracking(); ObserveRoomRequestFailure(); ObserveKeyboardFailure(); } }
-        catch (Exception exception) { workspace.Queue.RequestFailed(); ObserveRoomRequestFailure(); ObserveKeyboardFailure(); timing.End(QueueTimingOutcome == TimingOutcome.Complete ? TimingOutcome.FailedOrRetired : QueueTimingOutcome); if (Current) await Shell.ReportRoomErrorAsync(exception, "The reviewed room choice could not be confirmed. Retry recovers progress and reuses the exact same attempt only if still required."); }
+        catch (ConfirmedCatalogue.RoomTrackingUnavailableException) { timing.End(TimingOutcome.Uncertain); if (Current) { workspace.Queue.LoseTracking(); ObservePointerDropFailure(); ObserveRoomRequestFailure(); ObserveKeyboardFailure(); } }
+        catch (Exception exception) { workspace.Queue.RequestFailed(); ObservePointerDropFailure(); ObserveRoomRequestFailure(); ObserveKeyboardFailure(); timing.End(QueueTimingOutcome == TimingOutcome.Complete ? TimingOutcome.FailedOrRetired : QueueTimingOutcome); if (Current) await Shell.ReportRoomErrorAsync(exception, PointerRoomFailureMessage("The reviewed room choice could not be confirmed. Retry recovers progress and reuses the exact same attempt only if still required.")); }
         finally
         {
             try

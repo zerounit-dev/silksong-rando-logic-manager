@@ -247,7 +247,13 @@ public partial class RoomWorkspaceEditor
         var beforeDocument = workspace.Queue.Confirmed.Document;
         var incorporatedBefore = workspace.Queue.IncorporatedThrough;
         var reorders = workspace.Queue.PendingIntent.Where(x => x.Operation is ReorderRoomConnection).ToArray();
-        workspace.Incorporate(response, nativeOwner!, segments => admission.PreparePublication(segments, RoomPublicationSources(response)));
+        workspace.Incorporate(response, nativeOwner!, segments =>
+        {
+            ObserveValidatedPointerDropResponse(response);
+            return admission.PreparePublication(segments, RoomPublicationSources(response));
+        });
+        SettleIncorporatedPointerDrops();
+        PublishDefinitePointerFailures();
         if (workspace.Queue.Confirmed.Document is { } admittedDocument && !ReferenceEquals(beforeDocument, admittedDocument))
             admission.ObserveRoomImage(admittedDocument);
         ObserveKeyboardResponse(response);

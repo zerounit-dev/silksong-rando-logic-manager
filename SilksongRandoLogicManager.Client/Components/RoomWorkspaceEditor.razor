@@ -86,6 +86,7 @@ else
                     <div class="room-context-divider" aria-hidden="true"></div>
                     <SceneContextPanePresentation InteractionAdmission="AdmitSceneInteractionAsync" RoomId="Entry.RoomId" AuthoringAllowed="@(!AuthoringBlocked)" UseCurrentViewportBasis="true" SettleKeyboardNudges="true" NudgeCaptured="CaptureKeyboardNudge" NudgeAdmitted="AdmitKeyboardNudge" NudgeRetryRequested="RetryKeyboardNudgeAsync" View="workspace.Confirmed.Document?.Scene" Placement="scenePlacement" TakePlacementFocus="TakeSceneFocus"
                         @ref="scenePane" SelectedItem="sceneSelection" ActionBox="SceneActionBox" ActionRequested="SceneActionAsync" OwnerMounted="SceneMountedAsync" OwnerReady="SceneReadyAsync" OwnerFailed="SceneFailedAsync" BrowserSetupAllowed="SceneSetupAllowed" LayerVisibilityChanged="SceneLayerVisibilityAsync"
+                        PointerDropAdmission="AdmitPointerDrop" PointerDropReceipts="RenderPointerDropReceipts"
                         SelectionChanged="SceneSelectionAsync" PlacementCommitted="ScenePlacementAsync" PlacementCancelled="SceneCancelPlacementAsync" MarkerDragCommitted="SceneMoveAsync" SceneNudgeCommitted="SceneMoveAsync" FrameGeometryCommitted="SceneRectangleAsync" Capture="OpenImageAsync" />
                 </section>
                 <div class="room-map-context-height-handle" data-v2-map-context-height-handle="true" aria-hidden="true"></div>
@@ -156,7 +157,7 @@ else
     <div class="confirmation-backdrop v2-page-modal-backdrop" role="presentation">
     <section id="v3-room-review-dialog" @ref="reviewDialog" class="confirmation-modal v2-page-modal" role="dialog" aria-modal="true" aria-labelledby="room-review-title" tabindex="-1">
         <h2 id="room-review-title">Room tracking is no longer available</h2>
-        <p>Some submitted work may already be saved. Refresh reloads durable data and discards pending local work; it cannot undo saved changes.</p>
+        <p>@PointerRoomFailureMessage("Some submitted work may already be saved. Refresh reloads durable data and discards pending local work; it cannot undo saved changes.")</p>
         <textarea readonly class="markdown-editor" aria-label="Copyable pending room work">@OperationAccount</textarea>
         <div class="confirmation-actions"><button type="button" @onclick="RefreshDocument">Refresh</button></div>
     </section>

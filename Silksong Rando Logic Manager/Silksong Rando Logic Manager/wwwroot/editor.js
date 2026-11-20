@@ -58,7 +58,7 @@ window.focusAndSelect = (element) => {
 
 /* V2 scene navigation is isolated to its mounted pane. It has no .NET callback
    or durable persistence. Its zone-pane preference is tab-local browser state. */
-window.initializeV2SceneViewport = (svg, viewKey, ownerGeneration, placementCallback, useCurrentViewportBasis = false, settleKeyboardNudges = false) => {
+window.initializeV2SceneViewport = (svg, viewKey, ownerGeneration, placementCallback, useCurrentViewportBasis = false, settleKeyboardNudges = false, pointerReader = null) => {
     if (!(svg instanceof SVGElement)) return;
     // Test and legacy callers without an explicit owner generation remain a
     // browser-only owner; mounted V2 panes always provide the fourth argument.
@@ -72,7 +72,7 @@ window.initializeV2SceneViewport = (svg, viewKey, ownerGeneration, placementCall
     // retaining this SVG and room key. Reconcile those current nodes without
     // resetting the pane-local shown state or viewport lifecycle.
     if (useCurrentViewportBasis && (Number(svg.dataset.sceneOwnerGeneration) !== ownerGeneration || !svg.isConnected)) return;
-    if (state?.key === viewKey) { state.reconcile?.(ownerGeneration, useCurrentViewportBasis ? initial : null); svg.closest(".room-editor-v2")?.[v2ChildInteractionOwnerKey]?.reconcileAttention?.(); return; }
+    if (state?.key === viewKey && (!pointerReader || state.ownsOwner?.(ownerGeneration))) { state.reconcile?.(ownerGeneration, useCurrentViewportBasis ? initial : null); svg.closest(".room-editor-v2")?.[v2ChildInteractionOwnerKey]?.reconcileAttention?.(); return; }
     state?.dispose();
     const parse = value => String(value).split(" ").map(Number), apply = view => svg.setAttribute("viewBox", view.join(" "));
     const clamp = view => { const width = Math.min(initial[2], Math.max(initial[2] / 8, view[2])), height = width * initial[3] / initial[2]; return [Math.max(initial[0], Math.min(initial[0] + initial[2] - width, view[0])), Math.max(initial[1], Math.min(initial[1] + initial[3] - height, view[1])), width, height]; };
@@ -110,6 +110,16 @@ window.initializeV2SceneViewport = (svg, viewKey, ownerGeneration, placementCall
     // its browser visual until its one command/refresh settles. Track that visual
     // separately so replacing or disposing this room owner cannot strand it.
     const markerVisuals = new Set();
+    const pointerDrops = new Map();
+    let pointerRevision = 0, pointerRetryEpoch = 0, unconfirmedPointer = null, pointerSelection = null;
+    const cancelledPointerIds = new Set();
+    const consumePointerRelease = pointerId => { if (pointerReader) cancelledPointerIds.add(pointerId); };
+    const pointerKey = (kind, id) => `${kind}:${id.toLowerCase()}`;
+    const ownsPointerTarget = item => pointerReader && item && pointerDrops.has(pointerKey(item.dataset.sceneSelectionKind, item.dataset.sceneId));
+    const pointerPreview = (kind, id) => {
+        const value = kind && id && pointerDrops.get(pointerKey(kind, id));
+        return value?.hasGeometry && !["unsent", "blocked", "unexecuted"].includes(value.state) ? value : null;
+    };
     // Retained keyboard intent is independent of pointer visuals and selection.
     // No queued item is ever changed here. Only the current unqueued burst mutates.
     const keyboardDrafts = new Map(), keyboardNodes = new Set();
@@ -121,9 +131,12 @@ window.initializeV2SceneViewport = (svg, viewKey, ownerGeneration, placementCall
     };
     const markerVisual = id => { let found = null; markerVisuals.forEach(value => { if (value.id === id) found = value; }); return found; };
     const relationshipGeometry = thread => {
-        const marker = keyboardPreview(thread.markerId) || markerVisual(thread.markerId), markerGeometry = marker ? { x: marker.x, y: marker.y } : thread.marker;
+        const drag = pointerReader && down?.markerPose;
+        const marker = (drag && drag.id === thread.markerId && drag.kind === thread.markerKind ? drag : null)
+            || pointerPreview(thread.markerKind, thread.markerId) || keyboardPreview(thread.markerId) || markerVisual(thread.markerId), markerGeometry = marker ? { x: marker.x, y: marker.y } : thread.marker;
         const keyboardFrame = keyboardPreview(thread.frameId);
-        const frameGeometry = keyboardFrame ? { x: keyboardFrame.x, y: keyboardFrame.y, w: keyboardFrame.width, h: keyboardFrame.height } : frameVisual?.item?.dataset?.sceneId?.toLowerCase() === thread.frameId ? frameVisual.geometry : thread.frame;
+        const pointerFrame = pointerPreview("subroom", thread.frameId);
+        const frameGeometry = pointerFrame ? { x: pointerFrame.x, y: pointerFrame.y, w: pointerFrame.width, h: pointerFrame.height } : keyboardFrame ? { x: keyboardFrame.x, y: keyboardFrame.y, w: keyboardFrame.width, h: keyboardFrame.height } : frameVisual?.item?.dataset?.sceneId?.toLowerCase() === thread.frameId ? frameVisual.geometry : thread.frame;
         return { marker: markerGeometry, frame: frameGeometry };
     };
     const renderRelationship = (thread, markerOverride = null, frameOverride = null) => {
@@ -171,14 +184,16 @@ window.initializeV2SceneViewport = (svg, viewKey, ownerGeneration, placementCall
             if (category(explicitIntent?.kind) === key) explicitIntent = null;
             if (category(capturedIntent?.kind) === key) capturedIntent = null;
             if (category(armed?.kind) === key) { armed = null; clearDraft(); if (status) status.textContent = ""; svg.classList.remove("scene-layout-placement-armed"); svg.style.cursor = ""; }
+            if (category(pointerSelection?.kind) === key) pointerSelection = null;
             if (category(selected?.dataset.sceneSelectionKind) === key) { selected.classList.remove("selected"); selected = null; nudgeEpoch++; nudgeGeometry = null; }
-            const gestureKind = down?.drawStart ? "subroom" : (down?.frame || down?.drag)?.dataset.sceneSelectionKind;
+            const gestureKind = down?.drawStart ? "subroom" : down?.pointerTarget?.kind ?? (down?.frame || down?.drag)?.dataset.sceneSelectionKind;
             if (category(gestureKind) === key) cancelGesture();
             if (key === "subroom") {
                 restoreFrameVisual(); clearSnap();
                 // A different category's gesture is preserved; remove only the
                 // now-ineligible frame targets/locks from its snap candidates.
-                if (down?.candidates) down.candidates = candidates(down.frame);
+                if (down?.frame && down.pointerTarget) refreshPointerSnapCandidates();
+                else if (down?.candidates) down.candidates = candidates(down.frame);
             }
             for (const visual of [...markerVisuals]) if (category(visual.item.dataset.sceneSelectionKind) === key) { visual.item.style.transform = ""; markerVisuals.delete(visual); }
             if (category(failedMarker?.kind) === key) clearFailure();
@@ -353,8 +368,9 @@ window.initializeV2SceneViewport = (svg, viewKey, ownerGeneration, placementCall
         if (!frameVisual) return;
         const frameId = frameVisual.item.dataset.sceneId;
         frameVisual.item.style.transform = "";
-        if (frameVisual.reconciled) {
-            applyFrameGeometry(frameVisual.item, { x: Number(frameVisual.item.dataset.sceneFrameX), y: Number(frameVisual.item.dataset.sceneFrameY), w: Number(frameVisual.item.dataset.sceneFrameWidth), h: Number(frameVisual.item.dataset.sceneFrameHeight) });
+        if (frameVisual.reconciled || down?.pointerTarget?.node === frameVisual.item) {
+            if (!pointerReader || frameVisual.item.matches("[data-scene-layout-frame=true]") && valid(frameVisual.item))
+                applyFrameGeometry(frameVisual.item, { x: Number(frameVisual.item.dataset.sceneFrameX), y: Number(frameVisual.item.dataset.sceneFrameY), w: Number(frameVisual.item.dataset.sceneFrameWidth), h: Number(frameVisual.item.dataset.sceneFrameHeight) });
         } else {
             for (const [node, name, value] of frameVisual.values) {
                 if (value === null) node.removeAttribute?.(name); else node.setAttribute(name, value);
@@ -396,15 +412,180 @@ window.initializeV2SceneViewport = (svg, viewKey, ownerGeneration, placementCall
         frameVisual = null;
         updateFrameRelationships(currentItem.dataset.sceneId);
     };
+    const pointerItem = value => svg.querySelector(`[data-scene-selection-kind='${value.kind}'][data-scene-id='${value.id}']`);
+    const rememberPointerSelection = item => {
+        if (pointerReader) pointerSelection = item ? { kind:item.dataset.sceneSelectionKind, id:item.dataset.sceneId.toLowerCase() } : null;
+    };
+    const rebindPointerSelection = () => {
+        if (!pointerReader || !pointerSelection) return;
+        const item = pointerItem(pointerSelection);
+        const typedMatch = pane.dataset.sceneSelectedKind === pointerSelection.kind
+            && pane.dataset.sceneSelectedId?.toLowerCase() === pointerSelection.id;
+        if (item && item === selected && visibleKind(pointerSelection.kind)) {
+            if (typedMatch) item.classList.add("selected");
+            return;
+        }
+        // A replacement must still match both the local selection (not a
+        // discarded drag) and the Room's rendered typed selection. Never focus.
+        selected?.classList.remove("selected");
+        if (visibleItem(item) && typedMatch) {
+            selected = item;
+            selected.classList.add("selected");
+        } else { selected = null; pointerSelection = null; }
+    };
+    const restorePointerNode = value => {
+        if (!value.node) return;
+        const item = value.node;
+        item.style.transform = "";
+        if (value.kind === "subroom") applyFrameGeometry(item, { x: Number(item.dataset.sceneFrameX), y: Number(item.dataset.sceneFrameY), w: Number(item.dataset.sceneFrameWidth), h: Number(item.dataset.sceneFrameHeight) });
+        value.node = null;
+    };
+    const paintPointerDrop = value => {
+        const item = pointerItem(value);
+        if (!item || !pointerPreview(value.kind, value.id)) { restorePointerNode(value); return; }
+        if (value.node && value.node !== item) restorePointerNode(value);
+        value.node = item;
+        if (value.kind === "subroom") applyFrameGeometry(item, { x: value.x, y: value.y, w: value.width, h: value.height });
+        else item.style.transform = `translate(${value.x - Number(item.dataset.sceneMarkerX)}px, ${Number(item.dataset.sceneMarkerY) - value.y}px)`;
+    };
+    const refreshPointerRelationships = () => { relationshipThreads.forEach(thread => renderRelationship(thread)); syncAttention(); };
+    const receivePointerReceipt = (value, receipt, rendered) => {
+        const key = pointerKey(value.kind, value.id);
+        if (!ownsCurrentGeneration() || !svg.isConnected || Number(svg.dataset.sceneOwnerGeneration) !== value.owner
+            || currentOwnerGeneration !== value.owner || pointerDrops.get(key) !== value || !receipt
+            || receipt.attemptOwner !== value.attemptOwner || receipt.revision !== value.revision || receipt.kind !== value.kind || receipt.entityId.toLowerCase() !== value.id
+            || value.sequence != null && (value.sequence !== receipt.sequence || value.operationId !== receipt.operationId)) return false;
+        if (receipt.sequence != null) { value.sequence = receipt.sequence; value.operationId = receipt.operationId; }
+        // The callback must never release an incorporated revision or roll back
+        // a newer failure/render observation. Only this SVG's render can settle.
+        if (!rendered && value.observedRender) return true;
+        if (rendered) value.observedRender = true;
+        if (receipt.geometry) { Object.assign(value, receipt.geometry); value.hasGeometry = true; }
+        if (receipt.state === "prequeueFailed" && value.sequence == null) {
+            restorePointerNode(value);
+            pointerDrops.delete(key);
+            if (value.kind !== "subroom" && pointerItem(value) && visibleKind(value.kind) && value.retryEpoch === pointerRetryEpoch)
+                failure({ ...value, pointerRetry: true });
+        } else if (rendered && (receipt.state === "settled" || receipt.state === "resolved")) {
+            restorePointerNode(value);
+            pointerDrops.delete(key);
+        } else if (receipt.state !== "settled" && receipt.state !== "resolved") value.state = receipt.state;
+        return true;
+    };
+    const inspectPointerDrop = value => {
+        const { revision, kind, entityId, x, y, width, height, retryOf } = value;
+        try { return pointerReader.invokeMethod("Inspect", viewKey, value.owner, { revision, kind, entityId, x, y, width, height, retryOf }); }
+        catch { return null; }
+    };
+    const renderedPointerReceipts = () => JSON.parse(svg.dataset.scenePointerReceipts || "{}").receipts || [];
+    const pointerReceiptPending = receipt => receipt.sequence != null && receipt.state !== "settled" && receipt.state !== "resolved";
+    const reconcilePointerDrops = (receipts = null) => {
+        if (!pointerReader || !ownsCurrentGeneration() || !svg.isConnected || Number(svg.dataset.sceneOwnerGeneration) !== currentOwnerGeneration) return;
+        // Razor emitted this ledger with the same authoritative geometry/identity
+        // datasets, even when a no-op retained every marker/frame DOM node.
+        for (const receipt of receipts || renderedPointerReceipts()) {
+            const id = receipt.entityId.toLowerCase(), key = pointerKey(receipt.kind, id);
+            let value = pointerDrops.get(key);
+            if (unconfirmedPointer?.id === id && unconfirmedPointer.kind === receipt.kind
+                && unconfirmedPointer.attemptOwner === receipt.attemptOwner && unconfirmedPointer.revision === receipt.revision) {
+                if (!value && receipt.state === "prequeueFailed") {
+                    value = unconfirmedPointer;
+                    pointerDrops.set(key, value);
+                }
+                clearPointerUnconfirmed();
+            }
+            // A replacement pane may paint/reserve admitted work (even without
+            // a rendered target). It never inherits a callback, retry or selection.
+            if (!value && pointerReceiptPending(receipt)) {
+                value = { id, kind: receipt.kind, owner: currentOwnerGeneration, attemptOwner: receipt.attemptOwner, revision: receipt.revision };
+                pointerDrops.set(key, value);
+            }
+            if (value && value.failureRender !== svg.dataset.scenePointerReceipts) {
+                delete value.failureRender;
+                receivePointerReceipt(value, receipt, true);
+            }
+        }
+        // Razor may reuse a node for a different identity. Clear all obsolete
+        // node ownership before painting any current targets, independent of order.
+        pointerDrops.forEach(value => { if (value.node && value.node !== pointerItem(value)) restorePointerNode(value); });
+        pointerDrops.forEach(paintPointerDrop);
+    };
+    const restoreDefinitePointerFailures = (room, owner, receipts) => {
+        if (!pointerReader || !ownsCurrentGeneration() || !svg.isConnected || room !== viewKey
+            || owner !== currentOwnerGeneration || Number(svg.dataset.sceneOwnerGeneration) !== owner) return;
+        let restored = false;
+        for (const receipt of receipts) {
+            if (receipt.sequence == null || !receipt.operationId || !["blocked", "unsent", "unexecuted"].includes(receipt.state)) continue;
+            const value = pointerDrops.get(pointerKey(receipt.kind, receipt.entityId));
+            if (!value || !receivePointerReceipt(value, receipt, true)) continue;
+            // Do not consume an older SVG batch that is already in the DOM and
+            // awaiting its observer. Only the next authoritative batch advances.
+            value.failureRender = svg.dataset.scenePointerReceipts;
+            restorePointerNode(value);
+            restored = true;
+        }
+        if (restored) { rebuildRelationships(); syncAttention(); }
+    };
+    // Receive the result even if the existing managed setup flight skips an
+    // OnAfterRender rebind. The observer runs after the authoritative DOM batch,
+    // not on transport success; our own presentation never writes this attribute.
+    const pointerRender = pointerReader ? new MutationObserver(() => {
+        if (!ownsCurrentGeneration() || !svg.isConnected || Number(svg.dataset.sceneOwnerGeneration) !== currentOwnerGeneration) return;
+        const receipts = renderedPointerReceipts();
+        if (!down?.pointerTarget && !pointerSelection && !pointerDrops.size && !unconfirmedPointer && !receipts.some(pointerReceiptPending)) return;
+        validateActivePointer(true);
+        rebindPointerSelection();
+        rebuildRelationships();
+        reconcilePointerDrops(receipts);
+        repaintActivePointer();
+        refreshPointerRelationships();
+    }) : null;
+    const submitPointerDrop = (kind, id, x, y, width = null, height = null, retryOf = null) => {
+        id = id.toLowerCase();
+        const key = pointerKey(kind, id), owner = currentOwnerGeneration;
+        if (!ownsCurrentGeneration() || !svg.isConnected || Number(svg.dataset.sceneOwnerGeneration) !== owner || pointerDrops.has(key)) return;
+        const drop = { revision: ++pointerRevision, kind, entityId: id, x, y, width, height, retryOf };
+        const value = { ...drop, id, owner, attemptOwner: owner, retryEpoch: pointerRetryEpoch, state: "unknown", hasGeometry: true };
+        pointerDrops.set(key, value);
+        paintPointerDrop(value);
+        refreshPointerRelationships();
+        let receipt;
+        try { receipt = placementCallback.invokeMethod("AdmitPointerDrop", viewKey, owner, drop); }
+        catch { /* No proof. Inspect via the independent reference below. */ }
+        // The synchronous admission has unwound, even after a null return.
+        // Never ask the original callback to execute the command again.
+        if (!receivePointerReceipt(value, receipt, false) && pointerDrops.get(key) === value
+            && !receivePointerReceipt(value, inspectPointerDrop(value), false)) queueMicrotask(() => {
+            if (!ownsCurrentGeneration() || !svg.isConnected || Number(svg.dataset.sceneOwnerGeneration) !== owner
+                || currentOwnerGeneration !== owner || pointerDrops.get(key) !== value || value.sequence != null) return;
+            if (!receivePointerReceipt(value, inspectPointerDrop(value), false)) {
+                // Bounded local inspection could not prove rejection or admission.
+                // Release only the browser claim; any actual append still has a Room
+                // owner and a later render can adopt it without rerunning the gesture.
+                restorePointerNode(value);
+                pointerDrops.delete(key);
+                if (value.retryEpoch === pointerRetryEpoch && !armed && !keyboardStatusOwned && !failedMarker && status) {
+                    unconfirmedPointer = value;
+                    status.textContent = "Movement could not be confirmed.";
+                }
+                reconcilePointerDrops();
+            } else if (pointerDrops.get(key) === value) paintPointerDrop(value);
+            refreshPointerRelationships();
+        });
+        if (!ownsCurrentGeneration() || currentOwnerGeneration !== owner || !svg.isConnected) return;
+        if (pointerDrops.get(key) === value) paintPointerDrop(value);
+        refreshPointerRelationships();
+    };
     const armedInstruction = value => value?.kind === "subroom"
         ? "draw subroom rectangle; drag to the opposite corner, or press Escape to cancel"
         : value ? `place ${value.kind} annotation; click the scene, or press Escape to cancel` : "";
-    const clearFailure = () => { failedMarker=null; if(status && !armed) status.textContent=""; if(retryButton) retryButton.hidden=true; paintKeyboard(); };
+    const clearPointerUnconfirmed = () => { if (unconfirmedPointer && status && !armed && !keyboardStatusOwned && !failedMarker) status.textContent = status.title; unconfirmedPointer = null; };
+    const clearFailure = () => { if (pointerReader) { pointerRetryEpoch++; clearPointerUnconfirmed(); } failedMarker=null; if(status && !armed) status.textContent=""; if(retryButton) retryButton.hidden=true; paintKeyboard(); };
     // The typed .NET identity is authoritative and deliberately survives a
     // nonrenderable item. The browser mirrors only currently rendered geometry.
     const notifySelection = item => { const valid=currentOperation(), owner=currentOwnerGeneration; const call=item ? placementCallback?.invokeMethodAsync("SelectSceneItemAsync",viewKey,owner,item.dataset.sceneSelectionKind,item.dataset.sceneId) : placementCallback?.invokeMethodAsync("ClearSceneSelectionAsync",viewKey,owner); call?.then(()=>{if(!valid()||owner!==currentOwnerGeneration)return;}).catch(()=>{}); };
     const failure = value => { failedMarker=value; if(status) status.textContent="marker save failed"; if(retryButton) retryButton.hidden=false; };
-    const retryMarker = () => { if(settleKeyboardNudges && [...keyboardDrafts.values()].some(x=>x.state==="prequeueFailed"))return; const value=failedMarker; if(!value || !visibleKind(value.kind)) return; const valid=layerOperation(value.kind); callback("CommitMarkerDragAsync",value.kind,value.id,value.x,value.y).then(ok=>{if(valid()&&ok)clearFailure();}).catch(()=>{}); };
+    const retryMarker = () => { if(settleKeyboardNudges && [...keyboardDrafts.values()].some(x=>x.state==="prequeueFailed"))return; const value=failedMarker; if(!value || !visibleKind(value.kind)) return; if (pointerReader) { if (!value.pointerRetry || !authoringAllowed() || !pointerItem(value)) return; clearFailure(); submitPointerDrop(value.kind,value.id,value.x,value.y,null,null,value.revision); return; } const valid=layerOperation(value.kind); callback("CommitMarkerDragAsync",value.kind,value.id,value.x,value.y).then(ok=>{if(valid()&&ok)clearFailure();}).catch(()=>{}); };
     // Image visibility is deliberately owned entirely by this named mounted-pane
     // owner. It has no .NET callback, command, map load, or projection work.
     const showImage = shown => { if (!active) return; imageShown = shown; if (image) image.style.display = shown ? "" : "none"; if (imageToggle) { imageToggle.setAttribute("aria-pressed", String(shown)); imageToggle.setAttribute("aria-label", shown ? "Hide scene image" : "Show scene image"); imageToggle.setAttribute("title", shown ? "Hide scene image" : "Show scene image"); } };
@@ -417,16 +598,63 @@ window.initializeV2SceneViewport = (svg, viewKey, ownerGeneration, placementCall
     const snapClass = "scene-layout-snap-target-edge", guideClass = "scene-layout-snap-guide";
     const clearSnap = (resetLocks=true) => { [...(svg.querySelectorAll?.(`.${snapClass}`) || [])].forEach(x => x.classList.remove(snapClass)); [...(svg.querySelectorAll?.(`.${guideClass}`) || [])].forEach(x => x.remove()); if (resetLocks && down) down.locks = {}; };
     const valid = item => ["sceneFrameX", "sceneFrameY", "sceneFrameWidth", "sceneFrameHeight"].every(k => Number.isFinite(Number(item.dataset[k]))) && Number(item.dataset.sceneFrameWidth)>0 && Number(item.dataset.sceneFrameHeight)>0;
-    const candidates = excluded => { const result={x:[],y:[]}; const add=(value,axis,node,edge)=>result[axis].push({value,node,edge}); const room=svg.querySelector?.(".scene-layout-room-bounds"); if(room){const x=Number(room.getAttribute("x")),top=-Number(room.getAttribute("y")),w=Number(room.getAttribute("width")),h=Number(room.getAttribute("height"));if(w>0&&h>0){add(x,"x",room,"l");add(x+w,"x",room,"r");add(top-h,"y",room,"b");add(top,"y",room,"t");}} svg.querySelectorAll?.("[data-scene-layout-frame=true]").forEach(frame=>{if(frame===excluded||!visibleItem(frame)||!valid(frame))return;const x=Number(frame.dataset.sceneFrameX),y=Number(frame.dataset.sceneFrameY),w=Number(frame.dataset.sceneFrameWidth),h=Number(frame.dataset.sceneFrameHeight);add(x,"x",frame,"l");add(x+w,"x",frame,"r");add(y,"y",frame,"b");add(y+h,"y",frame,"t");}); return result; };
+    const candidates = excluded => { const result={x:[],y:[]}; const add=(value,axis,node,edge)=>result[axis].push({value,node,edge,id:node.dataset.sceneId}); const room=svg.querySelector?.(".scene-layout-room-bounds"); if(room){const x=Number(room.getAttribute("x")),top=-Number(room.getAttribute("y")),w=Number(room.getAttribute("width")),h=Number(room.getAttribute("height"));if(w>0&&h>0){add(x,"x",room,"l");add(x+w,"x",room,"r");add(top-h,"y",room,"b");add(top,"y",room,"t");}} svg.querySelectorAll?.("[data-scene-layout-frame=true]").forEach(frame=>{if(frame===excluded||!visibleItem(frame)||!valid(frame))return;const x=Number(frame.dataset.sceneFrameX),y=Number(frame.dataset.sceneFrameY),w=Number(frame.dataset.sceneFrameWidth),h=Number(frame.dataset.sceneFrameHeight);add(x,"x",frame,"l");add(x+w,"x",frame,"r");add(y,"y",frame,"b");add(y+h,"y",frame,"t");}); return result; };
     const scale = axis => { const m=svg.getScreenCTM?.(); const length=axis==="x"?Math.hypot(m?.a||0,m?.b||0):Math.hypot(m?.c||0,m?.d||0); return length>0?6/length:0; };
-    const targetEdge = candidate => candidate.node.classList?.contains("scene-layout-room-bounds") ? svg.querySelector?.(`[data-scene-snap-room-edge='${candidate.edge}']`) : candidate.node.querySelector?.(candidate.edge==="l"?".edge-w":candidate.edge==="r"?".edge-e":candidate.edge==="b"?".edge-s":".edge-n");
+    const targetEdge = candidate => {
+        if (candidate.node.classList?.contains("scene-layout-room-bounds")) return svg.querySelector?.(`[data-scene-snap-room-edge='${candidate.edge}']`);
+        const pending = pointerPreview("subroom", candidate.node.dataset.sceneId);
+        const edge = candidate.edge;
+        if (pending && candidate.value !== (edge === "l" ? pending.x : edge === "r" ? pending.x + pending.width : edge === "b" ? pending.y : pending.y + pending.height)) return null;
+        return candidate.node.querySelector?.(edge === "l" ? ".edge-w" : edge === "r" ? ".edge-e" : edge === "b" ? ".edge-s" : ".edge-n");
+    };
     const renderSnap = (locked, axis) => { const target=targetEdge(locked); target?.classList.add(snapClass); if(!document.createElementNS)return;const line=document.createElementNS("http://www.w3.org/2000/svg","line");line.classList.add(guideClass);if(axis==="x"){line.setAttribute("x1",locked.value);line.setAttribute("x2",locked.value);line.setAttribute("y1",-Number(svg.dataset.sceneMinY));line.setAttribute("y2",-Number(svg.dataset.sceneMaxY));}else{const y=-locked.value;line.setAttribute("x1",Number(svg.dataset.sceneMinX));line.setAttribute("x2",Number(svg.dataset.sceneMaxX));line.setAttribute("y1",y);line.setAttribute("y2",y);}svg.appendChild(line); };
     const snap = (rectangle,event) => { clearSnap(false); if(!down||down.snapDisabled||event.ctrlKey){if(down)down.locks={};return rectangle;}const edge=(name,value,axis)=>{const threshold=scale(axis), list=down.candidates[axis], lock=down.locks[name];let choice=lock&&Math.abs(lock.value-value)<=threshold*2?lock:null;if(!choice)choice=list.map(c=>({c,d:Math.abs(c.value-value)})).filter(x=>x.d<=threshold).sort((a,b)=>a.d-b.d||a.c.value-b.c.value)[0]?.c;if(choice){down.locks[name]=choice;renderSnap(choice,axis);return choice.value;}delete down.locks[name];return value;};const l=edge("l",rectangle.x,"x"),r=edge("r",rectangle.x+rectangle.w,"x"),b=edge("b",rectangle.y,"y"),t=edge("t",rectangle.y+rectangle.h,"y");return{x:Math.min(l,r),y:Math.min(b,t),w:Math.max(.0001,Math.abs(r-l)),h:Math.max(.0001,Math.abs(t-b))}; };
     const geometry = event => { const at=point(event.clientX,event.clientY); if(down.drawStart){const start=down.drawStart, sy=-start.y, ay=-at.y;return{x:Math.min(start.x,at.x),y:Math.min(sy,ay),w:Math.abs(at.x-start.x),h:Math.abs(ay-sy)};}const item=down.frame,dx=at.x-down.origin.x,dy=-(at.y-down.origin.y),x=Number(item.dataset.sceneFrameX),y=Number(item.dataset.sceneFrameY),w=Number(item.dataset.sceneFrameWidth),h=Number(item.dataset.sceneFrameHeight),m=down.mode;if(m==="move")return{x:x+dx,y:y+dy,w,h};return{x:m.includes("l")?x+dx:x,y:m.includes("b")?y+dy:y,w:m.includes("l")?w-dx:m.includes("r")?w+dx:w,h:m.includes("b")?h-dy:m.includes("t")?h+dy:h}; };
-    const start = event => { if (event.button !== 0) return; if (!authoringAllowed() && event.target !== svg && !event.target?.classList?.contains("scene-layout-room-bounds")) return; clearFailure(); const at=point(event.clientX,event.clientY), snapStart=(extra={})=>Object.assign({id:event.pointerId,x:event.clientX,y:event.clientY,locks:{},snapDisabled:!!event.ctrlKey},extra); if (armed?.kind === "subroom") { event.preventDefault(); down=snapStart({drawStart:at}); down.candidates=candidates(); return; } if (armed) { event.preventDefault(); return; } const target=event.target?.closest?.("[data-scene-frame-target]"), item=event.target?.closest?.("[data-scene-selection-kind]"); if(item && item===selected && item.dataset.sceneSelectionKind==="subroom" && target) {down=snapStart({frame:item,mode:target.dataset.sceneFrameTarget,origin:at});down.candidates=candidates(item);} else if(item && item===selected && (item.dataset.sceneSelectionKind==="exit"||item.dataset.sceneSelectionKind==="check"||item.dataset.sceneSelectionKind==="connection")) down={id:event.pointerId,x:event.clientX,y:event.clientY,lastX:event.clientX,lastY:event.clientY,drag:item}; else if(event.target===svg||event.target?.classList?.contains("scene-layout-room-bounds")) down={id:event.pointerId,x:event.clientX,y:event.clientY,lastX:event.clientX,lastY:event.clientY,panning:false}; };
-    const move = event => { if (!down || event.pointerId !== down.id || Math.hypot(event.clientX-down.x,event.clientY-down.y)<5) return; if(down.drawStart||down.frame){down.moved=true;const value=snap(geometry(event),event); if(down.drawStart && document.createElementNS){clearDraft();draft=document.createElementNS("http://www.w3.org/2000/svg","rect");draft.classList.add("scene-layout-draft");draft.setAttribute("x",value.x);draft.setAttribute("y",-value.y-value.h);draft.setAttribute("width",value.w);draft.setAttribute("height",value.h);svg.appendChild(draft);} if(down.frame)showFrameVisual(down.frame,value,down.mode); return;} if(down.drag){down.moved=true;const current=point(event.clientX,event.clientY), origin=point(down.x,down.y), dx=current.x-origin.x, svgDy=current.y-origin.y;down.drag.style.transform=`translate(${dx}px, ${svgDy}px)`;updateMarkerRelationships(down.drag.dataset.sceneId,{x:Number(down.drag.dataset.sceneMarkerX)+dx,y:Number(down.drag.dataset.sceneMarkerY)-svgDy});return;} if (!down.panning) { down.panning = true; svg.setPointerCapture(down.id); } const previous = point(down.lastX, down.lastY), current = point(event.clientX, event.clientY), view = parse(svg.getAttribute("viewBox")); down.lastX = event.clientX; down.lastY = event.clientY; apply(clamp([view[0] - (current.x - previous.x), view[1] - (current.y - previous.y), view[2], view[3]])); };
+    const pinPointerTarget = (item, handle = null) => pointerReader ? { node:item, kind:item.dataset.sceneSelectionKind, id:item.dataset.sceneId.toLowerCase(), owner:currentOwnerGeneration, handle } : null;
+    const validateActivePointer = (rebound = false) => {
+        const target = down?.pointerTarget;
+        if (!target) return true;
+        if (rebound && frameVisual?.item === target.node) frameVisual.reconciled = true;
+        const sameNode = pointerItem(target) === target.node;
+        if (ownsCurrentGeneration() && svg.isConnected && target.owner === currentOwnerGeneration && Number(svg.dataset.sceneOwnerGeneration) === target.owner
+            && sameNode && !armed && visibleKind(target.kind) && !ownsPointerTarget(target.node)
+            && (!target.handle || valid(target.node) && target.node.querySelector(`[data-scene-frame-target='${down.mode}']`) === target.handle)) return true;
+        if (!sameNode && selected === target.node) { selected.classList.remove("selected"); selected = null; }
+        if (!sameNode && frameVisual?.item === target.node) frameVisual.reconciled = true;
+        cancelGesture();
+        return false;
+    };
+    const refreshPointerSnapCandidates = () => {
+        const current = candidates(down.frame);
+        const locks = {};
+        for (const [name, lock] of Object.entries(down.locks)) {
+            const match = current[name === "l" || name === "r" ? "x" : "y"].find(x => x.node === lock.node
+                && x.id === lock.id && x.edge === lock.edge && x.value === lock.value);
+            if (match) locks[name] = match;
+        }
+        down.candidates = current; down.locks = locks;
+    };
+    const repaintActivePointer = () => {
+        if (!down?.pointerTarget || !validateActivePointer(true)) return;
+        if (down.frame) {
+            refreshPointerSnapCandidates();
+            if (down.frameSample) showFrameVisual(down.frame, snap(geometry(down.frameSample), down.frameSample), down.mode);
+        } else if (down.markerPose) {
+            const { x, y } = down.markerPose;
+            down.drag.style.transform = `translate(${x - Number(down.drag.dataset.sceneMarkerX)}px, ${Number(down.drag.dataset.sceneMarkerY) - y}px)`;
+        }
+    };
+    const start = event => { if (event.button !== 0) return; if (!authoringAllowed() && event.target !== svg && !event.target?.classList?.contains("scene-layout-room-bounds")) return; if (pointerReader) { if (down?.pointerTarget) cancelGesture(); cancelledPointerIds.delete(event.pointerId); } clearFailure(); const at=point(event.clientX,event.clientY), snapStart=(extra={})=>Object.assign({id:event.pointerId,x:event.clientX,y:event.clientY,locks:{},snapDisabled:!!event.ctrlKey},extra); if (armed?.kind === "subroom") { event.preventDefault(); down=snapStart({drawStart:at}); down.candidates=candidates(); return; } if (armed) { event.preventDefault(); return; } const target=event.target?.closest?.("[data-scene-frame-target]"), item=event.target?.closest?.("[data-scene-selection-kind]"); if(item && item===selected && item.dataset.sceneSelectionKind==="subroom" && target) {down=snapStart({frame:item,mode:target.dataset.sceneFrameTarget,origin:at,pointerTarget:pinPointerTarget(item,target)});down.candidates=candidates(item);} else if(item && item===selected && (item.dataset.sceneSelectionKind==="exit"||item.dataset.sceneSelectionKind==="check"||item.dataset.sceneSelectionKind==="connection")) down={id:event.pointerId,x:event.clientX,y:event.clientY,lastX:event.clientX,lastY:event.clientY,drag:item,pointerTarget:pinPointerTarget(item)}; else if(event.target===svg||event.target?.classList?.contains("scene-layout-room-bounds")) down={id:event.pointerId,x:event.clientX,y:event.clientY,lastX:event.clientX,lastY:event.clientY,panning:false}; };
+    const move = event => { if (!down || event.pointerId !== down.id || !validateActivePointer() || Math.hypot(event.clientX-down.x,event.clientY-down.y)<5) return; if(down.drawStart||down.frame){down.moved=true;if(down.frame && down.pointerTarget) down.frameSample = { clientX:event.clientX, clientY:event.clientY, ctrlKey:event.ctrlKey }; const value=snap(geometry(event),event); if(down.drawStart && document.createElementNS){clearDraft();draft=document.createElementNS("http://www.w3.org/2000/svg","rect");draft.classList.add("scene-layout-draft");draft.setAttribute("x",value.x);draft.setAttribute("y",-value.y-value.h);draft.setAttribute("width",value.w);draft.setAttribute("height",value.h);svg.appendChild(draft);} if(down.frame)showFrameVisual(down.frame,value,down.mode); return;} if(down.drag){
+        down.moved=true;const current=point(event.clientX,event.clientY), origin=point(down.x,down.y), dx=current.x-origin.x, svgDy=current.y-origin.y;
+        const pose = { x:Number(down.drag.dataset.sceneMarkerX)+dx, y:Number(down.drag.dataset.sceneMarkerY)-svgDy };
+        if (down.pointerTarget) down.markerPose = { ...pose, id: down.pointerTarget.id, kind: down.pointerTarget.kind };
+        down.drag.style.transform=`translate(${dx}px, ${svgDy}px)`;updateMarkerRelationships(down.drag.dataset.sceneId,pose);return;
+    } if (!down.panning) { down.panning = true; svg.setPointerCapture(down.id); } const previous = point(down.lastX, down.lastY), current = point(event.clientX, event.clientY), view = parse(svg.getAttribute("viewBox")); down.lastX = event.clientX; down.lastY = event.clientY; apply(clamp([view[0] - (current.x - previous.x), view[1] - (current.y - previous.y), view[2], view[3]])); };
     const select = event => {
         if (event.button !== 0) return;
+        if (pointerReader && cancelledPointerIds.delete(event.pointerId)) return;
+        if (down?.pointerTarget && (event.pointerId !== down.id || !validateActivePointer())) return;
         if (settleKeyboardNudges && !down?.moved) transferKeyboard();
         clearFailure();
         if (down?.drawStart) { const value=snap(geometry(event),event); clearDraft(); if(down.moved && value.w>0 && value.h>0) callback("CommitSubroomGeometryAsync", armed.entityId,value.x,value.y,value.w,value.h).catch(()=>{}); else callback("CancelPlacementAsync").catch(()=>{}); return; }
@@ -437,11 +665,25 @@ window.initializeV2SceneViewport = (svg, viewKey, ownerGeneration, placementCall
             callback("CommitPlacementAsync", request.kind, request.entityId, at.x, -at.y).catch(() => {});
             return;
         }
+        if (down?.moved && down.pointerTarget) {
+            const { node:item, kind, id } = down.pointerTarget;
+            if (down.frame) refreshPointerSnapCandidates();
+            const at = down.frame ? snap(geometry(event), event) : point(event.clientX, event.clientY);
+            // Move/resize's single-gesture preview stops owning the node now.
+            // The retained drop uses the final snap/absolute release, not the
+            // grab-offset marker preview. End clears pointer capture and guides.
+            if (down.frame && (![at.x, at.y, at.w, at.h].every(Number.isFinite) || !(at.w > 0 && at.h > 0))) { restoreFrameVisual(); end(event); refreshPointerRelationships(); return; }
+            if (down.frame) { frameVisual = null; item.style.transform = ""; }
+            end(event);
+            submitPointerDrop(kind, id, at.x, kind === "subroom" ? at.y : -at.y, at.w, at.h);
+            return;
+        }
         if(down && down.frame && down.moved){const item=down.frame,value=snap(geometry(event),event),valid=layerOperation("subroom");if(value.w>0&&value.h>0) callback("CommitSubroomGeometryAsync",item.dataset.sceneId,value.x,value.y,value.w,value.h).then(ok=>{if(!valid())return;settleFrameVisual(item,ok);}).catch(()=>{if(!valid())return;settleFrameVisual(item,false);}); return;} if(down && down.drag && down.moved){const item=down.drag, at=point(event.clientX,event.clientY),origin=point(down.x,down.y),dx=at.x-origin.x,svgDy=at.y-origin.y,valid=layerOperation(item.dataset.sceneSelectionKind),visual={item,id:item.dataset.sceneId.toLowerCase(),x:Number(item.dataset.sceneMarkerX)+dx,y:Number(item.dataset.sceneMarkerY)-svgDy};item.style.transform=`translate(${dx}px, ${svgDy}px)`;markerVisuals.add(visual);updateMarkerRelationships(visual.id); callback("CommitMarkerDragAsync",item.dataset.sceneSelectionKind,item.dataset.sceneId,at.x,-at.y).then(ok=>{if(!valid())return;settleMarkerVisual(item);if(ok){clearFailure();}else failure({kind:item.dataset.sceneSelectionKind,id:item.dataset.sceneId,x:at.x,y:-at.y});}).catch(()=>{if(!valid())return;settleMarkerVisual(item);failure({kind:item.dataset.sceneSelectionKind,id:item.dataset.sceneId,x:at.x,y:-at.y});}); return;} const item = event.target?.closest?.("[data-scene-selection-kind]");
         if (!item && down?.panning) return;
         if (item && !visibleItem(item)) return;
         if (selected === item) return;
         selected?.classList.remove("selected"); selected = item || null;
+        rememberPointerSelection(selected);
         explicitIntent = null;
         capturedIntent = null;
         if (selected) { selected.classList.add("selected"); cancelledArms[category(selected.dataset.sceneSelectionKind)] = false; }
@@ -449,7 +691,7 @@ window.initializeV2SceneViewport = (svg, viewKey, ownerGeneration, placementCall
         notifySelection(selected);
         clearFailure();
     };
-    const end = (event, cancelled=false) => { if (cancelled) clearFailure(); if (down?.id === event.pointerId) { if (cancelled && down.drag) { down.drag.style.transform=""; updateMarkerRelationships(down.drag.dataset.sceneId); } if (cancelled && down.frame) restoreFrameVisual(); if (svg.hasPointerCapture(event.pointerId)) svg.releasePointerCapture(event.pointerId); clearDraft(); clearSnap(); down = null; } };
+    const end = (event, cancelled=false) => { if (cancelled) clearFailure(); if (down?.id === event.pointerId) { if (cancelled && down.drag) { if (pointerReader) down.markerPose = null; down.drag.style.transform=""; updateMarkerRelationships(down.drag.dataset.sceneId); } if (cancelled && down.frame) restoreFrameVisual(); if (svg.hasPointerCapture(event.pointerId)) svg.releasePointerCapture(event.pointerId); clearDraft(); clearSnap(); down = null; } };
     const toggleImage = () => showImage(!imageShown), toggleZone = () => { clearFailure(); const shown = !zoneShown; setZoneVisible(shown); window.saveRoomZoneMapVisibility?.(shown); };
     const reconcile = (ownerGeneration, currentBasis = null) => {
         // A usable result is accounted before Razor updates these datasets. Keep
@@ -476,14 +718,15 @@ window.initializeV2SceneViewport = (svg, viewKey, ownerGeneration, placementCall
         // it is the separately permitted client-first visual until its command
         // resolves against the authoritative refresh.
         clearDraft();
-        clearSnap();
+        validateActivePointer(true);
+        clearSnap(!down?.pointerTarget);
         if (down?.drawStart) down = null;
         markerVisuals.forEach(visual => {
             const currentItem = svg.querySelector?.(`[data-scene-id='${visual.id}'][data-scene-layout-marker]`);
             if (currentItem) visual.item = currentItem;
             visual.item.style.transform = `translate(${visual.x - Number(visual.item.dataset.sceneMarkerX)}px, ${-(visual.y - Number(visual.item.dataset.sceneMarkerY))}px)`;
         });
-        if (frameVisual) {
+        if (frameVisual && !down?.pointerTarget) {
             const currentFrame = svg.querySelector?.(`[data-scene-id='${frameVisual.item.dataset.sceneId}'][data-scene-layout-frame=true]`);
             if (currentFrame) {
                 frameVisual.item = currentFrame;
@@ -492,17 +735,21 @@ window.initializeV2SceneViewport = (svg, viewKey, ownerGeneration, placementCall
             } else frameVisual = null;
         }
         rebuildRelationships();
-        if (frameVisual) showFrameVisual(frameVisual.item, frameVisual.geometry, frameVisual.mode);
+        if (frameVisual && !down?.pointerTarget) showFrameVisual(frameVisual.item, frameVisual.geometry, frameVisual.mode);
         applyLayers();
         showImage(imageShown);
         setZoneVisible(zoneShown);
-        if (settleKeyboardNudges && selected && !selected.isConnected) { const replacement = svg.querySelector(`[data-scene-id='${selected.dataset.sceneId}'][data-scene-selection-kind]`); selected = replacement || null; selected?.classList.add("selected"); }
+        if (pointerReader) rebindPointerSelection();
+        else if (settleKeyboardNudges && selected && !selected.isConnected) { const replacement = svg.querySelector(`[data-scene-id='${selected.dataset.sceneId}'][data-scene-selection-kind]`); selected = replacement || null; selected?.classList.add("selected"); }
         paintKeyboard();
+        reconcilePointerDrops();
+        repaintActivePointer();
+        if (pointerReader) refreshPointerRelationships();
         syncAttention();
     };
-    const cancelGesture = () => { clearFailure(); clearDraft(); clearSnap(); if (down?.drag) { down.drag.style.transform=""; updateMarkerRelationships(down.drag.dataset.sceneId); } if (frameVisual) restoreFrameVisual(); if (down && svg.hasPointerCapture(down.id)) svg.releasePointerCapture(down.id); down=null; };
+    const cancelGesture = () => { if (down?.pointerTarget) consumePointerRelease(down.id); clearFailure(); clearDraft(); clearSnap(); if (down?.drag) { if (pointerReader) down.markerPose = null; down.drag.style.transform=""; updateMarkerRelationships(down.drag.dataset.sceneId); } if (frameVisual) restoreFrameVisual(); if (down && svg.hasPointerCapture(down.id)) svg.releasePointerCapture(down.id); down=null; };
     const cancelPlacement = event => { if (event.type === "keydown" && event.key !== "Escape") return; capturedIntent = null; cancelGesture(); if (!armed) return; event.preventDefault(); callback("CancelPlacementAsync").catch(() => {}); };
-    const cancelDrag = event => end(event, true);
+    const cancelDrag = event => { if (pointerReader) cancelledPointerIds.delete(event.pointerId); end(event, true); };
     // Key repeats arrive before the server refreshes DOM attributes.  Chain from
     // the accepted/pending geometry, never the stale rendered dataset.
     const nudge = event => { if(!authoringAllowed() || !visibleItem(selected) || !["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(event.key)) return; clearFailure(); event.preventDefault(); const item=selected, kind=item.dataset.sceneSelectionKind, frame=kind==="subroom", amount=event.shiftKey?5:1, base=nudgeGeometry?.id===item.dataset.sceneId?nudgeGeometry:{id:item.dataset.sceneId,kind,x:Number(frame?item.dataset.sceneFrameX:item.dataset.sceneMarkerX),y:Number(frame?item.dataset.sceneFrameY:item.dataset.sceneMarkerY)}; const next={...base,x:base.x+(event.key==="ArrowLeft"?-amount:event.key==="ArrowRight"?amount:0),y:base.y+(event.key==="ArrowDown"?-amount:event.key==="ArrowUp"?amount:0)}, epoch=nudgeEpoch,layerCurrent=layerOperation(kind),valid=()=>layerCurrent()&&epoch===nudgeEpoch; nudgeGeometry=next; nudgeTail=nudgeTail.then(async()=>{if(!valid()||!authoringAllowed())return;try{const ok=await callback("CommitSceneNudgeAsync",kind,item.dataset.sceneId,next.x,next.y);if(valid()&&!ok){nudgeEpoch++;nudgeGeometry=null;}}catch{if(valid()){nudgeEpoch++;nudgeGeometry=null;}}}); };
@@ -540,7 +787,7 @@ window.initializeV2SceneViewport = (svg, viewKey, ownerGeneration, placementCall
     };
     const ownsRevision = (owner, revision, latest) => ownsCurrentGeneration() && owner === currentOwnerGeneration && Number(svg.dataset.sceneOwnerGeneration) === owner && svg.isConnected && Number.isFinite(revision) && revision >= latest;
     const clearPlacement = (owner, revision) => { if (!ownsRevision(owner, revision, latestArmRevision)) return; latestArmRevision=revision; if (armed) clearSnap(); armed=null; svg.classList.remove("scene-layout-placement-armed"); svg.style.cursor=""; };
-    const clearSelection = (owner, revision) => { if (!ownsRevision(owner, revision, latestSelectionRevision)) return; if (settleKeyboardNudges && keyboardCurrent) transferKeyboard(); latestSelectionRevision=revision; if (!selected) return; cancelGesture(); clearFailure(); nudgeEpoch++; nudgeGeometry=null; selected.classList.remove("selected"); selected=null; syncAttention(); };
+    const clearSelection = (owner, revision) => { if (!ownsRevision(owner, revision, latestSelectionRevision)) return; if (settleKeyboardNudges && keyboardCurrent) transferKeyboard(); latestSelectionRevision=revision; rememberPointerSelection(null); if (!selected) return; cancelGesture(); clearFailure(); nudgeEpoch++; nudgeGeometry=null; selected.classList.remove("selected"); selected=null; syncAttention(); };
     const selectItem = (id, owner, revision) => {
         if (!ownsRevision(owner, revision, latestSelectionRevision)) return;
         const item=svg.querySelector(`[data-scene-id='${id}']`);
@@ -550,15 +797,18 @@ window.initializeV2SceneViewport = (svg, viewKey, ownerGeneration, placementCall
         if (explicitIntent?.selectionPending && (explicitIntent.kind !== item.dataset.sceneSelectionKind || explicitIntent.selectionId !== id.toLowerCase().replaceAll("-", ""))) return;
         latestSelectionRevision=revision;
         if (explicitIntent) explicitIntent.selectionPending=false;
-        if (selected === item) return;
+        if (selected === item) { rememberPointerSelection(item); return; }
         if (settleKeyboardNudges) transferKeyboard();
         cancelGesture(); clearFailure(); nudgeEpoch++; nudgeGeometry=null; selected?.classList.remove("selected"); selected=item; selected.classList.add("selected"); syncAttention();
+        rememberPointerSelection(item);
     };
     svg.__v2SceneViewport = { key:viewKey, isLive:()=>active, reconcile, arm, clearPlacement, clearSelection, select:selectItem, dispose:() => { active=false; clearFailure(); nudgeEpoch++; nudgeGeometry=null; cancelGesture(); clearMarkerVisuals(); selected?.classList.remove("selected"); attentionRoot?.[v2ChildInteractionOwnerKey]?.retireSceneAttention?.(svg); svg.removeEventListener("wheel", wheel); svg.removeEventListener("pointerdown", start); svg.removeEventListener("pointermove", move); svg.removeEventListener("pointerup", select); svg.removeEventListener("pointerup", end); svg.removeEventListener("pointercancel", cancelDrag); svg.removeEventListener("keydown", cancelPlacement); svg.removeEventListener("keydown", nudge); svg.removeEventListener("contextmenu", cancelPlacement); for (const { node, click } of layerControls) node.removeEventListener("click", click); layerControls=[]; imageToggle?.removeEventListener("click", toggleImage); zoneToggle?.removeEventListener("click", toggleZone); reset?.removeEventListener("click", resetView); retryButton?.removeEventListener("click", retryMarker); } };
     svg.__v2SceneViewport.ownsOwner = value => ownsCurrentGeneration() && currentOwnerGeneration === value;
+    if (pointerReader) svg.__v2SceneViewport.restoreDefinitePointerFailures = restoreDefinitePointerFailures;
     svg.__v2SceneViewport.keyboardSnapshot = keyboardSnapshot;
     // Passive pre-retirement observation; pan/selection alone is not authoring.
-    svg.__v2SceneViewport.hasAuthoringWork = () => !!(down?.drawStart || down?.frame || down?.drag || draft || failedMarker || frameVisual || markerVisuals.size);
+    svg.__v2SceneViewport.hasAuthoringWork = () => !!(down?.drawStart || down?.frame || down?.drag || draft || failedMarker || frameVisual || markerVisuals.size
+        || [...pointerDrops.values()].some(value => value.sequence == null));
     svg.__v2SceneViewport.takeKeyboard = takeKeyboard;
     svg.__v2SceneViewport.finishKeyboardAdmission = finishKeyboardAdmission;
     svg.__v2SceneViewport.observeKeyboard = observeKeyboard;
@@ -570,11 +820,30 @@ window.initializeV2SceneViewport = (svg, viewKey, ownerGeneration, placementCall
         const item = event.target?.closest?.("[data-scene-selection-kind]");
         if (!keyboardCurrent && !keyboardDrafts.size) return;
         const transferred = transferKeyboard();
-        if (item && (!transferred || keyboardGate || [...keyboardDrafts.values()].some(x => x.entityId === item.dataset.sceneId))) { event.preventDefault(); event.stopImmediatePropagation(); }
+        if (item && (!transferred || keyboardGate || [...keyboardDrafts.values()].some(x => x.entityId === item.dataset.sceneId))) { consumePointerRelease(event.pointerId); event.preventDefault(); event.stopImmediatePropagation(); }
     };
     svg.addEventListener("pointerdown", keyboardPointerBoundary, true);
+    // Through the DOM handoff neither input may start from stale geometry on
+    // the same target. Distinct targets retain the existing eligibility path.
+    const pointerTargetBoundary = event => {
+        const item = event.type === "pointerdown" ? !armed && event.button === 0 && event.target?.closest?.("[data-scene-selection-kind]") === selected && selected
+            : ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key) && selected;
+        if (ownsPointerTarget(item)) { if (event.type === "pointerdown") consumePointerRelease(event.pointerId); event.preventDefault(); event.stopImmediatePropagation(); }
+    };
+    if (pointerReader) {
+        pointerRender.observe(svg, { attributes: true, attributeFilter: ["data-scene-pointer-receipts"] });
+        svg.addEventListener("pointerdown", pointerTargetBoundary, true);
+        svg.addEventListener("keydown", pointerTargetBoundary, true);
+    }
     const disposeScene = svg.__v2SceneViewport.dispose;
     svg.__v2SceneViewport.dispose = () => {
+        if (pointerReader) {
+            pointerRender.disconnect();
+            svg.removeEventListener("pointerdown", pointerTargetBoundary, true);
+            svg.removeEventListener("keydown", pointerTargetBoundary, true);
+            pointerDrops.forEach(restorePointerNode);
+            pointerDrops.clear();
+        }
         clearTimeout(keyboardTimer); keyboardTimer = null;
         svg.removeEventListener("keydown", keyboardHandler);
         svg.removeEventListener("pointerdown", keyboardPointerBoundary, true);
@@ -592,13 +861,14 @@ window.initializeV2SceneViewport = (svg, viewKey, ownerGeneration, placementCall
         capturedIntent = { kind, id: id.toLowerCase().replaceAll("-", ""), selectionId: (selectionId || id).toLowerCase().replaceAll("-", ""), selectionPending: true, focusConsumed: false, armRevision: latestArmRevision, selectionRevision: latestSelectionRevision };
         setLayer(kind, true);
     };
-    bindLayerControls(); rebuildRelationships(); applyLayers(); showImage(true);
+    bindLayerControls(); rebuildRelationships(); reconcilePointerDrops(); applyLayers(); showImage(true);
     // Resolve before making the host visible so reload/navigation never paint
     // the opposite split state. A missing/invalid stored value defaults shown.
     try { zoneShown = window.loadRoomZoneMapVisibility?.() !== false; } catch { zoneShown = true; }
     setZoneVisible(zoneShown); resetView();
     svg.closest(".room-editor-v2")?.[v2ChildInteractionOwnerKey]?.reconcileAttention?.();
 };
+window.restoreV3ScenePointerFailures = (svg, room, owner, receipts) => svg?.__v2SceneViewport?.restoreDefinitePointerFailures?.(room, owner, receipts);
 window.disposeV2SceneViewport = (svg, ownerGeneration) => {
     const state = svg?.__v2SceneViewport;
     if (ownerGeneration !== undefined && !state?.ownsOwner?.(ownerGeneration)) return;

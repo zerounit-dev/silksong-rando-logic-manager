@@ -1,16 +1,14 @@
-# BI1 — one-off operational Enemy importer
+# Bulk Enemy importer
 
 Real .NET 10 console operator utility; does not start the web application, read
-appsettings, migrate or seed SQLite. Do not use it as a test/runtime harness.
-Use the settled contract in `documentation/BULK_ENEMY_INGEST_PLAN.md` (relative to
-Logic Manager). **Implementation/review is not permission to apply.** Review the
-concrete report before approving its machine-artifact SHA256. No automatic apply.
+appsettings, migrate or seed SQLite. Review the concrete report before approving
+its machine-artifact SHA256. Planning is read-only; applying changes is a separate,
+explicit operator action. No automatic apply.
 
 ## Build (project only, Release)
 
 From `logic-manager/project` (or the published source checkout root), redirect
-outputs outside the running app. Application
-build remains separately required. Both builds preserve the application reference's
+outputs outside the running app. The build preserves the application reference's
 database-backup-on-build hook; these backups are not the apply backup.
 
 ```powershell
@@ -50,8 +48,8 @@ Storage database; replace `$db` with the exact intended existing database path w
 operating elsewhere. Neither input nor database is inferred by the utility.
 
 Only recursive case-insensitive `.sceneReady.json` suffixes are parsed, serially
-with the ordinary 256 MiB parser limit, classification, SI1/SN1/SW1 defaults and
-EPN1 identity and EPN3 governing-condition/default successors. Other
+with the ordinary 256 MiB parser limit and the classification, identity, and
+governing-condition behavior described below. Other
 files are listed as excluded, not parsed. Embedded names match trimmed
 OrdinalIgnoreCase active room IDs; names of files never select rooms. Distinct
 captures claiming one scene conflict even if identical. Duplicate room IDs,
@@ -64,19 +62,18 @@ Read **all** coverage, blockers, warnings, instructions and exclusions. Report h
 exact machine-artifact digest; machine JSON is authoritative for exact values.
 Enemy Creates initialize normal annotations/type and shared Requirements defaults; Updates change
 only imported identity/world/local XYZ, not authored fields. All active target-room
-checks share SI1 identity matching. Counts use the full current hierarchy; naming
+checks share the scene importer's identity matching. Counts use the full current hierarchy; naming
 allocates selected Enemies only. Inactive/repeated actors remain. No new rooms,
 dimensions/group/image-stale modifications or image output. Existing resolver can
 touch navigation metadata outside the target room.
 
-EPN1 (`documentation/ENEMY_PATH_AND_SPAWN_NOTES_IMPLEMENTATION_PLAN.md`) changes
-Enemy game-ID metadata to the full root-to-object named hierarchy (no scene), e.g.
+Enemy game-ID metadata uses the full root-to-object named hierarchy (no scene), e.g.
 `"Pilgrims"[0]/"Pilgrim Folder"[0]/"Pilgrim 01"[1]`. Every segment has a zero-based
 exact-name sibling occurrence index in original parsed structural order. Names,
 including `(Clone)`, quotes, slashes and brackets, remain literal with no escaping
 inside this opaque string. Normal JSON/report string encoding is transport only;
 do not parse this metadata as a path. No stable uniqueness promise, old-ID backfill
-or legacy-name fallback. SI1 trimmed OrdinalIgnoreCase collision-safe defaults
+or legacy-name fallback. Trimmed OrdinalIgnoreCase collision-safe defaults
 remain; deliberate Update can reconcile an old row while retaining authored data.
 
 Machine instructions and human reports include actual proposed Create Notes and
@@ -90,12 +87,12 @@ sides and verified external targets. Composite opposite criteria count as presen
 not individually inverted facts; the known pure single-Bool inverse is preserved.
 Ordering is direct/nearest-to-outer, then controller source/component order, with
 exact field/value pairs deduplicated and opposite values retained. Exact
-`blackThreadWorld` is omitted from Notes; SW1 proof remains unchanged.
+`blackThreadWorld` is omitted from Notes; world-spawn classification is separate.
 Unsupported criteria retain presence/incompleteness, not guessed facts or absence.
 No unresolved placeholder, FSM interpreter, catalogue mapping, new warnings or authored-field
 changes on Updates.
 
-EPN4 adds a separate names-only `FSM Boolean flags: name, otherName` section after
+Notes include a separate names-only `FSM Boolean flags: name, otherName` section after
 the Spawn section, separated by LF; empty sections are omitted. Guarded finite
 literal reads on self/actual ancestors count as documentary context (including
 exact `blackThreadWorld`, omitted from printing), not proven governing requirements.
@@ -103,28 +100,25 @@ They prevent the no-context Invalid default; writes/malformed new reads do not.
 Canonical instructions/replan/reparse bind the exact combined Notes as before.
 No branch interpretation, authored repair or PLAN/APPLY authorization is implied.
 
-EPN3 (`documentation/ENEMY_GOVERNING_CONDITIONS_IMPLEMENTATION_PLAN.md`) supersedes
-EPN2: reliable actor hierarchy=false plus reliable self/ancestor self=false gets exactly
+Reliable actor hierarchy=false plus reliable self/ancestor self=false gets exactly
 `Invalid` ONLY with no governing condition or relevant uncertainty on the whole chain.
 Notes are `Disabled; no activation found.` for self, otherwise `Disabled ancestor; no
 activation found.`, alone, never reason plus conditions. Suppression/world/quest and
 unsupported criterion presence prevents Invalid, even for a separately disabled child.
-Otherwise retain SW1's exact proven world phrase or blank with available finite Notes.
+Otherwise retain the proven world-spawn phrase or blank with available finite Notes.
 Any known reliable supplied activity contradiction on the chain suppresses the diagnostic;
 missing/unknown flags do not invent causes/contradictions. Active unconditional actors,
-SW1 world proof/indication and all authored Update fields remain unchanged. Invalid
+World-spawn classification and all authored Update fields remain unchanged. Invalid
 is freeform text with normal catalogue-dependent validation, not a new enum/atom or
 proof game activation is impossible. No actor removal/backfill/FSM/composite inference.
 
-EPN6 removes the unrequested EPN5 persistence Notes section. Shared Notes joins
-only nonempty Spawn then FSM sections by LF. Exact attached PersistentBoolItem on
+Notes have no persistence section and join only nonempty Spawn then FSM sections by LF.
+Exact attached PersistentBoolItem on
 self/actual ancestors still supplies context for either value; direct scalar
 validation retains incompleteness when contents are blank/missing/malformed.
 Persistence-only context produces blank Notes, not Invalid. Reliable no-context disabled
 defaults now additionally require no persistence context/incompleteness. Shared
 proposal/replan/reparse/Create strings agree; retained Updates are not repaired.
-See `documentation/ENEMY_PERSISTENCE_STATE_CONTRACT.md` and its printing successor
-`documentation/ENEMY_PERSISTENCE_NOTES_REMOVAL_PLAN.md`; no PLAN/APPLY is authorized.
 
 Missing-room placeholders are ordinary active Unknown checks named exactly
 `import enemies`, TODO, explicitly unverified, blank Requirements/null validation,
@@ -152,10 +146,9 @@ Immediately before the first unit transaction, after backup/receipt preparation,
 the workflow rechecks all admitted hashes/inventory and the complete logical DB.
 
 Notes are part of the canonical approval-bound instruction bytes. Old approved
-artifacts do not authorize EPN1 IDs or EPN3 defaults: obtain a fresh plan and separate
-concrete APPLY approval. Existing canonical-artifact/replan comparison rejects
+artifacts do not authorize new identity or default behavior: obtain a fresh plan and
+review it before applying. Existing canonical-artifact/replan comparison rejects
 stale content; there is no upgrade, compatibility replay or automatic execution.
-The completed historical BI1 operation is not authorization for a new operation.
 
 One scene uses the existing importer transaction with strict Enemy-only existing
 room admission and metadata preservation; each placeholder uses its own active
@@ -195,7 +188,5 @@ one deferred read transaction; transient SQLite/WAL/SHM bytes are excluded.
 Parser GUIDs are never stored in plans: input hash + preorder source ordinal/path/
 name/identity safely remap instructions to freshly parsed object GUIDs at apply.
 
-Manual B1–B6, EPN1 E1–E7 and EPN2 I1–I6 acceptance and independent full-unit review
-are required. Approval of a report authorizes only its separately approved operation,
-not acceptance of new application behavior. Source/build
-evidence does not establish runtime SQLite, filesystem, cancellation or UI behavior.
+Review each new report against its intended database and input files. A previous
+successful operation does not make a new plan safe to apply.
