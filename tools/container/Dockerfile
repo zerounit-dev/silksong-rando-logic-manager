@@ -8,6 +8,7 @@ LABEL org.opencontainers.image.title="Silksong Rando Logic Manager" \
       org.opencontainers.image.version=$RELEASE_VERSION
 WORKDIR /app
 COPY app/ /app/
+# Approved scene assets only, for explicit operator provisioning; no database.
 COPY seed/ /opt/logic-manager-seed/
 COPY config/ /config/
 COPY LICENSE /app/LICENSE

@@ -1,12 +1,12 @@
 /* Shared by the native tools host and the isolated Accounts HTML document. */
-.tools-header { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1rem; padding: .55rem .75rem; border-bottom: 1px solid #aaa9a1; background: #eeede7; color: #171717; font: .72rem "Cascadia Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
+.tools-header { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1rem; padding: .55rem .75rem; border-bottom: 1px solid var(--ui-border); background: var(--ui-surface-muted); color: var(--ui-text); font: .72rem "Cascadia Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
 .tools-header nav { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem; }
-.tools-header a, .tools-header nav > span { display: inline-flex; align-items: center; gap: .3rem; min-height: 1.45rem; padding: .15rem .35rem; border: 1px solid #99978f; color: inherit; background: transparent; text-decoration: none; line-height: normal; }
+.tools-header a, .tools-header nav > span { display: inline-flex; align-items: center; gap: .3rem; min-height: 1.45rem; padding: .15rem .35rem; border: 1px solid var(--ui-border-control); color: inherit; background: transparent; text-decoration: none; line-height: normal; }
 .tools-header .tools-back { border-color: transparent; }
-.tools-header a:hover, .tools-header [aria-current="page"] { border-color: #575650; background: #fbfaf7; }
+.tools-header a:hover, .tools-header [aria-current="page"] { border-color: var(--ui-border-interactive); background: var(--ui-surface); }
 .tools-header [aria-current="page"] { font-weight: 700; }
-.tools-header a:focus-visible { outline: 1px solid #575650; outline-offset: 2px; }
-.tools-header [aria-disabled="true"] { border-color: #c9c8c2; background: #eeede7; color: #85837b; cursor: not-allowed; opacity: .72; }
+.tools-header a:focus-visible { outline: 1px solid var(--ui-focus); outline-offset: 2px; }
+.tools-header [aria-disabled="true"] { border-color: var(--ui-disabled-border); background: var(--ui-disabled-surface); color: var(--ui-disabled-text); cursor: not-allowed; opacity: .72; }
 .tools-header i { display: inline-flex; justify-content: center; flex: 0 0 1em; width: 1em; }
 /* Only explicitly selected hosts override the editor's desktop minimum/scroll owner. */
 html:has(.tools-layout), body:has(.tools-layout) { min-width: 0; overflow: hidden; }

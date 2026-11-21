@@ -7,30 +7,30 @@ body.accounts-tools { max-width: none; margin: 0; padding: 0; }
 .tools-body h2.tool-section-title { margin: 0 0 .6rem; font-size: .9rem; font-weight: 700; }
 /* The tool review heading includes the authored zone identifier. */
 .tools-body .map-reconciliation-body > h2 { text-transform: none; }
-.tools-body .tool-action:is(button, a, label), .tools-body .tool-actions > button { min-height: 1.45rem; padding: .15rem .35rem; border: 1px solid #99978f; background: transparent; color: inherit; font-family: inherit; font-size: .72rem; text-decoration: none; cursor: pointer; }
+.tools-body .tool-action:is(button, a, label), .tools-body .tool-actions > button { min-height: 1.45rem; padding: .15rem .35rem; border: 1px solid var(--ui-border-control); background: transparent; color: inherit; font-family: inherit; font-size: .72rem; text-decoration: none; cursor: pointer; }
 .tools-body .tool-action:is(a, label) { display: inline-flex; align-items: center; }
-.tools-body .tool-action:is(button, a, label):hover:not(:disabled):not(.disabled), .tools-body .tool-actions > button:hover:not(:disabled) { border-color: #575650; background: #eeede7; }
-.tools-body .tool-action:is(button, a, label):focus-visible, .tools-body .tool-actions > button:focus-visible { outline: 1px solid #575650; outline-offset: 2px; }
-.tools-body .tool-action:is(button, a, label):is(:disabled, .disabled, [aria-disabled="true"]), .tools-body .tool-actions > button:disabled { border-color: #c9c8c2; background: #eeede7; color: #85837b; cursor: not-allowed; opacity: .72; }
-.tools-body .tool-action.tool-primary { border-color: #575650; background: #eeede7; font-weight: 700; }
-.tools-body .tool-action.primary { border-color: #171717; background: #171717; color: #fbfaf7; }
-.tools-body .tool-action.primary:is(button, a, label):hover:not(:disabled):not(.disabled) { background: #393833; color: #fbfaf7; }
-.tools-body .tool-action.danger { border-color: #97645a; color: #783b32; }
-.tools-body .tool-action.danger:is(button, a, label):hover:not(:disabled):not(.disabled) { border-color: #783b32; background: #f2e6e1; }
+.tools-body .tool-action:is(button, a, label):hover:not(:disabled):not(.disabled), .tools-body .tool-actions > button:hover:not(:disabled) { border-color: var(--ui-border-interactive); background: var(--ui-hover); }
+.tools-body .tool-action:is(button, a, label):focus-visible, .tools-body .tool-actions > button:focus-visible { outline: 1px solid var(--ui-focus); outline-offset: 2px; }
+.tools-body .tool-action:is(button, a, label):is(:disabled, .disabled, [aria-disabled="true"]), .tools-body .tool-actions > button:disabled { border-color: var(--ui-disabled-border); background: var(--ui-disabled-surface); color: var(--ui-disabled-text); cursor: not-allowed; opacity: .72; }
+.tools-body .tool-action.tool-primary { border-color: var(--ui-border-interactive); background: var(--ui-control-selected); font-weight: 700; }
+.tools-body .tool-action.primary { border-color: var(--ui-primary); background: var(--ui-primary); color: var(--ui-on-primary); }
+.tools-body .tool-action.primary:is(button, a, label):hover:not(:disabled):not(.disabled) { background: var(--ui-primary-hover); color: var(--ui-on-primary); }
+.tools-body .tool-action.danger { border-color: var(--appearance-danger,#97645a); color: var(--appearance-danger,#783b32); }
+.tools-body .tool-action.danger:is(button, a, label):hover:not(:disabled):not(.disabled) { border-color: var(--appearance-danger,#783b32); background: var(--appearance-danger-bg,#f2e6e1); }
 .tools-body .tool-label, .tools-body .tool-control { font-family: inherit; color: inherit; }
-.tools-body .tool-control { border: 1px solid #99978f; background: #fbfaf7; }
-.tools-body .tool-control:focus-visible, .tools-body .tool-label:focus-within { outline: 1px solid #575650; outline-offset: 2px; }
-.tools-body .tool-progress, .tools-body .tool-result { color: #171717; }
-.tools-body .tool-metadata { color: #575650; }
-.tools-body .tool-warning { color: #856404; }
-.tools-body .tool-error, .tools-body .publishing-error { color: #842029; }
+.tools-body .tool-control { border: 1px solid var(--ui-border-control); background: var(--ui-surface); }
+.tools-body .tool-control:focus-visible, .tools-body .tool-label:focus-within { outline: 1px solid var(--ui-focus); outline-offset: 2px; }
+.tools-body .tool-progress, .tools-body .tool-result { color: var(--ui-text); }
+.tools-body .tool-metadata { color: var(--ui-text-secondary); }
+.tools-body .tool-warning { color: var(--appearance-warning,#856404); }
+.tools-body .tool-error, .tools-body .publishing-error { color: var(--appearance-danger,#842029); }
 /* Ordinary manifest command strip only; bounded evidence/table controls are not opted in. */
 .tools-body .map-reconciliation-toolbar > button,
-.tools-body .map-reconciliation-toolbar > .confirmation-actions > button { min-height: 1.45rem; padding: .15rem .35rem; border: 1px solid #99978f; background: transparent; color: inherit; font-family: inherit; font-size: .72rem; cursor: pointer; }
+.tools-body .map-reconciliation-toolbar > .confirmation-actions > button { min-height: 1.45rem; padding: .15rem .35rem; border: 1px solid var(--ui-border-control); background: transparent; color: inherit; font-family: inherit; font-size: .72rem; cursor: pointer; }
 .tools-body .map-reconciliation-toolbar > button:hover:not(:disabled),
-.tools-body .map-reconciliation-toolbar > .confirmation-actions > button:hover:not(:disabled) { border-color: #575650; background: #eeede7; }
+.tools-body .map-reconciliation-toolbar > .confirmation-actions > button:hover:not(:disabled) { border-color: var(--ui-border-interactive); background: var(--ui-hover); }
 .tools-body .map-reconciliation-toolbar > button:focus-visible,
-.tools-body .map-reconciliation-toolbar > .confirmation-actions > button:focus-visible { outline: 1px solid #575650; outline-offset: 2px; }
+.tools-body .map-reconciliation-toolbar > .confirmation-actions > button:focus-visible { outline: 1px solid var(--ui-focus); outline-offset: 2px; }
 .tools-body .map-reconciliation-toolbar > button:disabled,
-.tools-body .map-reconciliation-toolbar > .confirmation-actions > button:disabled { border-color: #c9c8c2; background: #eeede7; color: #85837b; cursor: not-allowed; opacity: .72; }
-.tools-body .map-manifest-input:focus-visible + .tool-action { outline: 1px solid #575650; outline-offset: 2px; }
+.tools-body .map-reconciliation-toolbar > .confirmation-actions > button:disabled { border-color: var(--ui-disabled-border); background: var(--ui-disabled-surface); color: var(--ui-disabled-text); cursor: not-allowed; opacity: .72; }
+.tools-body .map-manifest-input:focus-visible + .tool-action { outline: 1px solid var(--ui-focus); outline-offset: 2px; }

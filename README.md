@@ -1,5 +1,15 @@
 # Silksong Rando Logic Manager
 
+Use Logic Manager to browse and edit Silksong randomizer logic. To run your own
+copy, follow the [Docker setup guide](readme/CONTAINERS.md).
+
+For a new installation, create two private folders on your machine: one for
+`appsettings.json` and one for `silksong-rando-logic.db` and the files Logic Manager
+creates. The guide shows how to tell Docker where those folders are. Get the
+starting database from the [logic documentation repository](https://github.com/zerounit-dev/silksong-rando-ap-logic)
+using the snapshot listed for your app release. If you already run Logic Manager,
+back up and reuse your existing folders. **Do not replace your database.**
+
 Authentication setup, private state, upgrade and recovery instructions:
 [Authentication guide](readme/AUTHENTICATION.md).
 Authentication uses native Identity cookies: 30-minute HTTP/
@@ -31,9 +41,8 @@ Select container `/config` through `LogicManager__ConfigDirectory` and `/data` t
 `Storage__DataRoot`. See the authentication guide for deliberate transition, native
 hosting/array precedence, recovery, permissions, consistent backups and exact
 `LogicManagerPrivateRoots` / scripts `PrivateRoots` build/publication usage.
-Git tracks vetted nonsecret Config defaults, the inert Storage marker, and the deliberate
-public primary seed plus scene, scene-original, scene-source preview/build, tile and
-attribution assets. Private accounts, keys, backups, history, logs, SQLite sidecars,
+Published source includes nonsecret Config defaults, an empty Storage marker, and
+approved scene assets, but not the logic database. Private accounts, keys, backups, history, logs, SQLite sidecars,
 staging, source master and relocation rollback remain ignored. Normal builds/publishes
 copy the two settings files, not runtime Storage contents.
 Keep credentials out of tracked settings: use environment/CLI or an external directory
@@ -146,19 +155,8 @@ exists. If a push response was lost, retry the retained commit before attempting
 new publication. The ordinary logic backup-on-build hook remains unchanged and does
 not back up private publishing credentials/evidence.
 
-Silksong Rando Logic Manager is a local, single-user tool for documenting
-Silksong rooms and the logic used to traverse them. It manages rooms, exits,
-subrooms, directed connections, checks, requirements, notes, map context, and
-verification state in a SQLite database.
-
-This project was never initially intended to be released into the wild. It is a
-fully AI-generated program designed for the sole purpose of being a throwaway
-tool for managing the Silksong logic needed to help create the Silksong
-Randomizer Archipelago mod (the Batsong implementation).
-
-As the number of contributors working on map logic increased, it became clear
-that a unified solution was probably the best way to manage the problem. So here
-we are: releasing the source for a janky AI app into the wild.
+Logic Manager helps contributors document rooms, exits, connections, checks,
+requirements, and map details for the Silksong Archipelago randomizer (Batsong).
 
 Massive thank you to **RainingChain** and **IdoManti** for allowing us to generate
 room annotations using the 25%-resolution image of their amazing high-detail
@@ -168,14 +166,10 @@ Silksong map.
 
 ## Download
 
-Self-contained versions for Windows x64, mainstream glibc Linux x64, and Apple
-Silicon macOS are available from the repository's GitHub Releases page.
-
-These packages do not require an installed .NET runtime or SDK.
-
-An additional Linux AMD64 Docker/GHCR workflow, Compose example, first-install seed
-and private deployment guidance are in the [container guide](readme/CONTAINERS.md).
-Application release authorization covers image publication; deployment remains operator-owned.
+Use the versioned Linux AMD64 Docker image for new installations. Older releases
+still have their original Windows, Linux, and macOS downloads. See the
+[Docker setup guide](readme/CONTAINERS.md) for the Compose example,
+database download and folder setup.
 
 ## Build and run from source
 
@@ -188,7 +182,11 @@ API URLs including `/api/v3/`, shared media and downloads are unchanged. The for
 `/v3/` UI URLs have no aliases or redirects. This relocation does not retire the
 server application or declare feature parity. See documentation/ROUTE_CUTOVER_CONTRACT.md.
 
-Source builds require the .NET 10 SDK. After cloning the repository, run:
+Source builds require the .NET 10 SDK. Before running a fresh source checkout,
+use the database snapshot linked in your application release notes. Verify the
+download against the listed SHA-256 and put `silksong-rando-logic.db` in your
+selected Storage folder. If you already use Logic Manager, use your existing
+data folder instead. After preparing your data and settings, run:
 
 ```powershell
 dotnet restore "Silksong Rando Logic Manager.slnx"
@@ -219,15 +217,16 @@ without requiring Clean/Rebuild or disabling the IDE up-to-date check.
 
 ## Data and upgrades
 
-The source repository contains a snapshot of the working SQLite database at:
+In a fresh source checkout, place the verified database here unless you set a
+different `Storage:DataRoot`:
 
 ```text
 Silksong Rando Logic Manager/Silksong Rando Logic Manager/Storage/silksong-rando-logic.db
 ```
 
-The running application uses selected DataRoot (default `Storage/`), now also the
-source checkout's seed/asset location. Source publication snapshots only the intentional
-primary seed and public scene assets, never accounts/keys/backups/history/logs/rollback.
+The running application uses the selected DataRoot (default `Storage/`). The
+published source includes approved scene assets, but not the logic database,
+accounts, keys, backups, history, logs or recovery files.
 Existing external installs deliberately relocate/consolidate once; there is no dual
 reader or automatic application move. Never copy Data C# as runtime state. See the guide.
 

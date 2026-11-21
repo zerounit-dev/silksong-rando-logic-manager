@@ -1,0 +1,61 @@
+/* Existing Light values for ordinary UI chrome. Semantic palettes stay with their consumers. */
+:root {
+    --ui-canvas: #f6f5f1;
+    --ui-surface: #fbfaf7;
+    --ui-surface-raised: #fff;
+    --ui-surface-muted: #eeede7;
+    --ui-surface-sidebar: #efeee9;
+    --ui-surface-viewer: #171717;
+    --ui-surface-image: #000;
+
+    --ui-text: #171717;
+    --ui-text-muted: #67655e;
+    --ui-text-secondary: #575650;
+    --ui-text-muted-cool: #6c757d;
+    --ui-text-on-viewer: #d8d8d4;
+    --ui-text-inverse: #fff;
+
+    --ui-border: #aaa9a1;
+    --ui-border-subtle: #c9c8c2;
+    --ui-border-divider: #cfcec8;
+    --ui-border-grid: #d0cfc8;
+    --ui-border-frame: #77756d;
+    --ui-border-control: #99978f;
+    --ui-border-interactive: #575650;
+
+    --ui-focus: #575650;
+    --ui-focus-strong: #171717;
+    --ui-control-accent: #171717;
+    --ui-drop-indicator: #171717;
+    --ui-hover: #eeede7;
+    --ui-hover-subtle: #f2f1ec;
+    --ui-selection: #d9d8d2;
+    --ui-control-selected: #eeede7;
+    --ui-disabled-text: #85837b;
+    --ui-disabled-text-strong: #67655e;
+    --ui-disabled-surface: #eeede7;
+    --ui-disabled-border: #c9c8c2;
+    --ui-primary: #171717;
+    --ui-primary-hover: #393833;
+    --ui-on-primary: #fbfaf7;
+
+    --ui-scrim: rgb(23 23 23 / 22%);
+    --ui-scrim-strong: rgb(23 23 23 / 28%);
+    --ui-dialog-shadow: rgb(23 23 23 / 18%);
+
+    --ui-text-soft-black: #242424;
+    --ui-text-muted-slate: #56544d;
+    --ui-surface-tab: #fafaf7;
+    --ui-border-accent: #627b88;
+    --ui-border-accent-subtle: #bec9cc;
+    --ui-focus-accent: #1766b1;
+
+    --ui-surface-recovery: #f7f7f5;
+    --ui-text-recovery: #1b1b1b;
+    --ui-hover-recovery: #dededb;
+    --ui-focus-recovery: #1b1b1b;
+
+    --ui-text-progress-idle: #85837b;
+    --ui-progress-track: #c9c8c2;
+    --ui-progress-active: #575650;
+}

@@ -117,7 +117,7 @@
                 @foreach (var predicate in group.Rows)
                 {
                     var aliases = predicate.ParsedAliases;
-                    <tr class="requirement-syntax-guide-reference-row"><td class="catalogue-monospace requirement-syntax-guide-requirement-type-pattern">@TokenizedPattern(predicate.InputSyntax.Replace("{predicate}", aliases[0], StringComparison.Ordinal))</td><td>@string.Join(", ", aliases.Skip(1))</td><td class="guide-token-note">@predicate.Notes</td></tr>
+                    <tr class="requirement-syntax-guide-reference-row"><td class="catalogue-monospace requirement-syntax-guide-requirement-type-pattern">@TokenizedPattern(predicate.InputSyntax.Replace("{predicate}", aliases[0], StringComparison.Ordinal))</td><td>@string.Join(", ", aliases.Skip(1))</td><td class="guide-token-note"><span class="guide-token-fragment">@predicate.Notes</span></td></tr>
                 }
             }
             </tbody></table>
@@ -132,7 +132,7 @@
                 @foreach (var crest in group.Rows)
                 {
                     var aliases = crest.ParsedAliases;
-                    <tr class="requirement-syntax-guide-reference-row"><td class="guide-token-crest">@aliases[0]</td><td class="guide-token-crest">@string.Join(", ", aliases.Skip(1))</td><td class="guide-token-note">@crest.Notes</td></tr>
+                    <tr class="requirement-syntax-guide-reference-row"><td class="guide-token-crest"><span class="guide-token-fragment">@aliases[0]</span></td><td class="guide-token-crest"><span class="guide-token-fragment">@string.Join(", ", aliases.Skip(1))</span></td><td class="guide-token-note"><span class="guide-token-fragment">@crest.Notes</span></td></tr>
                 }
             }
             </tbody></table>
@@ -147,7 +147,7 @@
                 @foreach (var item in group.Rows)
                 {
                     var aliases = item.ParsedAliases;
-                    <tr class="requirement-syntax-guide-reference-row"><td class="guide-token-item">@aliases[0]</td><td class="guide-token-item">@string.Join(", ", aliases.Skip(1))</td><td class="guide-token-note">@item.Notes</td></tr>
+                    <tr class="requirement-syntax-guide-reference-row"><td class="guide-token-item"><span class="guide-token-fragment">@aliases[0]</span></td><td class="guide-token-item"><span class="guide-token-fragment">@string.Join(", ", aliases.Skip(1))</span></td><td class="guide-token-note"><span class="guide-token-fragment">@item.Notes</span></td></tr>
                 }
             }
             </tbody></table>
@@ -162,7 +162,7 @@
                 @foreach (var method in group.Rows)
                 {
                     var aliases = method.ParsedAliases;
-                    <tr class="requirement-syntax-guide-reference-row"><td class="guide-token-method">@aliases[0]</td><td class="guide-token-method">@string.Join(", ", aliases.Skip(1))</td><td class="guide-token-note">@method.Notes</td></tr>
+                    <tr class="requirement-syntax-guide-reference-row"><td class="guide-token-method"><span class="guide-token-fragment">@aliases[0]</span></td><td class="guide-token-method"><span class="guide-token-fragment">@string.Join(", ", aliases.Skip(1))</span></td><td class="guide-token-note"><span class="guide-token-fragment">@method.Notes</span></td></tr>
                 }
             }
             </tbody></table>
@@ -177,7 +177,7 @@
                 @foreach (var countable in group.Rows)
                 {
                     var aliases = countable.ParsedAliases;
-                    <tr class="requirement-syntax-guide-reference-row"><td class="guide-token-countable">@aliases[0]</td><td class="guide-token-countable">@string.Join(", ", aliases.Skip(1))</td><td class="guide-token-note">@countable.Notes</td></tr>
+                    <tr class="requirement-syntax-guide-reference-row"><td class="guide-token-countable"><span class="guide-token-fragment">@aliases[0]</span></td><td class="guide-token-countable"><span class="guide-token-fragment">@string.Join(", ", aliases.Skip(1))</span></td><td class="guide-token-note"><span class="guide-token-fragment">@countable.Notes</span></td></tr>
                 }
             }
             </tbody></table>
@@ -192,7 +192,7 @@
                 @foreach (var soul in group.Rows)
                 {
                     var aliases = soul.ParsedAliases;
-                    <tr class="requirement-syntax-guide-reference-row"><td class="guide-token-soul">@aliases[0]</td><td class="guide-token-soul">@string.Join(", ", aliases.Skip(1))</td><td class="guide-token-note">@soul.Notes</td></tr>
+                    <tr class="requirement-syntax-guide-reference-row"><td class="guide-token-soul"><span class="guide-token-fragment">@aliases[0]</span></td><td class="guide-token-soul"><span class="guide-token-fragment">@string.Join(", ", aliases.Skip(1))</span></td><td class="guide-token-note"><span class="guide-token-fragment">@soul.Notes</span></td></tr>
                 }
             }
             </tbody></table>

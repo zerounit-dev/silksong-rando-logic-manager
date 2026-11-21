@@ -1,3 +1,3 @@
-.room-import-picker { display: inline-flex; align-items: center; gap: .3rem; min-height: 1.45rem; padding: .15rem .35rem; border: 1px solid #99978f; background: transparent; color: inherit; font-size: .72rem; cursor: pointer; }
-.room-import-picker:disabled { color: #85837b; cursor: not-allowed; }
+.room-import-picker { display: inline-flex; align-items: center; gap: .3rem; min-height: 1.45rem; padding: .15rem .35rem; border: 1px solid var(--ui-border-control); background: transparent; color: inherit; font-size: .72rem; cursor: pointer; }
+.room-import-picker:disabled { color: var(--ui-disabled-text); cursor: not-allowed; }
 .room-import-icon-slot { display: inline-flex; width: 1em; height: 1em; flex: 0 0 1em; align-items: center; justify-content: center; }

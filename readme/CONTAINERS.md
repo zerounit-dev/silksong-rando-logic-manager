@@ -1,93 +1,65 @@
 # Linux AMD64 container release and deployment
 
-The container is an additional application delivery format. The Windows x64 ZIP,
-Linux x64 tarball and macOS ARM64 tarball remain unchanged. There is no Scene Dumper
-or generated-logic publication in this workflow.
+Docker is the self-hosting option for new Logic Manager releases. Previous Windows,
+Linux and macOS standalone downloads remain available from their original releases.
+There is no Scene Dumper or generated-logic publication in this workflow.
 
-## Build and optional GHCR publication (release owner only)
+## Set up a new installation
 
-1. Select the application release version and release notes. Invoke the helper from
-   the separate development suite root (version illustrative):
+You need Docker with Linux AMD64 support and a versioned Logic Manager image from
+the [application releases](https://github.com/zerounit-dev/silksong-rando-logic-manager/releases).
+Already running Logic Manager? Skip this section, back up your installation, and
+reuse your existing configuration and data folders.
 
-   ```powershell
-   ./logic-manager/project/tools/SetReleaseVersion.ps1 -Version 1.2.3
+1. Create two private folders on your machine. In this example they are
+   `/srv/logic-manager/config` and `/srv/logic-manager/data`. Use actual absolute
+   paths on your machine, not the example paths if those do not suit your setup.
+   Keep the new folders writable by you while you put the files in place. If you
+   can't create folders under `/srv`, choose a private location you can write to.
+   You'll assign Docker's user (`1654:1654`) access in step 5, before starting the app.
+2. Copy [the example settings](appsettings.example.json) to the config folder as
+   `appsettings.json`. Keep that file private and follow the [authentication
+   guide](AUTHENTICATION.md#bootstrap-and-recovery) to create your first admin.
+3. Get `silksong-rando-logic.db` from the [logic documentation repository](https://github.com/zerounit-dev/silksong-rando-ap-logic).
+   The [current database page](https://github.com/zerounit-dev/silksong-rando-ap-logic/blob/main/silksong-rando-logic.db)
+   shows the latest copy. For installation, follow the snapshot link in your app
+   release notes and use **Download raw file**. Check the downloaded file's
+   SHA-256 against the one in the release notes (`sha256sum silksong-rando-logic.db`
+   on Linux, or `Get-FileHash silksong-rando-logic.db` in PowerShell). If it does
+   not match, stop. Put the verified file in the new data folder. The app also
+   keeps private accounts, keys, captures and backups in that folder.
+4. Save the [Docker Compose example](https://github.com/zerounit-dev/silksong-rando-logic-manager/blob/main/tools/container/compose.example.yaml)
+   as `compose.yaml`. In the same
+   directory, create a file named `.env` and enter your image and host paths:
+
+   ```dotenv
+   LOGIC_MANAGER_IMAGE=ghcr.io/zerounit-dev/silksong-rando-logic-manager:YOUR-RELEASE-VERSION
+   LOGIC_MANAGER_CONFIG=/srv/logic-manager/config
+   LOGIC_MANAGER_DATA=/srv/logic-manager/data
    ```
 
-   It updates only the application `Version` text in development
-   `project/Directory.Build.props`, preserving its condition and unrelated bytes,
-   and reports the old/new values after read-back verification. It does not choose
-   a version, build, commit, tag or publish. Run it **before** the normal
-   `publish-logic-manager-release.ps1` source mirror/review.
-   That mirror generates sanitized required-mode settings and a consistent public
-   SQLite seed with allowlisted scene assets. It does not build or push an image.
-   Declare any custom in-source private roots to the mirror's `-PrivateRoots`.
-   Inspect destination status and ignored files before replacement. Use `-Force` only
-   when every overwritten file is confirmed disposable generated output. Preserve
-   source changes, unknown files, private data, `.git`, and current-release outputs
-   needed for resumption. Do not rewrite a published GitHub release or tag.
-   The actual source release origin is
-   `https://github.com/zerounit-dev/silksong-rando-logic-manager.git`, so the image
-   repository is `ghcr.io/zerounit-dev/silksong-rando-logic-manager` unless explicitly
-   overridden. Image address and intended public visibility follow that public
-   application repository. Verify actual GHCR
-   visibility during publication rather than assuming a first push is public.
-2. Review/commit the curated source repository as usual. Never edit mirrored files
-   directly. Use that same independent source release checkout for all three standalone
-   packages and this image. Keep credentials out of source and the public logic seed.
-3. To publish the container image, authenticate Docker to GHCR outside
-   the script using the owner's approved credential method and minimum package-write
-   access; never pass credentials as script/build arguments or commit them. With
-   PowerShell, .NET 10 SDK and a running Docker Linux engine with Buildx available,
-   invoke from the **curated source release repository** (version illustrative):
-
-   ```powershell
-   ./tools/PackagePortableRelease.ps1 -RuntimeIdentifier win-x64
-   ./tools/PackagePortableRelease.ps1 -RuntimeIdentifier osx-arm64
-   ./tools/PackageContainerRelease.ps1 -ImageRepository ghcr.io/zerounit-dev/silksong-rando-logic-manager -Version 1.2.3 -Push
-   ```
-
-   The image version must match the declared application `Version` in
-   `Directory.Build.props`; the image gets that exact tag, never automatic `latest`.
-   This order builds Linux standalone staging/archive exactly once through container
-   packaging. No prior local image build/load is required. Container packaging reuses the existing
-   Linux portable builder's full sanitized staging, consistent SQLite snapshot and
-   no-PDB/builder-path checks, also regenerating its ordinary standalone folder/archive.
-   The portable boundary also validates SDK-transformed startup HTML, all entry scripts,
-   imports/preload and shipped native endpoint targets before archiving. Container copying
-   does not select or rewrite startup HTML independently.
-   It then removes only its **copied** portable marker/bypass configuration, moves the
-   copied public Storage into an immutable image seed and generates required-mode
-   defaults. The existing standalone artifacts retain their marker, config and behavior.
-   The Docker context is a disposable sanitized directory, not the source tree; its
-   deny-by-default `.dockerignore` admits only application files, seed, generated
-   config, entrypoint and license. No SDK/build tool is shipped in the runtime image.
-   The existing build-backup hook stays enabled and protects the release checkout's
-   source seed, not deployed state. Temporary context is deleted on success/failure.
-   For local-only image packaging, omit `-Push` **instead of** the final command above:
-
-   ```powershell
-   ./tools/PackageContainerRelease.ps1 -ImageRepository ghcr.io/zerounit-dev/silksong-rando-logic-manager -Version 1.2.3
-   ```
-
-   This default builds/loads a local `linux/amd64` image only, without starting a
-   container, logging in or pushing. For a standalone-only release, the existing
-   `./tools/PackagePortableRelease.ps1 -RuntimeIdentifier all` option remains unchanged.
-4. `-Push` builds and pushes that version tag instead of loading it locally. It prints
-   the immutable `ghcr.io/...@sha256:...` reference from Buildx publication metadata.
-   Record that digest with the release evidence. Verify/set GHCR public visibility and
-   check pull access as part of the authorized application release; a first push does
-   not promise a public package. On failed/uncertain push or missing
-   digest, inspect the existing version tag remotely before retrying. No automatic
-   retry, tag deletion, rollback, login or GitHub Release is performed. Do not reuse
-   a published version for different bytes; base-image updates require a deliberate
-   rebuilt release/digest. The Ubuntu .NET runtime-deps base includes standard native
-   runtime libraries; libgomp1 supports the shipped ImageMagick native library.
-
-`-PrivateRoots` is forwarded to portable staging for any additional declared private
-roots in the curated checkout. It is not secret discovery. Host Config/Storage never
-enter recursively: only the existing consistent public DB and exact asset allowlist
-are reconstructed. Accounts, keys, history/logs/backups, private Publishing recovery,
-image staging, SQLite sidecars, rollback material and source master stay excluded.
+   Replace the version placeholder with the tag (or use the full image digest
+   reference from the release notes). Docker makes your config folder available
+   as `/config` and your data folder as `/data`; leave those container paths alone.
+5. Copy the included scene files into the **new** data folder. From the folder
+   with `compose.yaml`, run `docker compose create` (this does not start the app),
+   then run `docker compose cp logic-manager:/opt/logic-manager-seed/. /srv/logic-manager/data/`,
+   substituting your own data path. These files are separate from the database.
+   Once the files are in place, give `1654:1654` read and write access to both
+   folders and their contents, and access through the parent paths. On Linux,
+   for these **new** directories only, use
+   `sudo chown -R 1654:1654 /srv/logic-manager/config /srv/logic-manager/data`.
+   On a NAS, set the equivalent access in its permissions screen. Keep access
+   private. Do not copy the files into an existing installation.
+6. Set up your first administrator. Keep Docker's port mapping on `127.0.0.1`
+   and disconnect any proxy or tunnel while you do this. Temporarily change
+   `Authentication__Mode` in `compose.yaml` to `bypass`, run `docker compose up -d`,
+   and visit `http://localhost:8080/account/admin` on that machine. Follow the
+   [authentication guide](AUTHENTICATION.md#bootstrap-and-recovery) to create an
+   admin and save the temporary password privately. Stop the service, restore
+   `Authentication__Mode: required`, then run `docker compose up -d` again.
+   Required mode needs browser-facing HTTPS. See below before connecting any
+   proxy or tunnel. Never expose the app in bypass mode.
 
 ## Deployment contract
 
@@ -127,24 +99,19 @@ HTTPS proxy/tunnel, exact immediate trusted proxy IPs and explicit AllowedHosts 
 the guide's HTTP hosting contract; do not enable broad forwarded-header trust. The
 loopback HTTP example alone is not a usable authenticated public deployment.
 
-## First-install seed, upgrades and recovery
+## Database, upgrades and recovery
 
-Before starting the app, the nonroot entrypoint copies only the immutable public seed
-and images into a **genuinely empty** `/data`. It never seeds Config or private accounts
-and never merges new-release images into existing state. If the primary DB already
-exists as a regular file, all existing state is left untouched; normal application
-migrations/initialization and store failure behavior then apply. An invalid or zero-byte
-existing DB is not repaired/replaced by this script. Nonempty storage missing its primary
-DB fails rather than initializing a different installation over partial state.
+The image does not contain a logic database and does not download one. Put the
+verified `silksong-rando-logic.db` in your new data folder before startup. If the
+database is missing, startup stops instead of creating an empty installation.
+Existing data is never overwritten with a downloaded copy. Normal application
+migrations and store failure behavior still apply; an invalid database is not
+replaced automatically.
 
-Seed copying creates `/data/.container-seed-in-progress` first. Failed/interrupted
-copying leaves that marker and stops subsequent startup, including when part of the DB
-has already moved. Preserve the whole directory and inspect it offline. Only for a
-confirmed new installation with no user-authored state, an operator may deliberately
-choose a **different empty directory** and retry. For an existing installation restore
-complete consistent state privately. Do not just delete the marker, overwrite a DB,
-or repeatedly restart to hide partial initialization. Only one process may own a data
-root; the initialization marker is not a general multi-instance database lock.
+If you see an interrupted-initialization error, preserve the whole data directory
+and inspect it offline. For an existing installation, restore complete consistent
+state privately. Do not delete a recovery marker or overwrite the database to
+get past the error. Only one process may use a data folder at a time.
 
 Updates replace image/application bytes, never Config or retained `/data`. Back up
 configuration, SQLite-consistent primary/accounts DBs, keys, images and the complete
@@ -155,19 +122,12 @@ permissions, corruption, unavailable mounts and account/key failures are not per
 to reseed, downgrade auth or automatically reset storage. See the authentication guide
 for full backup, native cookie cutover and recovery limitations.
 
-## Release and deployment validation
+## Check your setup
 
-- Build all three standalone variants once using the release sequence above and verify
-  unchanged archive/launch behavior. Build Linux AMD64 image (load locally or push as
-  authorized; no mandatory load-before-push); inspect its context,
-  layers, nonroot UID and absence of private state/portable marker/bypass settings.
-- On disposable mounts, verify empty-root seed and image availability; missing/wrong
+- On disposable mounts, verify fresh setup with the separately provisioned database; missing/wrong
   permissions, nonempty missing DB and interrupted-copy marker fail safely; existing
   DB/assets/config/accounts/keys/history/logs/Publishing are not overwritten on restart
   or image upgrade. Exercise operator recovery without touching a live installation.
 - Verify isolated Admin bootstrap, required-mode HTTPS login/password replacement,
   proxy host/scheme/trust rejection, media/native image capture and optional documentation
   rendering/publishing readiness, and persistence across operator-controlled recreate.
-- During an authorized application release, verify version tag/platform, printed digest
-  against GHCR, intended visibility and pull/deploy by digest. Source parsing does not
-  establish native dependencies, Docker build success or deployment security.

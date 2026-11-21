@@ -31,24 +31,63 @@ Get-Command docker -ErrorAction Stop | Out-Null
 & docker buildx version
 if ($LASTEXITCODE -ne 0) { throw 'Docker Buildx is required.' }
 
-$image = "${ImageRepository}:$Version"
-$context = Join-Path ([IO.Path]::GetTempPath()) ('silksong-container-' + [Guid]::NewGuid().ToString('N'))
-try {
-    # Reuse the complete existing privacy/consistent-backup/managed-binary checks.
-    # This also regenerates the ordinary Linux standalone folder and archive.
-    & (Join-Path $PSScriptRoot 'PackagePortableRelease.ps1') -RuntimeIdentifier linux-x64 -PrivateRoots $PrivateRoots
-    $portable = Join-Path $repositoryRoot 'releases/linux-x64/Silksong Rando Logic Manager'
-    foreach ($entry in Get-ChildItem -LiteralPath $portable -Recurse -Force) {
-        if (($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-            throw "Container input must not contain symbolic links or junctions: $($entry.FullName)"
+function Test-RealContainerWorkspaceDirectory([string] $Path) {
+    # Walk root to leaf so no path probe goes through an unchecked ancestor.
+    $pending = [Collections.Generic.Stack[string]]::new()
+    for ($component = $Path; $component; $component = [IO.Path]::GetDirectoryName($component)) {
+        $pending.Push($component)
+    }
+    while ($pending.Count) {
+        $component = $pending.Pop()
+        try {
+            $attributes = [IO.File]::GetAttributes($component)
+        }
+        catch [IO.FileNotFoundException], [IO.DirectoryNotFoundException] {
+            if ($pending.Count -eq 0) { return $false } # Only the workspace itself may be absent.
+            throw
+        }
+        if (($attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+            ($attributes -band [IO.FileAttributes]::Directory) -eq 0) {
+            throw "Container workspace and its ancestors must be real directories, not files or reparse points: $component"
         }
     }
-    New-Item -ItemType Directory -Path $context -Force | Out-Null
+    return $true
+}
+
+function Assert-ContainerWorkspaceHasNoReparsePoints([string] $Path) {
+    $pending = [Collections.Generic.Stack[string]]::new()
+    $pending.Push($Path)
+    while ($pending.Count) {
+        $entry = Get-Item -LiteralPath $pending.Pop() -Force
+        if (($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Container workspace must not contain symbolic links or junctions: $($entry.FullName)"
+        }
+        if ($entry.PSIsContainer) {
+            foreach ($child in Get-ChildItem -LiteralPath $entry.FullName -Force) { $pending.Push($child.FullName) }
+        }
+    }
+}
+
+$image = "${ImageRepository}:$Version"
+$workspace = [IO.Path]::GetFullPath([IO.Path]::Combine([IO.Path]::GetTempPath(), ('silksong-container-' + [Guid]::NewGuid().ToString('N'))))
+if (Test-RealContainerWorkspaceDirectory $workspace) { throw "Container workspace already exists: $workspace" }
+$stage = Join-Path $workspace 'stage'
+$context = Join-Path $workspace 'context'
+New-Item -ItemType Directory -Path $workspace | Out-Null
+try {
+    # Run every staging check without writing a standalone archive. Docker sees
+    # only the sibling context, never the portable stage or its bypass config.
+    & (Join-Path $PSScriptRoot 'PackagePortableRelease.ps1') -RuntimeIdentifier linux-x64 -PrivateRoots $PrivateRoots -OutputRoot $stage -SkipArchive
+    if (-not (Test-RealContainerWorkspaceDirectory $workspace)) { throw "Container workspace was not found: $workspace" }
+    $portable = Join-Path $stage 'linux-x64/Silksong Rando Logic Manager'
+    Assert-ContainerWorkspaceHasNoReparsePoints $workspace
+    New-Item -ItemType Directory -Path $context | Out-Null
     $app = Join-Path $context 'app'
     Copy-Item -LiteralPath $portable -Destination $app -Recurse
     # Container is a normal server, never a portable desktop startup.
     Remove-Item -LiteralPath (Join-Path $app 'portable-release.marker')
     Remove-Item -LiteralPath (Join-Path $app 'Config') -Recurse
+    # The validated stage's Storage contains approved scene assets only.
     Move-Item -LiteralPath (Join-Path $app 'Storage') -Destination (Join-Path $context 'seed')
     $config = Join-Path $context 'config'
     New-Item -ItemType Directory -Path $config | Out-Null
@@ -61,6 +100,11 @@ try {
         [IO.File]::WriteAllText((Join-Path $context $name), $text, [Text.UTF8Encoding]::new($false))
     }
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'LICENSE') -Destination (Join-Path $context 'LICENSE')
+    foreach ($file in Get-ChildItem -LiteralPath $context -File -Recurse -Force) {
+        if ($file.Name -ilike 'silksong-rando-logic.db*' -or $file.Name -match '(?i)\.(db|sqlite3?)(?:-(wal|shm|journal))?$') {
+            throw 'SQLite databases and sidecars must never enter the Docker build context.'
+        }
+    }
     $metadata = Join-Path $context 'build-metadata.json'
     $output = if ($Push) { '--push' } else { '--load' }
     & docker buildx build --platform linux/amd64 --tag $image --build-arg "RELEASE_VERSION=$Version" --metadata-file $metadata $output $context
@@ -81,5 +125,9 @@ try {
     }
 }
 finally {
-    if (Test-Path -LiteralPath $context) { Remove-Item -LiteralPath $context -Recurse -Force }
+    if (Test-RealContainerWorkspaceDirectory $workspace) {
+        # Do not recursively delete through a link, including on partial-stage failure.
+        Assert-ContainerWorkspaceHasNoReparsePoints $workspace
+        Remove-Item -LiteralPath $workspace -Recurse -Force
+    }
 }

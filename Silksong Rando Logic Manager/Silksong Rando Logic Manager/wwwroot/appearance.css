@@ -1,0 +1,337 @@
+/* Only resolved non-Light palettes. Light keeps its original cascade and UA scheme. */
+:root:is([data-logic-palette="Dark"], [data-logic-palette="Void"], [data-logic-palette="Hero"]) {
+    background: var(--ui-canvas);
+    color: var(--ui-text);
+    --ui-text-soft-black: var(--ui-text);
+    --ui-text-muted-slate: var(--ui-text-secondary);
+    --ui-text-muted-cool: var(--ui-text-muted);
+    --ui-surface-tab: var(--ui-surface);
+    --ui-border-accent: var(--ui-border-control);
+    --ui-border-accent-subtle: var(--ui-border-subtle);
+    --ui-focus-accent: var(--ui-focus);
+    --ui-focus-strong: var(--ui-focus);
+    --ui-control-accent: var(--ui-primary);
+    --ui-drop-indicator: var(--ui-focus);
+    --ui-disabled-text-strong: var(--ui-text-muted);
+    --ui-disabled-border: var(--ui-border-subtle);
+    --ui-disabled-surface: var(--ui-surface-muted);
+    --ui-surface-recovery: var(--ui-surface);
+    --ui-text-recovery: var(--ui-text);
+    --ui-hover-recovery: var(--ui-hover);
+    --ui-focus-recovery: var(--ui-focus);
+    --ui-text-progress-idle: var(--ui-text-muted);
+    --ui-progress-track: var(--ui-border);
+    --ui-progress-active: var(--ui-focus);
+    --appearance-denial-border: var(--ui-border-control);
+    --appearance-ink: var(--ui-text);
+    --appearance-muted: var(--ui-text-muted);
+    --appearance-disabled: var(--ui-disabled-text);
+    --appearance-line: var(--ui-border-divider);
+    --appearance-control: var(--ui-border-control);
+    --appearance-panel: var(--ui-surface);
+    --appearance-raised: var(--ui-surface-raised);
+    --appearance-muted-panel: var(--ui-surface-muted);
+    --appearance-hover: var(--ui-hover);
+    --appearance-selection: var(--ui-selection);
+    --appearance-focus: var(--ui-focus);
+    --appearance-primary: var(--ui-primary);
+    --appearance-primary-hover: var(--ui-primary-hover);
+    --appearance-on-primary: var(--ui-on-primary);
+}
+
+:root:is([data-logic-palette="Dark"], [data-logic-palette="Void"]) {
+    color-scheme: dark;
+    --ui-canvas: #202020;
+    --ui-surface: #272727;
+    --ui-surface-raised: #303030;
+    --ui-surface-muted: #333;
+    --ui-surface-sidebar: #2b2b2b;
+    --ui-text: #f2f2f2;
+    --ui-text-muted: #bfbfbf;
+    --ui-text-secondary: #d3d3d3;
+    --ui-border: #757575;
+    --ui-border-subtle: #606060;
+    --ui-border-divider: #686868;
+    --ui-border-grid: #6c6c6c;
+    --ui-border-frame: #999;
+    --ui-border-control: #a5a5a5;
+    --ui-border-interactive: #ddd;
+    --ui-focus: #f5f5f5;
+    --ui-hover: #3b3b3b;
+    --ui-hover-subtle: #363636;
+    --ui-selection: #494949;
+    --ui-control-selected: #464646;
+    --ui-disabled-text: #adadad;
+    --ui-primary: #ccc;
+    --ui-primary-hover: #e7e7e7;
+    --ui-on-primary: #202020;
+    --ui-scrim: rgb(8 8 8 / 54%);
+    --ui-scrim-strong: rgb(8 8 8 / 66%);
+    --ui-dialog-shadow: rgb(0 0 0 / 45%);
+    --appearance-warning: #ffdb87;
+    --appearance-warning-bg: #493719;
+    --appearance-warning-hover: #514022;
+    --appearance-danger: #ffb5bb;
+    --appearance-danger-bg: #49262b;
+    --appearance-danger-hover: #563036;
+    --appearance-success: #a9e9be;
+    --appearance-success-bg: #233d2c;
+    --appearance-success-hover: #2b4734;
+    --appearance-info: #abdfff;
+}
+
+/* Void shares the fixed dark ink and semantic pairs, not the Hero draw. */
+:root[data-logic-palette="Void"] {
+    --ui-canvas: #000;
+    --ui-surface-sidebar: #101010;
+    --ui-surface: #171717;
+    --ui-surface-raised: #202020;
+    --ui-surface-muted: #262626;
+    --ui-hover-subtle: #292929;
+    --ui-hover: #2d2d2d;
+    --ui-selection: #333;
+    --ui-control-selected: #333;
+    --ui-border: #828282;
+    --ui-border-divider: #7d7d7d;
+    --ui-border-grid: #7d7d7d;
+    --ui-disabled-text: var(--ui-text-muted);
+}
+
+:root:is([data-logic-palette="Dark"], [data-logic-palette="Void"], [data-logic-palette="Hero"][data-logic-hero-tone="Dark"]) {
+    --requirement-color-keyword: #bdcde4;
+    --requirement-color-difficulty: #d9b6ff;
+    --requirement-color-direction: #8ce1e1;
+    --requirement-color-item: #a6efab;
+    --requirement-color-countable: #afdf89;
+    --requirement-color-soul: #fac3a0;
+    --requirement-color-crest: #e9badb;
+    --requirement-color-method: #c8bafa;
+    --requirement-color-quantity: #fbe28a;
+    --requirement-color-scope-local: #bcbcff;
+    --requirement-color-scope-in: #9ad7ff;
+    --requirement-color-scope-the: #9dbfff;
+    --requirement-color-annotation: #c8bfb5;
+    --requirement-color-diagnostic-danger: var(--appearance-danger);
+    --requirement-color-diagnostic-warning: #ffc47a;
+    --appearance-paren-0: #eeadff;
+    --appearance-paren-1: #85daff;
+    --appearance-paren-2: #b2ee70;
+    --appearance-paren-3: #ffd082;
+}
+
+:root[data-logic-palette="Hero"] {
+    --ui-canvas: var(--hero-canvas);
+    --ui-surface: var(--hero-surface);
+    --ui-surface-raised: var(--hero-surface-raised);
+    --ui-surface-muted: var(--hero-surface-muted);
+    --ui-surface-sidebar: var(--hero-sidebar);
+    --ui-text: var(--hero-ink);
+    --ui-text-muted: var(--hero-muted);
+    --ui-text-secondary: var(--hero-secondary);
+    --ui-disabled-text: var(--hero-muted);
+    --ui-border: var(--hero-line);
+    --ui-border-subtle: var(--hero-line);
+    --ui-border-divider: var(--hero-line);
+    --ui-border-grid: var(--hero-line);
+    --ui-border-frame: var(--hero-boundary);
+    --ui-border-control: var(--hero-boundary);
+    --ui-border-interactive: var(--hero-ink);
+    --ui-focus: var(--hero-focus);
+    --ui-hover: var(--hero-hover);
+    --ui-hover-subtle: var(--hero-hover-subtle);
+    --ui-selection: var(--hero-selection);
+    --ui-control-selected: var(--hero-selection);
+    --ui-primary: var(--hero-primary);
+    --ui-primary-hover: var(--hero-primary-hover);
+    --ui-scrim: rgb(0 0 0 / 45%);
+    --ui-scrim-strong: rgb(0 0 0 / 56%);
+    --ui-dialog-shadow: rgb(0 0 0 / 32%);
+    --appearance-warning: var(--hero-warning);
+    --appearance-warning-bg: var(--hero-warning-bg);
+    --appearance-warning-hover: var(--hero-warning-hover);
+    --appearance-danger: var(--hero-danger);
+    --appearance-danger-bg: var(--hero-danger-bg);
+    --appearance-danger-hover: var(--hero-danger-hover);
+    --appearance-success: var(--hero-success);
+    --appearance-success-bg: var(--hero-success-bg);
+    --appearance-success-hover: var(--hero-success-hover);
+    --appearance-info: var(--hero-info);
+}
+
+:root[data-logic-palette="Hero"][data-logic-hero-tone="Light"] {
+    color-scheme: light;
+    --ui-on-primary: #fff;
+    --hero-signal-success: #134c33;
+    --hero-signal-warning: #5b3e00;
+    --hero-signal-danger: #801e30;
+    --hero-signal-info: #094b6b;
+
+    --requirement-color-keyword: #374459;
+    --requirement-color-difficulty: #582499;
+    --requirement-color-direction: #094e4c;
+    --requirement-color-item: #134e27;
+    --requirement-color-countable: #304c12;
+    --requirement-color-soul: #643321;
+    --requirement-color-crest: #5b3a62;
+    --requirement-color-method: #463067;
+    --requirement-color-quantity: #503e00;
+    --requirement-color-scope-local: #31328b;
+    --requirement-color-scope-in: #064b6e;
+    --requirement-color-scope-the: #173974;
+    --requirement-color-annotation: #41434b;
+    --requirement-color-diagnostic-danger: #801e30;
+    --requirement-color-diagnostic-warning: #673400;
+    --appearance-paren-0: #6a2076;
+    --appearance-paren-1: #094b6b;
+    --appearance-paren-2: #364d00;
+    --appearance-paren-3: #643d00;
+}
+
+:root[data-logic-palette="Hero"][data-logic-hero-tone="Dark"] {
+    color-scheme: dark;
+    --ui-on-primary: #000;
+    --hero-signal-success: #a9e9be;
+    --hero-signal-warning: #ffdb87;
+    --hero-signal-danger: #ffb5bb;
+    --hero-signal-info: #abdfff;
+    --requirement-color-diagnostic-danger: #ffb5bb;
+}
+
+/* Only the colored fragment gets the paired backing; leave overlay geometry,
+   whitespace, raw fallback, native selection and the front-layer caret alone. */
+:root[data-logic-palette="Hero"] :is(
+    .requirements-preview, [data-v2-requirements-highlight]
+) :where(
+    .requirements-unresolved, .requirements-incomplete, .requirements-syntax,
+    .requirements-annotation, .requirements-difficulty, .requirements-direction,
+    .requirements-item, .requirements-quantity, .requirements-countable,
+    .requirements-soul, .requirements-crest, .requirements-method,
+    .requirements-local, .requirements-in, .requirements-global,
+    .requirements-paren-depth-0, .requirements-paren-depth-1,
+    .requirements-paren-depth-2, .requirements-paren-depth-3,
+    .requirements-malformed, .requirements-unknown
+) {
+    background-color: var(--hero-syntax-backing);
+}
+
+/* Keep the semantic foreground on its original guide element. Reference
+   cells pass that ink to a plain inline child; never back the cell itself. */
+:root[data-logic-palette="Hero"] .requirement-syntax-guide :where(span, code):where(
+    .guide-token-fixed, .guide-token-note, .guide-token-difficulty,
+    .guide-token-direction, .guide-token-item, .guide-token-amount,
+    .guide-token-countable, .guide-token-soul, .guide-token-crest, .guide-token-method,
+    .guide-token-check-local, .guide-token-check-in, .guide-token-room-in,
+    .guide-token-check-the, .guide-diagnostic-danger, .guide-diagnostic-warning,
+    .guide-token-fragment
+) {
+    background-color: var(--hero-syntax-backing);
+    background-clip: content-box;
+}
+@media (forced-colors: none) {
+    :root[data-logic-palette="Hero"] :is(.requirements-editor, .requirements-expanded-editor) {
+        caret-color: var(--ui-text);
+    }
+}
+
+:root[data-logic-palette="Hero"] .room-editor-v2 .check-table td > textarea[data-v2-friendly-name-role] {
+    background-color: var(--hero-name-backing, var(--hero-syntax-backing));
+}
+:root[data-logic-palette="Hero"] .room-editor-v2 .check-table td.warning { --hero-name-backing: var(--hero-warning-name-backing); }
+:root[data-logic-palette="Hero"] .room-editor-v2 .check-table td.danger { --hero-name-backing: var(--hero-danger-name-backing); }
+:root[data-logic-palette="Hero"] .room-editor-v2 .check-table td:is(.warning, .danger) > textarea[data-v2-friendly-name-role] {
+    /* The cell keeps its severity fill; the native control keeps its existing
+       severity caret and adds a boundary independent of the alias ink. */
+    box-shadow: inset 0 -2px var(--ui-border-interactive);
+}
+
+/* Standalone small semantic marks have no dedicated fill beneath them. Pair
+   those with the same local backing as syntax. Sidebar status and image ink
+   instead use the adaptive --appearance-* roles in app.css over ordinary fills. */
+:root[data-logic-palette="Hero"] :is(.room-header-status.success, .audit-status-passed, .audit-legend-met, .map-review-count-added) {
+    color: var(--hero-signal-success);
+    background-color: var(--hero-syntax-backing);
+}
+:root[data-logic-palette="Hero"] :is(.room-header-status.warning, .audit-status-unresolved, .audit-state-unknown, .map-review-count-changed) {
+    color: var(--hero-signal-warning);
+    background-color: var(--hero-syntax-backing);
+}
+:root[data-logic-palette="Hero"] :is(.room-header-status.danger, .audit-legend-missing, .map-review-count-removed) {
+    color: var(--hero-signal-danger);
+    background-color: var(--hero-syntax-backing);
+}
+:root[data-logic-palette="Hero"] .room-editor-v2 .row-actions .annotation-crosshairs.row-target-displaced {
+    color: var(--hero-signal-info);
+    background-color: var(--hero-syntax-backing);
+}
+
+/* Tone differences intentionally compress near the ink crossover. Keep state
+   edges independent of those differences without changing layout. */
+:root[data-logic-palette="Hero"] .room-link:hover,
+:root[data-logic-palette="Hero"] .logic-table tbody > tr:not(.uncommitted-row):hover > td:not([aria-invalid="true"]) {
+    box-shadow: inset 0 -1px var(--ui-border);
+}
+:root[data-logic-palette="Hero"] :is(.room-link.active, .catalogue-modal-apply) {
+    box-shadow: inset 0 -2px var(--ui-border-interactive);
+}
+:root[data-logic-palette="Hero"] .sidebar-theme-menu > button:hover {
+    box-shadow: inset 0 -1px var(--ui-border);
+}
+:root[data-logic-palette="Hero"] :is(.tool-action.primary, button.primary, .cache-actions button:last-child, .accounts-tools button, body:has(> main > .app-name) button):hover:not(:disabled) {
+    text-decoration: underline;
+}
+:root[data-logic-palette="Hero"] :is(.load-ui1-download .load-ui1-to-cache, .load-ui1-lookups .load-ui1-to-app) > span {
+    outline: 1px solid var(--ui-focus);
+    outline-offset: 1px;
+}
+:root[data-logic-palette="Hero"] :is(
+    .catalogue-modal-footer .catalogue-modal-action, .tools-body .tool-action,
+    .tools-body .tool-actions > button, .tools-body .map-reconciliation-toolbar button,
+    .accounts-tools button, dialog button, .credential button, .room-audit button,
+    .client-update-actions button, .cache-actions button
+):is(:disabled, .disabled, [aria-disabled="true"]),
+:root[data-logic-palette="Hero"] .room-audit :is(.audit-difficulty-options, .audit-mode-options) input:disabled + span {
+    opacity: 1;
+    border-color: var(--ui-border-control);
+    border-style: dashed;
+}
+
+:root[data-logic-palette="Hero"] .room-audit .audit-requirement-group-inactive {
+    opacity: 1;
+    outline: 1px dashed var(--ui-border);
+    outline-offset: -1px;
+}
+
+/* The label/span owns the visible text and border; keep its existing disabled
+   markup and behavior, but don't composite that whole control at low opacity. */
+:root[data-logic-palette="Hero"] .tools-header nav > span[aria-disabled="true"],
+:root[data-logic-palette="Hero"] label.scene-image-upload:has(input[type="file"]:disabled) {
+    color: var(--ui-disabled-text);
+    background-color: var(--ui-disabled-surface);
+    opacity: 1;
+    border-color: var(--ui-border-control);
+    border-style: dashed;
+}
+
+/* Native control accent includes controls that had no authored Light accent. */
+:root:is([data-logic-palette="Dark"], [data-logic-palette="Void"], [data-logic-palette="Hero"]) :where(input[type="checkbox"], input[type="radio"]) {
+    accent-color: var(--ui-control-accent);
+}
+
+/* Readable focus on the full-sized overlay without altering its transparent text layer. */
+:root:is([data-logic-palette="Dark"], [data-logic-palette="Void"], [data-logic-palette="Hero"]) .requirements-expanded-editor:focus-visible {
+    outline: 2px solid var(--ui-focus);
+    outline-offset: 1px;
+}
+
+/* Keep the original scoped publishing styles as the Light baseline. */
+:root:is([data-logic-palette="Dark"], [data-logic-palette="Void"], [data-logic-palette="Hero"]) .tools-body .publishing-activity-table :is(th, td) {
+    border-bottom-color: var(--ui-border-divider);
+}
+:root:is([data-logic-palette="Dark"], [data-logic-palette="Void"], [data-logic-palette="Hero"]) .tools-body .publishing-activity-table th {
+    background: var(--ui-surface-muted);
+}
+:root:is([data-logic-palette="Dark"], [data-logic-palette="Void"], [data-logic-palette="Hero"]) .publishing-activity-table .publishing-activity-hour {
+    color: var(--appearance-danger);
+}
+
+:root:is([data-logic-palette="Dark"], [data-logic-palette="Void"], [data-logic-palette="Hero"]) #components-reconnect-modal { color: var(--ui-text); }

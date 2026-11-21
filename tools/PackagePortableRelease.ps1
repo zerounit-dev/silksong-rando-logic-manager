@@ -4,10 +4,15 @@ param(
     [string] $RuntimeIdentifier = 'all',
     [string[]] $PrivateRoots = @(),
     [string] $OutputRoot,
-    [string] $BuildEvidenceRoot
+    [string] $BuildEvidenceRoot,
+    [switch] $SkipArchive
 )
 
 $ErrorActionPreference = 'Stop'
+
+if ($SkipArchive -and ($RuntimeIdentifier -ne 'linux-x64' -or -not $PSBoundParameters.ContainsKey('OutputRoot'))) {
+    throw 'SkipArchive requires linux-x64 and an explicit isolated OutputRoot.'
+}
 
 if ($RuntimeIdentifier -eq 'all') {
     foreach ($target in @('win-x64', 'linux-x64', 'osx-arm64')) {
@@ -28,7 +33,6 @@ $projectFile = Join-Path $projectDirectory 'Silksong Rando Logic Manager.csproj'
 $backupProject = Join-Path (Join-Path (Join-Path $repositoryRoot 'tools') 'DatabaseBackup') 'DatabaseBackup.csproj'
 $tarballBuilderProject = Join-Path (Join-Path (Join-Path $repositoryRoot 'tools') 'LinuxTarballBuilder') 'LinuxTarballBuilder.csproj'
 $sourceData = Join-Path $projectDirectory 'Storage'
-$sourceDatabase = Join-Path $sourceData 'silksong-rando-logic.db'
 $sourceScenes = Join-Path $sourceData 'scenes'
 $sourceSceneSource = Join-Path $sourceData 'scene-source'
 $sourceSceneOriginals = Join-Path $sourceData 'scene-originals'
@@ -43,16 +47,16 @@ $resolvedPrivateRoots = @(
         [IO.Path]::GetFullPath($candidate).TrimEnd('\', '/')
     }
 )
-# Default Storage exclusion has explicit public seed/image reconstruction below.
+# Default Storage exclusion has explicit public scene asset reconstruction below.
 # Operator-declared roots must never be reintroduced through that exception.
 foreach ($declaredRoot in $PrivateRoots) {
     $root = [IO.Path]::GetFullPath($(if ([IO.Path]::IsPathRooted($declaredRoot)) { $declaredRoot } else { Join-Path $repositoryRoot $declaredRoot })).TrimEnd('\', '/')
-    foreach ($seed in @($sourceDatabase, $sourceScenes, $sourceSceneSource, $sourceSceneOriginals)) {
-        $seed = [IO.Path]::GetFullPath($seed).TrimEnd('\', '/')
-        if ($root.Equals($seed, [StringComparison]::OrdinalIgnoreCase) -or
-            $seed.StartsWith($root + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -or
-            $root.StartsWith($seed + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
-            throw 'PrivateRoots overlaps deliberately public Storage seed inputs. Choose an uncontaminated public seed before packaging; runtime settings are not changed.'
+    foreach ($asset in @($sourceScenes, $sourceSceneSource, $sourceSceneOriginals)) {
+        $asset = [IO.Path]::GetFullPath($asset).TrimEnd('\', '/')
+        if ($root.Equals($asset, [StringComparison]::OrdinalIgnoreCase) -or
+            $asset.StartsWith($root + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -or
+            $root.StartsWith($asset + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'PrivateRoots overlaps deliberately public Storage scene inputs; runtime settings are not changed.'
         }
     }
 }
@@ -120,10 +124,10 @@ $packageRoot = Join-Path $releaseDirectory $RuntimeIdentifier
 $applicationRoot = Join-Path $packageRoot 'Silksong Rando Logic Manager'
 $archiveExtension = if ($RuntimeIdentifier -eq 'win-x64') { 'zip' } else { 'tar.gz' }
 $releaseArchive = Join-Path $releaseDirectory "silksong-rando-logic-manager-$RuntimeIdentifier.$archiveExtension"
-$temporarySnapshotDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ("silksong-rando-portable-" + [Guid]::NewGuid().ToString('N'))
-$temporaryArchive = Join-Path $temporarySnapshotDirectory "silksong-rando-logic-manager-$RuntimeIdentifier.$archiveExtension"
+$temporaryArchiveDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ("silksong-rando-portable-" + [Guid]::NewGuid().ToString('N'))
+$temporaryArchive = Join-Path $temporaryArchiveDirectory "silksong-rando-logic-manager-$RuntimeIdentifier.$archiveExtension"
 
-foreach ($requiredPath in @($projectFile, $backupProject, $tarballBuilderProject, $sourceDatabase, $sourceScenes, $sourceSceneSource, $sourceReadme, $sourceLogicGuide, $sourceLicense)) {
+foreach ($requiredPath in @($projectFile, $backupProject, $tarballBuilderProject, $sourceScenes, $sourceSceneSource, $sourceReadme, $sourceLogicGuide, $sourceLicense)) {
     if (-not (Test-Path -LiteralPath $requiredPath)) {
         throw "Required portable-release source path was not found: $requiredPath"
     }
@@ -190,6 +194,17 @@ function Assert-PublishedClientHtml {
     Write-Host "Published client HTML validated: $($scripts.Count) scripts, $($preloads.Count) preloads, $(@($map.imports.PSObject.Properties).Count) imports."
 }
 
+function Test-SqliteDatabaseHeader {
+    param([System.IO.FileInfo] $File)
+    if ($File.Length -lt 16) { return $false }
+    $stream = $File.OpenRead()
+    try {
+        $reader = [IO.BinaryReader]::new($stream)
+        return [Text.Encoding]::ASCII.GetString($reader.ReadBytes(16)) -ceq "SQLite format 3`0"
+    }
+    finally { $stream.Dispose() }
+}
+
 function Assert-StagedPortableOutputSafe {
     param(
         [Parameter(Mandatory = $true)]
@@ -207,9 +222,16 @@ function Assert-StagedPortableOutputSafe {
         throw 'Portable output must contain only the generated safe bypass configuration.'
     }
     foreach ($entry in Get-ChildItem -LiteralPath $StagedRoot -Recurse -Force) {
+        if (($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw 'Portable output must not contain symbolic links or junctions.'
+        }
         if ($entry.Name -ieq 'authentication.json' -or $entry.Name -ilike 'accounts.db*' -or
             ($entry.PSIsContainer -and $entry.Name -in @('authentication', 'history', 'logs', 'backups', 'scene-image-staging'))) {
             throw "Private authentication state must never enter a portable artifact: $($entry.FullName)"
+        }
+        if (-not $entry.PSIsContainer -and ($entry.Name -ilike 'silksong-rando-logic.db*' -or
+            $entry.Name -match '(?i)\.(db|sqlite3?)(?:-(wal|shm|journal))?$' -or (Test-SqliteDatabaseHeader $entry))) {
+            throw 'SQLite databases and sidecars must never enter a portable artifact.'
         }
     }
     $pdbFiles = @(
@@ -297,21 +319,8 @@ try {
         }
     }
 
-    New-Item -ItemType Directory -Path $temporarySnapshotDirectory -Force | Out-Null
-    & dotnet run --project $backupProject --configuration Release -- $sourceDatabase $temporarySnapshotDirectory
-    if ($LASTEXITCODE -ne 0) {
-        throw "SQLite seed snapshot failed with exit code $LASTEXITCODE."
-    }
-
-    $snapshots = @(Get-ChildItem -LiteralPath $temporarySnapshotDirectory -Filter '*.db')
-    if ($snapshots.Count -ne 1) {
-        throw "SQLite seed snapshot was not created exactly once for $sourceDatabase."
-    }
-
-    $snapshot = $snapshots[0]
-
-    # Discard any legacy seed copied by SDK items, then insert only the selected
-    # consistent public seed/assets. Never copy Config or the whole Storage root.
+    # Discard legacy runtime content copied by SDK items, then insert only the
+    # approved scene assets. Never copy Config or the whole Storage root.
     $legacyData = Join-Path $applicationRoot 'data'
     if (Test-Path -LiteralPath $legacyData) { Remove-Item -LiteralPath $legacyData -Recurse -Force }
     $packageData = Join-Path $applicationRoot 'Storage'
@@ -323,7 +332,6 @@ try {
     $packageConfig = Join-Path $applicationRoot 'Config'
     New-Item -ItemType Directory -Path $packageConfig -Force | Out-Null
     [System.IO.File]::WriteAllText((Join-Path $packageConfig 'appsettings.json'), $safePortableConfig, [System.Text.UTF8Encoding]::new($false))
-    Copy-Item -LiteralPath $snapshot.FullName -Destination (Join-Path $packageData 'silksong-rando-logic.db')
     foreach ($directory in @('scenes', 'scene-originals', 'scene-source/tiles')) {
         New-Item -ItemType Directory -Path (Join-Path $packageData $directory) -Force | Out-Null
     }
@@ -366,6 +374,7 @@ try {
             [System.Text.UTF8Encoding]::new($false))
 
         Assert-StagedPortableOutputSafe -StagedRoot $packageRoot -BuilderPathMarkers $builderPathMarkers
+        New-Item -ItemType Directory -Path $temporaryArchiveDirectory -Force | Out-Null
         Add-Type -AssemblyName System.IO.Compression.FileSystem
         [System.IO.Compression.ZipFile]::CreateFromDirectory($packageRoot, $temporaryArchive)
     }
@@ -377,18 +386,36 @@ try {
             (@('#!/usr/bin/env sh', 'set -eu', 'script_directory=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)', 'cd "$script_directory/Silksong Rando Logic Manager"', 'exec ./Silksong_Rando_Logic_Manager "$@"') -join "`n"),
             [System.Text.UTF8Encoding]::new($false))
         Assert-StagedPortableOutputSafe -StagedRoot $packageRoot -BuilderPathMarkers $builderPathMarkers
-        & dotnet run --project $tarballBuilderProject --configuration Release -- $packageRoot $temporaryArchive $linuxHost $linuxLauncher
-        if ($LASTEXITCODE -ne 0) {
-            throw "Linux tarball creation failed with exit code $LASTEXITCODE."
+        if ($SkipArchive) {
+            # Keep LinuxTarballBuilder's input checks when no archive is needed.
+            if (-not [IO.Directory]::Exists($packageRoot)) {
+                throw "Package root was not found: $packageRoot"
+            }
+            foreach ($executable in @($linuxHost, $linuxLauncher)) {
+                if (-not [IO.File]::Exists($executable)) {
+                    throw "Required staged executable was not found: $executable"
+                }
+            }
+        }
+        else {
+            New-Item -ItemType Directory -Path $temporaryArchiveDirectory -Force | Out-Null
+            & dotnet run --project $tarballBuilderProject --configuration Release -- $packageRoot $temporaryArchive $linuxHost $linuxLauncher
+            if ($LASTEXITCODE -ne 0) {
+                throw "Linux tarball creation failed with exit code $LASTEXITCODE."
+            }
         }
     }
-    Move-Item -LiteralPath $temporaryArchive -Destination $releaseArchive -Force
+    if (-not $SkipArchive) {
+        Move-Item -LiteralPath $temporaryArchive -Destination $releaseArchive -Force
+    }
 
     Write-Host "Portable release folder created: $packageRoot"
-    Write-Host "Portable release archive created: $releaseArchive"
+    if (-not $SkipArchive) {
+        Write-Host "Portable release archive created: $releaseArchive"
+    }
 }
 finally {
-    if (Test-Path -LiteralPath $temporarySnapshotDirectory) {
-        Remove-Item -LiteralPath $temporarySnapshotDirectory -Recurse -Force
+    if (Test-Path -LiteralPath $temporaryArchiveDirectory) {
+        Remove-Item -LiteralPath $temporaryArchiveDirectory -Recurse -Force
     }
 }

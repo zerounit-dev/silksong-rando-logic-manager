@@ -35,8 +35,7 @@ BenchmarkDotNet.Artifacts/
 !/Silksong Rando Logic Manager/Silksong Rando Logic Manager/Config/appsettings.Development.json
 /Silksong Rando Logic Manager/Silksong Rando Logic Manager/Storage/*
 !/Silksong Rando Logic Manager/Silksong Rando Logic Manager/Storage/.gitkeep
-# Deliberate public seed/image families only; private stores and rollback stay ignored.
-!/Silksong Rando Logic Manager/Silksong Rando Logic Manager/Storage/silksong-rando-logic.db
+# Approved public scene assets only; databases, private stores and rollback stay ignored.
 !/Silksong Rando Logic Manager/Silksong Rando Logic Manager/Storage/scenes/
 /Silksong Rando Logic Manager/Silksong Rando Logic Manager/Storage/scenes/*
 !/Silksong Rando Logic Manager/Silksong Rando Logic Manager/Storage/scenes/*.webp
@@ -76,6 +75,15 @@ opencode.json
 *.db-wal
 *.db-shm
 *.db-journal
+*.db
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
+*.sqlite3-wal
+*.sqlite3-shm
+*.sqlite3-journal
 **/Data/scene-source/room-map-hd.png
 **/data/scene-source/room-map-hd.png
 scenedumpmod/

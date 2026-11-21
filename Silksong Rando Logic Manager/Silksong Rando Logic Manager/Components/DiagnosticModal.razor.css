@@ -15,10 +15,10 @@
     width: min(58rem, 100%);
     max-height: min(48rem, 100%);
     padding: 1.25rem;
-    border: 1px solid #2a2a2a;
-    background: #f7f7f5;
+    border: 1px solid var(--appearance-control,#2a2a2a);
+    background: var(--ui-surface-recovery);
     box-shadow: 0 1.25rem 3.5rem rgba(0, 0, 0, 0.5);
-    color: #1b1b1b;
+    color: var(--ui-text-recovery);
     font-family: ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas, monospace;
 }
 
@@ -31,7 +31,7 @@
 
 .diagnostic-header {
     justify-content: space-between;
-    border-bottom: 1px solid #b8b8b8;
+    border-bottom: 1px solid var(--appearance-line,#b8b8b8);
     padding-bottom: 0.75rem;
 }
 
@@ -50,9 +50,9 @@
     margin: 0;
     overflow: auto;
     padding: 0.75rem;
-    border: 1px solid #9a9a9a;
-    background: #fff;
-    color: #1b1b1b;
+    border: 1px solid var(--appearance-control,#9a9a9a);
+    background: var(--appearance-raised,#fff);
+    color: var(--ui-text-recovery);
     font: inherit;
     line-height: 1.45;
     white-space: pre-wrap;
@@ -66,10 +66,10 @@
 
 .diagnostic-button,
 .diagnostic-close {
-    border: 1px solid #3f3f3f;
+    border: 1px solid var(--appearance-control,#3f3f3f);
     border-radius: 0;
-    background: #f7f7f5;
-    color: #1b1b1b;
+    background: var(--ui-surface-recovery);
+    color: var(--ui-text-recovery);
     cursor: pointer;
     font: inherit;
     padding: 0.45rem 0.7rem;
@@ -77,17 +77,17 @@
 
 .diagnostic-button:hover,
 .diagnostic-close:hover {
-    background: #dededb;
+    background: var(--ui-hover-recovery);
 }
 
 .diagnostic-button:focus-visible,
 .diagnostic-close:focus-visible {
-    outline: 2px solid #1b1b1b;
+    outline: 2px solid var(--ui-focus-recovery);
     outline-offset: 2px;
 }
 
 .diagnostic-copy-status {
-    color: #444;
+    color: var(--appearance-muted,#444);
 }
 
 @media (max-width: 38rem) {

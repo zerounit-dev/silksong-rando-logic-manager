@@ -67,9 +67,10 @@ DocumentationPublishing section, including the private credential. Retain effect
 environment/CLI overrides. The retired auth/private-publishing files are no longer read.
 Place existing state under the chosen DataRoot, preserving child names/casing, accounts,
 keys and the **entire** publishing recovery workspace. Do not start against a different
-empty root expecting legacy data discovery. Ordinary first-install initialization and
-store-specific failure behavior are unchanged; there is no primary-existence gate.
-The source seed and selected public scene assets now already reside in Storage.
+empty root expecting legacy data discovery. The Docker entrypoint requires a
+database in the selected data folder. For a fresh install, obtain it separately
+using the Docker setup guide. Published source includes approved scene assets,
+not the database.
 Never copy Data C# as runtime state. Custom/external roots still require deliberate
 operator-controlled relocation of complete consistent state before application startup.
 
@@ -116,6 +117,8 @@ dotnet build "Silksong Rando Logic Manager/Silksong Rando Logic Manager/Silksong
 ./tools/PackagePortableRelease.ps1 -RuntimeIdentifier win-x64 -PrivateRoots @('LocalPrivate')
 ```
 
+The portable command is for explicit legacy packaging, not routine releases.
+
 When using the separate development suite's source-publication helper:
 
 ```powershell
@@ -128,16 +131,15 @@ a semicolon list; on its command line encode separators as `%3B`, for example
 `'-p:LogicManagerPrivateRoots=LocalPrivate%3BOtherPrivate'`. Scripts take a string array
 and the portable builder forwards declarations to publish. Empty/glob declarations
 are invalid; declarations that remove required application code/assets fail tooling.
-Source/portable declarations overlapping the deliberately public Storage seed/assets also fail:
-choose an uncontaminated public seed before distribution rather than silently excluding
-required seed assets or copying declared private material during reconstruction.
+Source/portable declarations overlapping the deliberately public scene assets also fail:
+choose uncontaminated public assets before distribution rather than silently excluding
+required assets or copying declared private material during reconstruction.
 No auto-discovery, marker, configuration rewrite or migration is involved.
 Source publication never copies host Config/Storage: it generates nonsecret required-mode
 base settings, Development logging defaults and an inert Storage marker, validating exact
-contents before the existing privacy scanner. It reconstructs only the deliberate Storage
-primary seed through consistent snapshotting and public scene/source/original assets;
-portable staging inserts that selected seed/assets into Storage and generates only
-sanitized first-install Config/appsettings.json, never host settings/accounts/keys.
+contents before the existing privacy scanner. It includes approved scene assets but
+does not distribute the database. Packaging uses these assets and generates its own
+configuration, never host settings, accounts or keys.
 
 Portable packages deliberately generate bypass mode for local standalone use.
 **Never expose bypass through a tunnel.** Requests arriving through a tunnel can

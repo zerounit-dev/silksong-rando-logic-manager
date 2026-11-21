@@ -72,6 +72,9 @@
     <Folder Include="wwwroot\lib\fontawesome\" />
     <!-- Same tools baseline for the native response whose actor has just been revoked. -->
     <EmbeddedResource Include="wwwroot/tools-body.css" LogicalName="ToolsBodyStyles" />
+    <EmbeddedResource Include="wwwroot/light-palette.css" LogicalName="LightPaletteStyles" />
+    <EmbeddedResource Include="wwwroot/appearance.js" LogicalName="AppearanceResolver" />
+    <EmbeddedResource Include="wwwroot/appearance.css" LogicalName="AppearanceStyles" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(Configuration)' != 'Debug'">

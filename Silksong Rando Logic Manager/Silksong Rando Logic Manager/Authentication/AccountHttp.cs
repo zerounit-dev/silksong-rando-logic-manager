@@ -226,49 +226,49 @@ public static class AccountHttp
     private static string Notice(string message) => "<p role=\"status\">" + E(message) + "</p>";
     internal static IResult DenialPage(AccessDeniedException denial) => Page("Request not admitted", Notice(denial.Message), documentTitle: "Access denied");
     private const string AdminStyles = """
-        :root{font-family:"Cascadia Mono","SFMono-Regular",Consolas,"Liberation Mono",monospace;font-size:14px;color:#171717;background:#f6f5f1}
+        :root{font-family:"Cascadia Mono","SFMono-Regular",Consolas,"Liberation Mono",monospace;font-size:14px;color:var(--ui-text);background:var(--ui-canvas)}
         *{box-sizing:border-box}
         body{max-width:76rem;margin:2rem auto;padding:0 1rem;line-height:1.5;overflow-wrap:anywhere}
         h1{font-size:1.4rem;line-height:1.3;margin:0 0 1rem}
         h2{font-size:1.15rem;line-height:1.3;margin:1.25rem 0 .6rem}
         p{margin:.6rem 0}
         a{color:inherit;text-underline-offset:.15em}
-        a:hover{background:#eeede7}
+        a:hover{background:var(--ui-hover)}
         .toolbar{display:flex;align-items:center;justify-content:space-between;gap:1rem;margin:1.25rem 0 .75rem}
         .toolbar p{margin:0}
         .table-scroll{max-width:100%;overflow-x:auto}
-        table{width:100%;min-width:44rem;border-collapse:collapse;table-layout:fixed;background:#fbfaf7}
-        th,td{text-align:left;vertical-align:top;padding:.65rem .6rem;border-bottom:1px solid #d5d3cb;font-weight:normal}
-        thead th{background:#eeede7;font-weight:bold;border-top:1px solid #aaa9a1}
+        table{width:100%;min-width:44rem;border-collapse:collapse;table-layout:fixed;background:var(--ui-surface)}
+        th,td{text-align:left;vertical-align:top;padding:.65rem .6rem;border-bottom:1px solid var(--appearance-line,#d5d3cb);font-weight:normal}
+        thead th{background:var(--ui-surface-muted);font-weight:bold;border-top:1px solid var(--ui-border)}
         thead th:first-child{width:23%}thead th:nth-child(2){width:15%}thead th:nth-child(3){width:12%}thead th:nth-child(4){width:17%}thead th:last-child{width:33%}
         .row-actions{display:flex;flex-wrap:wrap;gap:.35rem}
         .visually-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
-        small{font-weight:normal;color:#575650}
+        small{font-weight:normal;color:var(--ui-text-secondary)}
         small{display:block;font-size:.8rem;margin-top:.3rem}
-        .permissions{min-width:0;margin:.6rem 0;padding:.5rem .75rem;border:1px solid #d5d3cb}
-        dialog{width:32rem;max-width:calc(100% - 2rem);max-height:calc(100dvh - 2rem);padding:0;border:1px solid #aaa9a1;border-radius:0;background:#fbfaf7;color:inherit;overflow:hidden}
+        .permissions{min-width:0;margin:.6rem 0;padding:.5rem .75rem;border:1px solid var(--appearance-line,#d5d3cb)}
+        dialog{width:32rem;max-width:calc(100% - 2rem);max-height:calc(100dvh - 2rem);padding:0;border:1px solid var(--ui-border);border-radius:0;background:var(--ui-surface);color:inherit;overflow:hidden}
         dialog::backdrop{background:rgb(23 23 23 / .35)}
         dialog form{display:flex;flex-direction:column;max-height:calc(100dvh - 2rem - 2px);margin:0}
         .dialog-body{min-height:0;overflow-y:auto;padding:1rem}
         .dialog-body h2{margin:0 0 .75rem}
-        .dialog-actions{display:flex;flex-wrap:wrap;gap:.5rem;flex-shrink:0;padding:.75rem 1rem;border-top:1px solid #d5d3cb;background:#eeede7}
-        .consequence{border-left:3px solid #aaa9a1;padding-left:.75rem;font-size:.85rem}
-        button.primary{background:#171717;color:#fbfaf7;border-color:#171717}
-        button.primary:hover:not(:disabled){background:#393833;color:#fbfaf7}
-        button.danger{border-color:#97645a;color:#783b32}
-        button.danger:hover:not(:disabled){border-color:#783b32;background:#f2e6e1}
-        .credential{border:2px solid #575650;background:#fbfaf7;padding:1rem;margin:1rem 0}
+        .dialog-actions{display:flex;flex-wrap:wrap;gap:.5rem;flex-shrink:0;padding:.75rem 1rem;border-top:1px solid var(--appearance-line,#d5d3cb);background:var(--ui-surface-muted)}
+        .consequence{border-left:3px solid var(--ui-border);padding-left:.75rem;font-size:.85rem}
+        button.primary{background:var(--ui-primary);color:var(--ui-on-primary);border-color:var(--ui-primary)}
+        button.primary:hover:not(:disabled){background:var(--ui-primary-hover);color:var(--ui-on-primary)}
+        button.danger{border-color:var(--appearance-danger,#97645a);color:var(--appearance-danger,#783b32)}
+        button.danger:hover:not(:disabled){border-color:var(--appearance-danger,#783b32);background:var(--appearance-danger-bg,#f2e6e1)}
+        .credential{border:2px solid var(--appearance-control,#575650);background:var(--ui-surface);padding:1rem;margin:1rem 0}
         .credential h2{margin-top:0}
         label{display:block;margin:.6rem 0}
-        input,select,textarea,button{font:inherit;color:inherit;max-width:100%;padding:.25rem .4rem;border:1px solid #99978f;border-radius:0;background:#fbfaf7}
+        input,select,textarea,button{font:inherit;color:inherit;max-width:100%;padding:.25rem .4rem;border:1px solid var(--ui-border-control);border-radius:0;background:var(--ui-surface)}
         input:not([type=hidden]):not([type=checkbox]),select{display:block;width:100%;min-width:0}
         input[type=checkbox]{margin:0 .3rem 0 0;padding:0;vertical-align:middle}
         textarea{display:block;width:100%;min-height:5rem;resize:vertical}
         button{min-height:1.6rem;background:transparent;cursor:pointer;white-space:normal;overflow-wrap:anywhere}
-        button:hover:not(:disabled){border-color:#575650;background:#eeede7}
-        button:disabled{border-color:#c9c8c2;background:#eeede7;color:#85837b;cursor:not-allowed;opacity:.72}
-        :focus-visible,.credential:focus,[data-result]:focus{outline:2px solid #575650;outline-offset:2px}
-        [role=status]{border:1px solid #aaa9a1;background:#eeede7;padding:.6rem .75rem}
+        button:hover:not(:disabled){border-color:var(--ui-border-interactive);background:var(--ui-hover)}
+        button:disabled{border-color:var(--ui-disabled-border);background:var(--ui-disabled-surface);color:var(--ui-disabled-text);cursor:not-allowed;opacity:.72}
+        :focus-visible,.credential:focus,[data-result]:focus{outline:2px solid var(--ui-focus);outline-offset:2px}
+        [role=status]{border:1px solid var(--ui-border);background:var(--ui-surface-muted);padding:.6rem .75rem}
         @media(max-width:40rem){body{margin:1rem auto}}
         """;
     private const string AdminScript = """
@@ -315,37 +315,38 @@ public static class AccountHttp
         </script>
         """;
     private const string SignInStyles = """
-        :root{font-family:"Cascadia Mono","SFMono-Regular",Consolas,"Liberation Mono",monospace;font-size:14px;color:#171717;background:#f6f5f1}
+        :root{font-family:"Cascadia Mono","SFMono-Regular",Consolas,"Liberation Mono",monospace;font-size:14px;color:var(--ui-text);background:var(--ui-canvas)}
         *{box-sizing:border-box}
         body{margin:0;padding:3rem 1rem;line-height:1.5;overflow-wrap:anywhere}
         main{width:100%;max-width:24rem;margin:0 auto}
-        .app-name{font-size:.85rem;color:#575650;margin:0 0 .5rem}
+        .app-name{font-size:.85rem;color:var(--ui-text-secondary);margin:0 0 .5rem}
         h1{font-size:1.4rem;line-height:1.3;margin:0 0 1rem}
         p{margin:.75rem 0}
         form{margin:1rem 0}
         label{display:block;margin:.75rem 0}
-        input,button{font:inherit;color:inherit;border:1px solid #99978f;border-radius:0;padding:.4rem .5rem;background:#fbfaf7;max-width:100%}
+        input,button{font:inherit;color:inherit;border:1px solid var(--ui-border-control);border-radius:0;padding:.4rem .5rem;background:var(--ui-surface);max-width:100%}
         input:not([type=hidden]){display:block;width:100%;min-width:0;margin-top:.25rem}
-        button{background:#171717;color:#fbfaf7;border-color:#171717;cursor:pointer;white-space:normal;overflow-wrap:anywhere}
-        button:hover{background:#393833}
-        form+form button{background:transparent;color:inherit;border-color:#99978f}
-        form+form button:hover{background:#eeede7;border-color:#575650}
-        :focus-visible{outline:2px solid #575650;outline-offset:2px}
-        [role=status]{border-left:3px solid #aaa9a1;background:#eeede7;padding:.6rem .75rem}
+        button{background:var(--ui-primary);color:var(--ui-on-primary);border-color:var(--ui-primary);cursor:pointer;white-space:normal;overflow-wrap:anywhere}
+        button:hover{background:var(--ui-primary-hover)}
+        form+form button{background:transparent;color:inherit;border-color:var(--ui-border-control)}
+        form+form button:hover{background:var(--ui-hover);border-color:var(--ui-border-interactive)}
+        :focus-visible{outline:2px solid var(--ui-focus);outline-offset:2px}
+        [role=status]{border-left:3px solid var(--ui-border);background:var(--ui-surface-muted);padding:.6rem .75rem}
         @media(max-width:40rem){body{padding:1.5rem 1rem}}
         """;
     private static IResult Page(string title, string content, bool adminPresentation = false, string? documentTitle = null, ExecutionIdentity? toolsActor = null, bool signInPresentation = false) => Results.Content("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>" + E((documentTitle ?? title) + " | Silksong Logic Manager") +
-        "</title><style>" + (signInPresentation ? SignInStyles : adminPresentation ? AdminStyles : "body{font:16px system-ui;max-width:54rem;margin:2rem auto;padding:0 1rem}label{display:block;margin:.6rem 0}input,select,textarea,button{font:inherit;padding:.35rem}section{border:1px solid #888;padding:1rem;margin:1rem 0}form{margin:1rem 0}textarea{display:block;width:95%}") + "</style>" +
+        "</title><script>" + EmbeddedPageAsset("AppearanceResolver") + "</script><style>" + EmbeddedPageAsset("LightPaletteStyles") + "</style><style>" + EmbeddedPageAsset("AppearanceStyles") + "</style><style>" +
+        (signInPresentation ? SignInStyles : adminPresentation ? AdminStyles : "body{font:16px system-ui;max-width:54rem;margin:2rem auto;padding:0 1rem}label{display:block;margin:.6rem 0}input,select,textarea,button{font:inherit;padding:.35rem}section{border:1px solid var(--appearance-denial-border,#888);padding:1rem;margin:1rem 0}form{margin:1rem 0}textarea{display:block;width:95%}") + "</style>" +
         (toolsActor is null ? "" : "<link rel=\"stylesheet\" href=\"/lib/fontawesome/css/all.min.css\"><link rel=\"stylesheet\" href=\"/tools-header.css\">") +
-        (adminPresentation ? toolsActor is not null ? "<link rel=\"stylesheet\" href=\"/tools-body.css\">" : "<style>" + ToolsBodyStyles() + "</style>" : "") + "</head><body" +
+        (adminPresentation ? toolsActor is not null ? "<link rel=\"stylesheet\" href=\"/tools-body.css\">" : "<style>" + EmbeddedPageAsset("ToolsBodyStyles") + "</style>" : "") + "</head><body" +
         (adminPresentation ? " class=\"accounts-tools\"" : "") + ">" +
         (toolsActor is null ? "" : Components.Navigation.ToolsNavigation.Html(toolsActor, "/account/admin")) +
         (adminPresentation ? "<main class=\"tools-body\"><h1 class=\"tool-title\">" : signInPresentation ? "<main><p class=\"app-name\">Silksong Logic Manager</p><h1>" : "<main><h1>") + E(signInPresentation ? title.ToLowerInvariant() : title) + "</h1>" + content + "</main>" + (adminPresentation ? AdminScript : "") + "</body></html>", "text/html; charset=utf-8");
-    private static string ToolsBodyStyles()
+    private static string EmbeddedPageAsset(string resourceName)
     {
         // A successful self-change may already have revoked access to protected static assets.
-        // Embed the one shared stylesheet in that response; never relax resource admission.
-        using var reader = new StreamReader(typeof(AccountHttp).Assembly.GetManifestResourceStream("ToolsBodyStyles")!);
+        // Sign-in and native denials also render without admitted stylesheet requests.
+        using var reader = new StreamReader(typeof(AccountHttp).Assembly.GetManifestResourceStream(resourceName)!);
         return reader.ReadToEnd();
     }
     internal static void NoStore(HttpContext context) { context.Response.Headers.CacheControl = "no-store"; context.Response.Headers.Pragma = "no-cache"; }

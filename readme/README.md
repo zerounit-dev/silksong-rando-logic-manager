@@ -1,11 +1,18 @@
 # Silksong Rando Logic Manager
 
-Silksong Rando Logic Manager is a local tool for documenting Silksong rooms and
+Silksong Rando Logic Manager is a web tool for documenting Silksong rooms and
 the logic used to traverse them. It organizes rooms, exits, subrooms,
 connections, checks, requirements, notes, and verification status. The normal
 way to begin a room is by importing information collected by the Scene Dumper.
 
 ## Start the App
+
+To run Logic Manager on your own machine, follow the [Docker setup guide](https://github.com/zerounit-dev/silksong-rando-logic-manager/blob/main/readme/CONTAINERS.md).
+For a new installation, get your starting database from the
+[logic documentation repository](https://github.com/zerounit-dev/silksong-rando-ap-logic).
+Use the compatible snapshot listed for your app release. Already running Logic
+Manager? Back up and reuse your existing database and settings instead.
+If you use an older standalone release, its launch instructions are below.
 
 Read [authentication setup and recovery](AUTHENTICATION.md) before sharing the
 application. Portable packages deliberately use local **bypass** mode; change to
@@ -23,6 +30,13 @@ server interface is at `/v2/`; its room, catalogue and scene pages are respectiv
 import and map-manifest tools remain `/tools/room-import` and `/tools/map-manifest`.
 The former `/v3/` UI URLs are removed without redirects. API, image and download
 URLs are unchanged.
+
+### Legacy standalone packages
+
+These launch instructions apply to the original downloads from older releases.
+If you built a standalone package yourself from newer source, it contains no
+database: put the verified snapshot for that version in the inner application's
+`Storage` folder before launching a fresh install. Keep any existing database.
 
 1. Extract the release archive into a folder. On Windows, extract the
    `win-x64` ZIP. On mainstream glibc Linux, extract the `linux-x64` tarball;
@@ -52,13 +66,14 @@ Linux
 
 Published startup HTML is transformed by the .NET SDK for the same candidate, including
 all six entry scripts, imports and preload metadata. Portable packaging checks the final
-HTML against native endpoint mappings and shipped assets before archiving; Linux container
-input uses that same validated portable output. No fingerprint filename is fixed in source.
+HTML against native endpoint mappings and shipped assets. Linux container packaging
+uses the same validated staging without creating a standalone archive. No fingerprint
+filename is fixed in source.
 For local packaging evidence, `tools/PackagePortableRelease.ps1` optionally accepts
 `-OutputRoot` (stages/archives) and `-BuildEvidenceRoot` (per-runtime build intermediates/
 outputs). Defaults remain `releases` and normal project build paths. Custom roots must
 be separate real directories outside source/private state and their ancestors; the
-ordinary consistent seed snapshot, real source backup hook and privacy checks still run.
+   source backup hook (when a local database is present) and privacy checks still run.
 
 Unexpected production document failures, including sign-in form rendering, return a
 standalone non-cacheable HTTP 500 rather than repeatedly redirecting to sign-in. Normal

@@ -109,7 +109,7 @@
         warning.textContent = messages.join("\n");
         warning.hidden = messages.length === 0;
         // Permanent CSS fact applies even to fresh sidebar markup before reconciliation.
-        statusStyle.textContent = `.sidebar-export-footer .sidebar-archipelago-control { color: ${state === "connected" ? "#146c43" : state === "failed" ? "#842029" : "#171717"}; }`;
+        statusStyle.textContent = `.sidebar-export-footer .sidebar-archipelago-control { color: ${state === "connected" ? "var(--appearance-success,#146c43)" : state === "failed" ? "var(--appearance-danger,#842029)" : "var(--appearance-ink,#171717)"}; }`;
         reconcile();
         if (!host.hidden && host.contains(focused) && focused.disabled) auto.focus({ preventScroll: true });
     }
