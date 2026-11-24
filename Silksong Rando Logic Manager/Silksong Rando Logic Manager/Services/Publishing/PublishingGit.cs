@@ -330,16 +330,33 @@ internal sealed class PublishingGit(PublishingStorage storage, PublishingSetting
     public void Inventory(Repository repo, PublishingJournal journal)
     {
         var existing = Blobs(repo.Head.Tip.Tree).ToDictionary(x => x.Path, x => x.Blob, StringComparer.Ordinal);
+        // Full-path keys find blobs; slash-terminated keys find all blobs below that directory.
+        var paths = existing.Keys.SelectMany(path => CollisionKeys(path).Select(key => (Key: key, Path: path)))
+            .ToLookup(x => x.Key, x => x.Path, StringComparer.OrdinalIgnoreCase);
         foreach (var path in journal.Files.Keys)
         {
             if (!Owned(path)) throw new PublishingBlock($"Generated path {path} is outside publication ownership. Keep Staging/Candidate/{path}; report this generator output to the application maintainer rather than copying it into Repository.");
-            var collisions = existing.Keys.Where(x => x.StartsWith(path + "/", StringComparison.OrdinalIgnoreCase) ||
-                path.StartsWith(x + "/", StringComparison.OrdinalIgnoreCase) ||
-                (x.Equals(path, StringComparison.OrdinalIgnoreCase) && x != path)).Order(StringComparer.Ordinal).ToArray();
+            var collisions = Collisions(path).Order(StringComparer.Ordinal).ToArray();
             if (collisions.Length != 0)
                 throw new PublishingBlock($"Candidate path {path} collides with existing repository paths:\n{string.Join("\n", collisions)}\nHave the repository owner choose distinct file/directory names on the publication branch, then prepare and review again; do not overwrite the colliding content.");
         }
         journal.Removed = existing.Keys.Where(Owned).Except(journal.Files.Keys, StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
+
+        IEnumerable<string> Collisions(string path)
+        {
+            foreach (var match in paths[path])
+                if (match != path) yield return match;
+            foreach (var descendant in paths[path + "/"]) yield return descendant;
+            for (var slash = path.IndexOf('/'); slash >= 0; slash = path.IndexOf('/', slash + 1))
+                foreach (var ancestor in paths[path[..slash]]) yield return ancestor;
+        }
+
+        static IEnumerable<string> CollisionKeys(string path)
+        {
+            yield return path;
+            for (var slash = path.IndexOf('/'); slash >= 0; slash = path.IndexOf('/', slash + 1))
+                yield return path[..(slash + 1)];
+        }
     }
     public void Commit(PublishingJournal journal, string message)
     {
@@ -467,8 +484,8 @@ internal sealed class PublishingGit(PublishingStorage storage, PublishingSetting
             if (!MatchesRecoveryFile(current, before, baseEntries[path]) &&
                 !MatchesRecoveryFile(current, journal.Files.GetValueOrDefault(path), intendedEntries[path]))
                 throw new PublishingBlock($"Repository/{path} changed during rollback and matches neither retained state.\nBefore state:\n{FileFacts(current, before, baseEntries[path])}\nAfter state:\n{FileFacts(current, journal.Files.GetValueOrDefault(path), intendedEntries[path])}\nStop publishing attempts and compare this file with its retained before/after evidence. Keep Staging/Rollback; earlier files may already have been restored.");
-            if (before is null) File.Delete(target);
-            else storage.Atomic(target, preimageBytes[path]);
+            if (before is not null) storage.Atomic(target, preimageBytes[path]);
+            else if (current is not null) File.Delete(target);
         }
         storage.Atomic(Path.Combine(repo.Info.Path, "index"), indexBytes);
         journal.Phase = advancing ? "Preparing" : "Prepared"; journal.Commit = null; storage.Save(journal);

@@ -66,7 +66,7 @@ public sealed class PublishingActivityService
                 .ThenBy(x => x.ActorId.ToString("D"), StringComparer.Ordinal).Select(edit =>
                 {
                     var user = edit.ActorId == Guid.Empty ? "Bypass"
-                        : usernames.TryGetValue(edit.ActorId, out var name) ? name : $"Deleted account ({edit.ActorId:D})";
+                        : usernames.TryGetValue(edit.ActorId, out var name) ? name : "Unknown account";
                     return new PublishingActivityRow(user, edit.RoomName, edit.RecordedUtc,
                         edit.RecordedUtc >= now.AddHours(-1) && edit.RecordedUtc <= now);
                 }).ToArray();

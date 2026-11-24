@@ -16,7 +16,8 @@ body.accounts-tools { max-width: none; margin: 0; padding: 0; }
 .tools-body .tool-action.primary { border-color: var(--ui-primary); background: var(--ui-primary); color: var(--ui-on-primary); }
 .tools-body .tool-action.primary:is(button, a, label):hover:not(:disabled):not(.disabled) { background: var(--ui-primary-hover); color: var(--ui-on-primary); }
 .tools-body .tool-action.danger { border-color: var(--appearance-danger,#97645a); color: var(--appearance-danger,#783b32); }
-.tools-body .tool-action.danger:is(button, a, label):hover:not(:disabled):not(.disabled) { border-color: var(--appearance-danger,#783b32); background: var(--appearance-danger-bg,#f2e6e1); }
+.tools-body .tool-action.danger:is(button, a, label):hover:not(:disabled):not(.disabled) { border-color: var(--appearance-danger-on-fill, var(--appearance-danger,#783b32)); background: var(--appearance-danger-bg,#f2e6e1); }
+:root[data-logic-palette="Hero"] .tools-body .tool-action.danger:is(button, a, label):hover:not(:disabled):not(.disabled) { color: var(--appearance-danger-on-fill); }
 .tools-body .tool-label, .tools-body .tool-control { font-family: inherit; color: inherit; }
 .tools-body .tool-control { border: 1px solid var(--ui-border-control); background: var(--ui-surface); }
 .tools-body .tool-control:focus-visible, .tools-body .tool-label:focus-within { outline: 1px solid var(--ui-focus); outline-offset: 2px; }

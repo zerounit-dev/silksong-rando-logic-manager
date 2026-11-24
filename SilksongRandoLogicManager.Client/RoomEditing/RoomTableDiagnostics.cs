@@ -71,12 +71,13 @@ public static class RoomTableDiagnostics
             var pair = Text(row.Values.DestinationRoomReferenceText) && Text(row.Values.DestinationTransitionAliasText)
                 && endpoints.Count(row.Values.DestinationRoomReferenceText, saved?.ResolvedDestinationRoomId,
                     row.Values.DestinationTransitionAliasText, saved?.ResolvedDestinationTransitionId) > 1 ? V2Severity.Danger : V2Severity.Neutral;
-            Set(row, ("alias", Max(Alias(row.Values.Alias, []), DuplicateSeverity(row.Values.Alias, exitAliases))), ("name", DuplicateSeverity(row.Values.FriendlyName, exitNames)),
+            Set(row, ("alias", Max(RoomAuthoredAlias.Severity(row.Values.Alias), DuplicateSeverity(row.Values.Alias, exitAliases))), ("name", DuplicateSeverity(row.Values.FriendlyName, exitNames)),
                 ("source", ReferenceSeverity(Presence(row.Values.SourceSubroomReferenceText, activeSubs.Length > 0), source)),
                 ("destination-room", ReferenceSeverity(Required(row.Values.DestinationRoomReferenceText), room)),
                 ("destination-alias", ReferenceSeverity(Max(Alias(row.Values.DestinationTransitionAliasText, []), pair), alias)),
                 ("requirements", Requirement(row.Values.Requirements, row.Values.IsTodo, saved?.Values.Requirements, saved?.RequirementsParseSucceeded)));
             Titles(row, ("source", source), ("destination-room", room), ("destination-alias", alias));
+            AuthoredAliasTitle(row, row.Values.Alias);
             row.DestinationAliases = target?.Suggestions ?? [];
             var inverseCount = saved?.ResolvedDestinationRoomId is null || saved.ResolvedDestinationTransitionId is null ? 0
                 : target?.Inverses.GetValueOrDefault(((Guid?)roomId, row.EntityId)) ?? 0;
@@ -100,11 +101,12 @@ public static class RoomTableDiagnostics
             var pathway = pathways.Classify(connectionFacts[row]);
             var state = pathway.State;
             var severity = Max(pathway.Severity, activeSubs.Length == 0 || saved?.ResolvedSourceSubroomId is { } sid && sid == saved.ResolvedDestinationSubroomId ? V2Severity.Danger : V2Severity.Neutral);
-            Set(row, ("alias", Alias(row.Values.Alias, [])), ("name", Required(row.Values.FriendlyName)),
+            Set(row, ("alias", RoomAuthoredAlias.Severity(row.Values.Alias)), ("name", Required(row.Values.FriendlyName)),
                 ("source", ReferenceSeverity(Presence(row.Values.SourceSubroomReferenceText, activeSubs.Length > 0), source)),
                 ("destination", ReferenceSeverity(Presence(row.Values.DestinationSubroomReferenceText, activeSubs.Length > 0), destination)),
                 ("requirements", Requirement(row.Values.Requirements, row.Values.IsTodo, saved?.Values.Requirements, saved?.RequirementsParseSucceeded)));
             Titles(row, ("source", source), ("destination", destination));
+            AuthoredAliasTitle(row, row.Values.Alias);
             row.PathwayClass = Css(row.IsArchived || row.EntityId is null ? V2Severity.Neutral : severity);
             row.PathwayTitle = state;
             row.PathwayIcon = state switch { "one-way" => "fa-arrow-right connection-state-one-way", "bidirectional" => "fa-arrow-right-arrow-left", "ambiguous reverse match" => "fa-circle-exclamation", _ => "fa-triangle-exclamation" };
@@ -188,4 +190,16 @@ public static class RoomTableDiagnostics
             .SetItem("verification", row.IsArchived || row.EntityId is null ? "" : controls.Item2 == true ? "verification-success" : controls.Item2 == false ? "verification-danger" : "verification-warning");
     }
     private static void Titles(RoomTableRow row, params (string Field, V2ReferenceState State)[] values) => row.FieldTitles = values.ToImmutableDictionary(x => x.Field, x => x.State.ToString());
+    private static void AuthoredAliasTitle(RoomTableRow row, string value)
+    {
+        if (row.FieldClass("alias") != "danger") return;
+        var hyphen = RoomAuthoredAlias.HasHyphen(value);
+        var padding = RoomAuthoredAlias.HasOuterWhitespace(value);
+        var internalWhitespace = RoomAuthoredAlias.HasInternalWhitespace(value);
+        if (!hyphen && !padding && !internalWhitespace) return;
+        var title = hyphen ? "Hyphens are not allowed in aliases." : "";
+        if (padding) title += (hyphen ? " " : "") + "Edit Alias to remove the leading or trailing whitespace.";
+        if (internalWhitespace) title += (hyphen || padding ? " " : "") + "Internal whitespace is not allowed in aliases.";
+        row.FieldTitles = row.FieldTitles.SetItem("alias", title);
+    }
 }

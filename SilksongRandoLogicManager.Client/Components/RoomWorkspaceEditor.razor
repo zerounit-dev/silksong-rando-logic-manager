@@ -11,7 +11,17 @@
 @inject NavigationManager Navigation
 
 <PageTitle>@DocumentTitle</PageTitle>
-<div class="room-editor-v2" @ref="root" inert="@presentationRetired" data-v2-dialog-open="@((localModal is not null || guide is not null || imageDraft is not null || roomLinksOpen || workspace.AdmittedQueue?.Blocked is not null || workspace.AdmittedQueue?.TrackingUnavailable == true || entryAdmissionUnavailable).ToString().ToLowerInvariant())">
+@code {
+    private RenderFragment RoomDetailsHistoryButton => @<text>
+        @if (ConfirmedHistoryRoom is not null)
+        {
+            <button id="room-details-history" class="icon-button" type="button" disabled="@HistoryLauncherBlocked"
+                    aria-label="Room details history" title="Room details history" @onclick="OpenRoomDetailsHistoryAsync"><i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i> history</button>
+        }
+    </text>;
+}
+@{ if (historyOpening is { } openHistory) HistoryStillOwned(openHistory); }
+<div class="room-editor-v2" @ref="root" inert="@presentationRetired" data-v2-dialog-open="@((historyOpening is not null || localModal is not null || guide is not null || imageDraft is not null || roomLinksOpen || workspace.AdmittedQueue?.Blocked is not null || workspace.AdmittedQueue?.TrackingUnavailable == true || entryAdmissionUnavailable).ToString().ToLowerInvariant())">
 @if (externalRoomDeleted)
 {
     <article class="v3-summary"><h1>Room no longer available</h1><p>The selected room was deleted outside this workspace.</p><button type="button" @onclick='() => Depart("/")'>back to map</button></article>
@@ -23,7 +33,7 @@ else
     var showRetry = workspace.IsAdmitted && (roomResponseObservationFailed || workspace.AcceptanceFailed || workspace.Queue.RecoveryRequired || workspace.Queue.ProjectionPending || keyboardUnsentFailure);
     var showEntryRetry = EntryRefreshFailed;
     var showMapRetry = mapReloadFailed && !Archived && !roomLinksOpen;
-<article class="room-document" aria-label="Room editor">
+<article class="room-document" aria-label="Room editor" inert="@HistoryBackgroundInert">
     <section class="room-sticky-context" aria-label="Room document workspace">
         <header class="document-header">
             <div class="room-title-row">
@@ -57,13 +67,18 @@ else
             }
             <div class="room-actions">
                 @if (!Archived) { <button class="room-content-toggle" type="button" disabled="@AuthoringBlocked" @onclick="RecheckAsync"><i class="fa-solid fa-rotate" aria-hidden="true"></i> recheck room logic</button> }
-                <button class="room-content-toggle" type="button" aria-pressed="@showArchived.ToString().ToLowerInvariant()" @onclick="ToggleArchivedContents"><i class="fa-solid @(showArchived ? "fa-eye-slash" : "fa-eye")" aria-hidden="true"></i> @(showArchived ? "hide archived room contents" : "show archived room contents")</button>
+                <button class="room-content-toggle" type="button" aria-pressed="@showArchived.ToString().ToLowerInvariant()" @onclick="ToggleArchivedContents"><i class="fa-solid @(showArchived ? "fa-eye-slash" : "fa-eye")" aria-hidden="true"></i> @(showArchived ? "hide archived" : "show archived")</button>
                 @if (Archived)
                 {
                     <button id="room-restore" class="icon-button" type="button" disabled="@AuthoringBlocked" aria-label="restore room" title="restore room" @onclick="() => ArchiveAsync(false)"><i class="fa-solid fa-rotate-left" aria-hidden="true"></i></button>
+                    @RoomDetailsHistoryButton
                     <button id="room-permanent-delete" class="icon-button" type="button" disabled="@AuthoringBlocked" aria-label="delete room permanently" title="delete room permanently" @onclick="OpenRoomDelete"><i class="fa-solid fa-trash" aria-hidden="true"></i></button>
                 }
-                else { <button id="room-archive" class="archive-room-button" type="button" disabled="@AuthoringBlocked" @onclick="() => ArchiveAsync(true)"><i class="fa-solid fa-box-archive" aria-hidden="true"></i> archive room</button> }
+                else
+                {
+                    @RoomDetailsHistoryButton
+                    <button id="room-archive" class="archive-room-button" type="button" disabled="@AuthoringBlocked" @onclick="() => ArchiveAsync(true)"><i class="fa-solid fa-box-archive" aria-hidden="true"></i> archive room</button>
+                }
                 @if (workspace.Confirmed.Document?.Header.RoomGroupId is not null) { <a id="room-zone-export" class="icon-button room-current-export" href="@($"/exports/zones/{Entry.RoomId:D}")" download aria-label="export zone" title="Export every active and archived room in this room group."><i class="fa-solid fa-file-export" aria-hidden="true"></i> export zone</a> }
                 else { <button id="room-zone-export" class="icon-button room-current-export" disabled aria-label="export zone" title="Export zone is unavailable because this room is not in a room group."><i class="fa-solid fa-file-export" aria-hidden="true"></i> export zone</button> }
                 <a id="room-current-export" class="icon-button room-current-export" href="@($"/exports/rooms/{Entry.RoomId:D}")" download aria-label="export current room" title="export current room"><i class="fa-solid fa-file-export" aria-hidden="true"></i> export room</a>
@@ -101,7 +116,7 @@ else
         @if (workspace.BoundaryFeedback is { } feedback) { <p class="warning" role="status">@feedback</p> }
         <RoomTables @ref="tables" RoomId="Entry.RoomId" SceneActionsAvailable="SceneContextReady" SceneUnavailableReason="@SceneUnavailableReason" Subrooms="workspace.Subrooms" Transitions="workspace.Transitions" Connections="workspace.Connections" CheckLocations="workspace.CheckLocations" Enemies="workspace.Enemies"
                     BoundaryRequested="BoundaryAsync" LatentSuccessors="workspace.LatentSuccessors" CheckTypes="CheckTypes"
-                     ShowArchived="showArchived" Blocked="@(AuthoringBlocked || nativeOwner is null)" InspectionBlocked="@(InspectionBlocked || nativeOwner is null)" ActionRequested="RowActionAsync"
+     ShowArchived="showArchived" Blocked="@(AuthoringBlocked || nativeOwner is null)" InspectionBlocked="@(InspectionBlocked || nativeOwner is null)" HistoryBlocked="HistoryLauncherBlocked" ActionRequested="RowActionAsync"
                       RoomReferences="RoomReferences" SubroomReferences="SubroomReferences" />
     </div>
     <footer class="room-reminder-footer" aria-label="Room options reminder"><strong>@ReminderFooterProse</strong><button id="room-syntax-guide" type="button" disabled="@(InspectionBlocked || guideLoading)" @onmousedown:preventDefault="true" @onclick="OpenGuideAsync">syntax guide</button></footer>
@@ -114,6 +129,13 @@ else
 <MapLinksDialog @ref="mapLinks" Owns="@(() => Current)" CanUse="@(() => RoomLinksCanUse)" ErrorOpen="@(() => Shell.GeneralErrorOpen)" ReportHistoryWarning="Shell.ReportHistoryWarningAsync"
                 Show="Shell.ShowLandingDialogAsync" Hide="Shell.CloseLandingDialogAsync" Freeze="Shell.FreezeLandingDialogAsync" ReportError="Shell.ReportRoomErrorAsync"
                 Closed="RoomLinksClosedAsync" Settled="Shell.DrainRoomRefreshAsync" />
+}
+
+@if (historyOpening is { } history)
+{
+    <RoomHistoryDialog @key="history" FocusKey="@history.FocusKey" Family="history.Family" Kind="@history.Kind" Name="@history.Name"
+                       Revisions="history.Revisions" Times="history.Times" Unavailable="history.Unavailable" Close="() => CloseHistoryAsync(history)"
+                       FocusTarget="target => CycleHistoryFocus(history, target)" />
 }
 
 @if (localModal is { } local)

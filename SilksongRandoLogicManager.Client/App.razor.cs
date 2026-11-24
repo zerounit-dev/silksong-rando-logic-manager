@@ -81,6 +81,9 @@ public partial class App
         Runtime.Changed += RuntimeChanged;
         Runtime.ObserveUpdateRisk += CaptureClientUpdateRisk;
         Access.Changed += AccessChanged;
+        // Guarded Back/Forward can temporarily move browser history. Retire the
+        // pre-guard observer synchronously before enabling any such movement.
+        NotifyAppearance("logicAppearance.finishStartupHistory");
         navigationAdmission = Navigation.RegisterLocationChangingHandler(async context =>
         {
             var attempt = BeginRoomEntryNavigation(context);
@@ -168,8 +171,8 @@ public partial class App
             try
             {
                 callback = DotNetObjectReference.Create(this);
-                var bootstrapFailed = await JS.InvokeAsync<bool>("logicInitialLoading.claim", callback);
-                if (bootstrapFailed) await BootstrapFailed();
+                var bootstrapFailure = await JS.InvokeAsync<string?>("logicInitialLoading.claim", callback);
+                if (bootstrapFailure is not null) await BootstrapFailed(bootstrapFailure);
                 if (disposed || initialFailed || Runtime.Retired) return;
                 var installRequired = await Runtime.ReadInstallIntentAsync();
                 if (disposed || initialFailed || Runtime.Retired) return;
@@ -207,8 +210,12 @@ public partial class App
                 initialProgress = new(InitialLoadingPhase.FinalPreparation);
                 Apply(Catalogue.Sidebar, preferences?.ShowArchivedRooms ?? false);
                 if (preferences?.ExpandedGroupIds is { } ids) expanded.UnionWith(ids);
+                if (ReleaseBootstrapLoading() is { } pendingBootstrapFailure)
+                {
+                    await BootstrapFailed(pendingBootstrapFailure);
+                    return;
+                }
                 Runtime.CompleteStartup();
-                ReleaseBootstrapLoading();
                 ready = true; mountPending = true; lastSelected = SelectedId();
                 phaseTiming.Complete(Catalogue.Initialized);
                 initialTiming.Complete(Catalogue.Initialized);
@@ -327,7 +334,7 @@ public partial class App
         try
         {
             await Browser.YieldAsync(lifetime.Token);
-            if (!disposed && !Runtime.Retired) await Browser.StartupAsync(lifetime.Token);
+            if (!disposed && !Runtime.Retired) await Browser.StartupAsync(requiredForSplash: false, token: lifetime.Token);
         }
         catch (OperationCanceledException) when (disposed) { }
         catch (Exception error) { if (!disposed) BackgroundCacheFailed(error); }
@@ -338,7 +345,7 @@ public partial class App
         _ = InvokeAsync(async () =>
         {
             if (disposed || Runtime.Retired) return;
-            if (!ready) await FailInitialLoadingAsync(error);
+            if (!ready) await FailInitialLoadingAsync(error, requiredStartupWork: false);
             else await FailAsync(error, false);
             if (!disposed) StateHasChanged();
         });
@@ -678,10 +685,20 @@ public partial class App
         await Task.CompletedTask;
         timing.End();
     }
+    private void NotifyAppearance(string method)
+    {
+        if (disposed || JS is not IJSInProcessRuntime native) return;
+        try { native.InvokeVoid(method); }
+        catch (JSException) { }
+        catch (InvalidOperationException) { }
+    }
+
     private void LocationChanged(object? sender, LocationChangedEventArgs args)
     {
         if (Runtime.Retired) return;
         var preparedArrival = ArriveRoomEntry(args);
+        // The shell receives the committed location before Router renders.
+        NotifyAppearance("logicAppearance.pathnameChanged");
         creationNavigationOwner = new();
         CancelRoomDeparture();
         PublishRoomWarning();

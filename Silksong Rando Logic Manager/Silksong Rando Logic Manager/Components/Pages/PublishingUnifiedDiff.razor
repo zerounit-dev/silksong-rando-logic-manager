@@ -1,0 +1,62 @@
+@using Silksong_Rando_Logic_Manager.Services.Publishing
+<div class="pr-unified" data-review-key="@TrackKey" data-review-width-owner="@WidthOwner" data-review-outlier-columns="@Rows.Columns"
+     data-review-row-count="@(Window?.Length ?? Rows.Count)">
+    <div class="pr-pan" tabindex="0" role="region" aria-label="Unified diff: @Path" id="@panId" data-review-pan>
+        <div class="pr-track" data-review-track data-review-windowed="@(Window is not null ? "" : null)">
+            @if (Rows.HasOutlier)
+            {
+                <span class="pr-cell-probe" aria-hidden="true" data-review-cell-probe></span>
+            }
+            @foreach (var item in Window ?? Rows.Read(0, Rows.Count)) { @RenderItem(item) }
+        </div>
+    </div>
+    <div class="pr-rail-slot">
+        <div hidden class="pr-rail" data-review-rail tabindex="-1" role="region" aria-label="Horizontal diff scroll: @Path" aria-controls="@panId"><div></div></div>
+        @if (Rows.HasOutlier)
+        {
+            <div hidden class="pr-thumb" data-review-x-thumb role="scrollbar" tabindex="0" aria-label="Long line position: @Path"
+                 aria-controls="@panId" aria-orientation="horizontal" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0"><span></span></div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public string Path { get; set; } = "";
+    [Parameter] public string? TrackKey { get; set; }
+    [Parameter] public string? WidthOwner { get; set; }
+    [Parameter] public PublishingDiffRows Rows { get; set; } = default!;
+    [Parameter] public PublishingDiffRows.Item[]? Window { get; set; }
+    [Parameter] public EventCallback<PublishingDiffRows.Item> Reveal { get; set; }
+
+    private RenderFragment RenderItem(PublishingDiffRows.Item item) => @<text>
+                @if (item.Fold is { } fold)
+                {
+                    <div class="pr-row pr-fold" data-review-row="@item.Index"><button type="button" class="tool-action" @onclick="() => Reveal.InvokeAsync(item)">Show @fold.HiddenLines unchanged lines</button></div>
+                }
+                else if (item.Row is { } row)
+                {
+                    <div data-review-row="@item.Index" data-review-old="@row.Old" data-review-new="@row.New" data-review-outlier-row="@(row.Outlier is not null ? "" : null)" class="pr-row pr-source">
+                        <span class="pr-code @(row.Outlier is not null ? "pr-code-outlier" : null)">
+                            @if (row.Outlier is null)
+                            {
+                                <span data-review-inline>@((MarkupString)(row.Html ?? ""))@if (row.EndingHtml is { } ending) { <span class="pr-endings">@((MarkupString)ending)</span> }</span>
+                            }
+                            else if (item.Strip is { } strip)
+                            {
+                                var textEnd = row.Outlier.Columns;
+                                var phase = (strip.Pieces.FirstOrDefault()?.Start ?? textEnd) % 4;
+                                <span class="pr-strip" data-review-strip data-review-text-end="@textEnd" data-review-end="@row.Columns"><span aria-hidden="true" style="display:inline-block;width:@(phase)ch"></span>
+                                    @foreach (var piece in strip.Pieces)
+                                    {
+                                        <span data-review-from="@piece.Start" data-review-to="@piece.End">@((MarkupString)piece.Html)</span>
+                                    }
+                                    @if (strip.ShowEnding && row.EndingHtml is { } end) { <span class="pr-endings" data-review-ending>@((MarkupString)end)</span> }
+                                </span>
+                            }
+                        </span>
+                    </div>
+                }
+    </text>;
+
+    private readonly string panId = "publishing-diff-" + Guid.NewGuid().ToString("N");
+}

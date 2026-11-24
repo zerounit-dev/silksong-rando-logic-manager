@@ -1,3 +1,23 @@
+// Resolve each instant in the browser's local zone, keeping the compact date on both surfaces.
+export function formatTimes(instants, hasLatest) {
+    const formatter = new Intl.DateTimeFormat("en-GB", {
+        year: "numeric", month: "2-digit", day: "2-digit",
+        hour: "2-digit", minute: "2-digit", hourCycle: "h23"
+    });
+    return instants.map((instant, index) => {
+        const parts = Object.fromEntries(formatter.formatToParts(new Date(instant))
+            .map(({ type, value }) => [type, value]));
+        const { year, month, day, hour, minute } = parts;
+        if (!year || !month || !day || !hour || !minute) return null;
+        const date = `${year.padStart(4, "0")}-${month}-${day}`;
+        if (hasLatest && index === 0) {
+            const hour24 = Number(hour);
+            return `${date} ${hour24 % 12 || 12}:${minute} ${hour24 < 12 ? "AM" : "PM"}`;
+        }
+        return `${date} ${hour}:${minute}`;
+    });
+}
+
 // Page-local native dialog lifetime. The browser owns focus containment and Escape.
 export function create(dialog, launcher) {
     let disposed = false;

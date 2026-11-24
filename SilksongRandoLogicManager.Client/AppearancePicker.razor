@@ -1,0 +1,32 @@
+@implements IDisposable
+@inject IJSRuntime JS
+@inject SessionAccess Access
+@inject HttpClient Http
+
+<logic-theme-picker @ref="host"></logic-theme-picker>
+
+@code {
+    private ElementReference host;
+    private DotNetObjectReference<AppearancePicker>? callback;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        callback = DotNetObjectReference.Create(this);
+        await JS.InvokeVoidAsync("logicBindAppearancePicker", host, callback);
+    }
+
+    [JSInvokable]
+    public async Task<bool> SaveAccountAppearance(string color)
+    {
+        // Reuse the one session already being admitted by this document, not a
+        // fresh session that might belong to another account after a tab switch.
+        if (Access.Session is null) await Access.InitialSession;
+        if (Access.Session is not { SignedIn: true, Bypass: false, ReplacementRequired: false }) return true;
+        using var body = new FormUrlEncodedContent([new("color", color)]);
+        using var result = await Http.PostAsync("api/auth/appearance", body);
+        return result.StatusCode == System.Net.HttpStatusCode.NoContent;
+    }
+
+    public void Dispose() => callback?.Dispose();
+}

@@ -20,13 +20,9 @@ reuse your existing configuration and data folders.
 2. Copy [the example settings](appsettings.example.json) to the config folder as
    `appsettings.json`. Keep that file private and follow the [authentication
    guide](AUTHENTICATION.md#bootstrap-and-recovery) to create your first admin.
-3. Get `silksong-rando-logic.db` from the [logic documentation repository](https://github.com/zerounit-dev/silksong-rando-ap-logic).
-   The [current database page](https://github.com/zerounit-dev/silksong-rando-ap-logic/blob/main/silksong-rando-logic.db)
-   shows the latest copy. For installation, follow the snapshot link in your app
-   release notes and use **Download raw file**. Check the downloaded file's
-   SHA-256 against the one in the release notes (`sha256sum silksong-rando-logic.db`
-   on Linux, or `Get-FileHash silksong-rando-logic.db` in PowerShell). If it does
-   not match, stop. Put the verified file in the new data folder. The app also
+3. Open the [public logic database page](https://github.com/zerounit-dev/silksong-rando-ap-logic/blob/main/silksong-rando-logic.db)
+   and select **Download raw file**. Put `silksong-rando-logic.db` in the new
+   data folder. The app also
    keeps private accounts, keys, captures and backups in that folder.
 4. Save the [Docker Compose example](https://github.com/zerounit-dev/silksong-rando-logic-manager/blob/main/tools/container/compose.example.yaml)
    as `compose.yaml`. In the same
@@ -102,7 +98,7 @@ loopback HTTP example alone is not a usable authenticated public deployment.
 ## Database, upgrades and recovery
 
 The image does not contain a logic database and does not download one. Put the
-verified `silksong-rando-logic.db` in your new data folder before startup. If the
+downloaded `silksong-rando-logic.db` in your new data folder before startup. If the
 database is missing, startup stops instead of creating an empty installation.
 Existing data is never overwritten with a downloaded copy. Normal application
 migrations and store failure behavior still apply; an invalid database is not

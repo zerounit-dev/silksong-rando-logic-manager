@@ -1,0 +1,35 @@
+@using Silksong_Rando_Logic_Manager.Services.Publishing
+
+@{
+    var file = Room.Files[FileIndex];
+}
+@if (file.Change.Kind == "Image")
+{
+    <div class="pr-image-pair">
+        @ImageSide(file, "before", "Before", file.OldBlob is not null, "Not present in the Git base", file.Change.BeforeBytes)
+        @ImageSide(file, "after", "After", file.NewHash is not null, "Not present in the candidate", file.Change.AfterBytes)
+    </div>
+}
+else
+{
+    <p class="pr-note">Before: @(file.Change.Change == "Added" ? "not present" : $"{file.Change.BeforeBytes:N0} bytes") · After: @(file.Change.Change == "Removed" ? "not present" : $"{file.Change.AfterBytes:N0} bytes") · No inline preview for this format.</p>
+}
+
+@code {
+    [Parameter] public Guid Generation { get; set; }
+    [Parameter, EditorRequired] public PublishingReviewRoom Room { get; set; } = default!;
+    [Parameter] public int FileIndex { get; set; }
+    [Parameter] public long Epoch { get; set; }
+    [Parameter] public HashSet<(int Entry, string Side)> Failed { get; set; } = default!;
+
+    private RenderFragment ImageSide(PublishingReviewFile file, string side, string label, bool exists, string absence, long bytes) => @<figure>
+        <figcaption><strong>@label</strong>@if (exists) { <span> · @bytes.ToString("N0") bytes</span> }</figcaption>
+        @if (!exists) { <p>@absence.</p> }
+        else if (Failed.Contains((file.Entry, side))) { <p role="status">Image unavailable. Reopen the room to try the current review again.</p> }
+        else
+        {
+            <img loading="lazy" decoding="async" src="@PublishingReviewHttp.ImageUrl(Generation, Epoch, file.Entry, side)"
+                 alt="@($"{label}: {file.Change.Path}")" @onerror="() => { Failed.Add((file.Entry, side)); }" />
+        }
+    </figure>;
+}

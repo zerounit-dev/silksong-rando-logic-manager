@@ -3,7 +3,7 @@ using SilksongRandoLogicManager.Contracts;
 
 namespace SilksongRandoLogicManager.Client.RoomEditing;
 
-public enum RoomRowAction { Geometry, Metadata, Annotation, Archive, Restore, Delete, Inverse, FollowInverse }
+public enum RoomRowAction { Geometry, Metadata, Annotation, Archive, Restore, Delete, Inverse, FollowInverse, History }
 public sealed record RoomRowActionIntent(RoomOrderSection Section, Guid ClientId, RoomRowAction Action);
 public sealed record RoomNativeField(string Kind, string Client, string Field, string Value, long Generation, bool Composing);
 public enum RoomTableKind { Subroom, Transition, Connection, Check }

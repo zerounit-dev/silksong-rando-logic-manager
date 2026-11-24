@@ -1,0 +1,12 @@
+/* Existing 4.5rem action column plus one existing-width 1.35rem slot. Only
+   these client Room tables receive this scope, including their archived bands. */
+.logic-table.subroom-table .actions-column,
+.logic-table.transition-table .actions-column,
+.logic-table.connection-table .actions-column,
+.logic-table.check-table:not(.v2-read-only-table) th.actions-heading,
+.logic-table.check-table:not(.v2-read-only-table) td.row-actions,
+.logic-table th.actions-heading,
+.logic-table td.row-actions {
+    width: 5.85rem;
+    min-width: 5.85rem;
+}

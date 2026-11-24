@@ -202,7 +202,8 @@ public static class AppliedRoomStatusCalculation
         var activeRoomTransitions = transitions.Where(x => !x.Archived).ToArray();
         foreach (var row in activeRoomTransitions)
         {
-            Add(!MapperSupport.Text(row.Alias) ? V2Severity.Warning : row.Alias.Length > 3 || indexes.TransitionAliasCount(room.Id, row.Alias) > 1 ? V2Severity.Danger : V2Severity.Neutral);
+            Add(MapperSupport.Max(RoomAuthoredAlias.Severity(row.Alias),
+                MapperSupport.Text(row.Alias) && indexes.TransitionAliasCount(room.Id, row.Alias) > 1 ? V2Severity.Danger : V2Severity.Neutral));
             Add(!MapperSupport.Text(row.FriendlyName) ? V2Severity.Warning : indexes.TransitionNameCount(room.Id, row.FriendlyName) > 1 ? V2Severity.Danger : V2Severity.Neutral);
             Add(MapperSupport.ReferenceSeverity(MapperSupport.Presence(row.Source, activeSubrooms.Length > 0), indexes.SubroomReferenceState(room.Id, row.Source, row.SourceId)));
             var roomState = indexes.RoomReferenceState(row.DestinationRoom, row.DestinationRoomId);
@@ -223,7 +224,7 @@ public static class AppliedRoomStatusCalculation
         var activeConnections = connections.Where(x => !x.Archived).ToArray();
         foreach (var row in activeConnections)
         {
-            Add(MapperSupport.Alias(row.Alias, []));
+            Add(RoomAuthoredAlias.Severity(row.Alias));
             Add(MapperSupport.Required(row.FriendlyName));
             Add(MapperSupport.ReferenceSeverity(MapperSupport.Presence(row.Source, activeSubrooms.Length > 0), indexes.SubroomReferenceState(room.Id, row.Source, row.SourceId)));
             Add(MapperSupport.ReferenceSeverity(MapperSupport.Presence(row.Destination, activeSubrooms.Length > 0), indexes.SubroomReferenceState(room.Id, row.Destination, row.DestinationId)));

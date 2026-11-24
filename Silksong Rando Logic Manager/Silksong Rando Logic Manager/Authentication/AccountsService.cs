@@ -112,7 +112,7 @@ public sealed partial class AccountsService(IDbContextFactory<AccountsDbContext>
         db.Users.Remove(account); await SaveAsync(db); await transaction.CommitAsync();
     }
 
-    public async Task<ClaimsPrincipal?> AuthenticateAsync(string username, string credential)
+    internal async Task<(ClaimsPrincipal Principal, string? AppearanceColor)?> AuthenticateAsync(string username, string credential)
     {
         var normalized = username.Trim().ToUpperInvariant();
         await using var db = await contexts.CreateDbContextAsync();
@@ -137,8 +137,28 @@ public sealed partial class AccountsService(IDbContextFactory<AccountsDbContext>
         }
         await transaction.CommitAsync();
         // Same native factory as renewal, with the manager/store for this exact context.
-        return await new AccountClaimsPrincipalFactory(manager,
+        var principal = await new AccountClaimsPrincipalFactory(manager,
             services.GetRequiredService<Microsoft.Extensions.Options.IOptions<IdentityOptions>>()).CreateAsync(account);
+        return (principal, IsAppearanceColor(account.CustomAppearanceColor) ? account.CustomAppearanceColor : null);
+    }
+
+    internal static bool IsAppearanceColor(string? color) => color is { Length: 7 } && color[0] == '#' &&
+        color.AsSpan(1).IndexOfAnyExcept("0123456789abcdef") < 0;
+
+    internal async Task SaveAppearanceAsync(string color, CancellationToken token)
+    {
+        if (!IsAppearanceColor(color)) throw new ArgumentException("Expected a canonical sRGB color.", nameof(color));
+        var actor = await access.RequireAsync(AccessPolicies.Normal, token);
+        if (actor.Bypass || !Guid.TryParse(actor.Account, out var id))
+            throw new AccessDeniedException("forbidden", 403, "An account is needed to save this preference.");
+
+        await using var db = await contexts.CreateDbContextAsync(token);
+        // The write itself checks the current target and changes only the color.
+        // No tracked stale row, privilege update, or stamp/cookie rotation.
+        var written = await db.Users.Where(x => x.Id == id && x.Enabled && !x.MustReplacePassword)
+            .ExecuteUpdateAsync(update => update.SetProperty(x => x.CustomAppearanceColor, color), token);
+        if (written != 1)
+            throw new AccessDeniedException("forbidden", 403, "The account is not available to save this preference.");
     }
 
     private UserManager<Account> Manager(AccountsDbContext db) => new(

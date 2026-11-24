@@ -1,0 +1,120 @@
+.confirmation-modal.history-dialog {
+    display: flex;
+    flex-direction: column;
+    gap: .55rem;
+    width: min(calc(100vw - 2rem), 96rem);
+    max-height: calc(100dvh - 2rem);
+    overflow: hidden;
+    box-sizing: border-box;
+    color: var(--ui-text);
+}
+.history-title, .history-controls { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+.confirmation-modal .history-title h2 { margin: 0; min-width: 0; font-size: .78rem; text-transform: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.history-controls { flex-wrap: wrap; }
+.history-controls > .compact-control { margin-inline-start: auto; }
+.compact-control:hover { border-color: var(--ui-border-interactive); background: var(--ui-hover); }
+.history-view-options { display: flex; align-items: center; flex-wrap: wrap; gap: .3rem .6rem; }
+.history-details-option { display: inline-flex; align-items: center; gap: .2rem; font-size: .72rem; }
+.history-details-option input { margin: 0; }
+/* Like Audit, size the face at .8rem and the inner label at 90% (.72rem). */
+.history-mode-options { display: inline-grid; grid-template-columns: repeat(2, 1fr); font-size: .8rem; }
+.history-mode-options > label { position: relative; margin: 0; cursor: pointer; }
+.history-mode-options > label:focus-within { z-index: 1; }
+.history-mode-options input { position: absolute; opacity: 0; width: 100%; height: 100%; inset: 0; margin: 0; cursor: inherit; }
+.history-mode-options label > .history-mode-face {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    min-height: 1.8em;
+    min-width: 1.8rem;
+    padding: .12em .4rem;
+    border: 1px solid var(--ui-border-control);
+    border-left-width: 0;
+    font: inherit;
+    line-height: normal;
+    text-align: center;
+    white-space: nowrap;
+}
+.history-mode-text { font-size: 90%; }
+.history-mode-options label:first-child > span { border-left-width: 1px; }
+.history-mode-options input:checked + span {
+    color: var(--appearance-success-on-fill, var(--appearance-success, #145c2a));
+    border-color: var(--appearance-success-on-fill, var(--appearance-success, #23733a));
+    background: var(--appearance-success-bg, #e2f2e5);
+    font-weight: bold;
+}
+.history-mode-options input:focus-visible + span { outline: 2px solid var(--ui-focus-accent); outline-offset: 2px; }
+.history-viewport { min-height: 0; min-width: 0; overflow: auto; }
+.history-viewport table { width: max-content; min-width: min-content; table-layout: auto; border-collapse: separate; border-spacing: 0; }
+.history-viewport table.history-with-prose { width: 100%; }
+.history-viewport th, .history-viewport td { text-align: left; vertical-align: top; padding: .17rem .3rem; border-bottom: 1px solid var(--ui-border); }
+/* The Room host applies overflow-wrap:anywhere to its th as well as its td. */
+.history-viewport th { position: sticky; top: 0; z-index: 1; background: var(--ui-surface); white-space: normal; overflow-wrap: normal; word-break: normal; hyphens: none; }
+.history-viewport td { white-space: pre-wrap; overflow-wrap: anywhere; }
+.history-viewport .history-time, .history-viewport .history-coordinate { white-space: nowrap; overflow-wrap: normal; }
+/* Row flow keeps the oldest endpoint first; the shared clock track ends before the dash. */
+.history-time-range { display: inline-grid; grid-template-columns: max-content max-content max-content; }
+.history-time-range-dated > .history-range-date { padding-inline-end: 1ch; }
+.history-range-clock { text-align: end; }
+.history-range-dash { padding-inline-start: 1ch; }
+/* A definite (non-percentage) cell width keeps auto layout from allocating spare
+   space here. The content boxes below, or nowrap Time/coordinate contents, set
+   the actual intrinsic width; only the prose tracks are unconstrained. */
+.history-viewport .history-compact, .history-viewport .history-time, .history-viewport .history-coordinate { width: 1px; }
+.history-track { display: block; }
+.history-compact > .history-track { inline-size: var(--history-track); }
+.history-prose > .history-track { min-inline-size: var(--history-track); }
+.history-id-heading { white-space: nowrap; }
+.history-gutter { --history-track: 5ch; }
+.history-author { --history-track: 15ch; }
+/* Preserve the caret/count spacing and hit area without drawing a button face. */
+.history-disclosure {
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    max-inline-size: 100%;
+    min-height: 0;
+    gap: .12rem;
+    padding: calc(.1rem + 1px) 2px;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    font: inherit;
+    font-size: .68rem;
+    line-height: 1;
+    white-space: normal;
+}
+.history-disclosure:focus-visible { outline: 1px solid var(--ui-focus); outline-offset: 1px; }
+.history-disclosure > i { flex: none; }
+.history-disclosure > span { min-inline-size: 0; overflow-wrap: anywhere; }
+.history-viewport .history-icon { text-align: center; }
+.history-summary td { background: var(--ui-surface-muted); }
+.history-muted { color: var(--ui-text-muted); }
+.history-change, .history-inline-diff ::deep ins { color: var(--appearance-success, #146c43); font-weight: 700; }
+/* Preserve recorded text, not the surrounding Razor markup's line breaks or indentation. */
+.history-viewport td.history-literal-cell { white-space: normal; }
+.history-literal { white-space: break-spaces; }
+.history-inline-diff ::deep del { color: var(--appearance-danger, #842029); text-decoration: line-through; }
+.history-inline-diff ::deep ins { text-decoration: none; }
+.history-inline-diff ::deep .history-replacement, .history-text-cue { margin-inline-start: .25em; }
+.history-text-cue { color: var(--ui-text); font-weight: 700; }
+@media (forced-colors: active) {
+    .history-disclosure:focus-visible { outline-color: CanvasText; }
+    .history-mode-options input:checked + span { text-decoration: underline; }
+    .history-mode-options input:focus-visible + span { outline-color: CanvasText; }
+}
+.history-viewport:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: -2px; }
+.history-sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+}

@@ -1,0 +1,36 @@
+.pr-note { margin: .5rem .6rem; color: var(--ui-text-secondary); }
+.pr-unified { position: relative; min-width: 0; max-width: 100%; font: 13px/22px ui-monospace, Consolas, monospace; }
+.pr-pan, .pr-rail-slot { max-width: var(--review-visible-width, 100%); }
+.pr-pan { overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: none; }
+.pr-track { position: relative; width: max-content; min-width: max(100%, var(--review-retained-width, 0px)); }
+.pr-pan:focus-visible, .pr-rail:focus-visible, .pr-thumb:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: -2px; }
+/* This slot is in the file's flow at its tail and sticks to the Tools viewport,
+   not to the code scroller (its sibling). An empty slot cannot intercept input. */
+.pr-rail-slot { position: sticky; bottom: 0; height: 22px; z-index: 1; pointer-events: none; overflow-anchor: none; }
+.pr-rail, .pr-thumb { pointer-events: auto; }
+.pr-rail { height: 22px; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; background: var(--ui-surface-muted); }
+.pr-rail > div { height: 1px; }
+.pr-cell-probe { position: absolute; top: 0; right: 0; width: 100ch; height: 0; visibility: hidden; }
+.pr-thumb { position: relative; height: 22px; background: var(--ui-surface-muted); touch-action: none; user-select: none; }
+.pr-thumb > span { position: absolute; inset-block: 2px; border: 1px solid var(--ui-border-interactive); border-radius: .3rem; background: var(--ui-text-secondary); }
+.pr-row { height: 22px; box-sizing: border-box; }
+.pr-source { display: grid; grid-template-columns: minmax(max-content, 1fr); padding-inline-start: 2.5ch; }
+.pr-code { position: relative; color: var(--ui-text-secondary); white-space: pre; tab-size: 4; unicode-bidi: plaintext; }
+.pr-code-outlier { overflow: clip; }
+.pr-strip { position: absolute; inset-block-start: 0; width: max-content; white-space: pre; visibility: hidden; }
+.pr-strip[data-review-painted] { visibility: var(--review-strip-visibility, visible); }
+.pr-code ::deep del { background: light-dark(#ffd7d5, #5b2630); color: light-dark(#a4262c, #ffaba8); text-decoration: line-through; }
+.pr-code ::deep ins { background: light-dark(#caf2d3, #214c35); color: light-dark(#176b35, #8ee5a7); text-decoration: none; font-weight: 700; }
+.pr-code ::deep .pr-whitespace { border-bottom: 1px dotted currentColor; }
+@media (forced-colors: active) {
+    /* Keep system colors and non-color cues; no box metrics change. */
+    .pr-code ::deep del, .pr-code ::deep ins {
+        forced-color-adjust: none;
+        background: Highlight;
+        color: HighlightText;
+    }
+}
+.pr-code ::deep .pr-eol { font-size: .85em; margin-inline-start: .5em; outline: 1px dotted currentColor; user-select: none; }
+[data-review-inline]:has(> .pr-endings) { padding-inline-end: 1px; }
+.pr-fold { display: flex; align-items: center; background: var(--ui-hover); padding-inline: .6rem; }
+.pr-unified .pr-fold > button.tool-action { min-height: 0; padding-block: 0; line-height: 1.15; }

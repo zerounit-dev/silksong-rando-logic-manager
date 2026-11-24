@@ -21,14 +21,15 @@ public sealed partial class LogicCatalogService
             && x.RoomId == tracker.Identity.RoomId && !x.IsArchived);
         if (row is null) { RoomEditingMutationScope.Missing(tracker, operation.EntityId); return null; }
         var current = ConnectionValues(row);
-        var merge = Wire.RoomEditingMerge.Connection(operation.Origin.Original, operation.Submitted, current, tracker.ConnectionReview);
+        var submitted = operation.Submitted with { Alias = Wire.RoomAuthoredAlias.Commit(operation.Submitted.Alias, operation.Origin.Original.Alias) };
+        var merge = Wire.RoomEditingMerge.Connection(operation.Origin.Original, submitted, current, tracker.ConnectionReview);
         if (!merge.CanApply)
         {
             tracker.ConnectionReview = null;
             RoomEditingMutationScope.Block(tracker, Wire.RoomBlockedDisposition.ConflictAwaitingChoice,
                 merge.ReviewSuperseded ? "The reviewed connection values changed again. Review the current values." : "This connection changed elsewhere.",
                 new Wire.RoomConnectionConflictEvidence(current, operation.Submitted,
-                    Wire.RoomEditingMerge.Connection(operation.Origin.Original, operation.Submitted, current).DivergentFields));
+                    Wire.RoomEditingMerge.Connection(operation.Origin.Original, submitted, current).DivergentFields));
             return null;
         }
         var scope = await RoomEditingMutationScope.CaptureAsync(db, tracker, publication);

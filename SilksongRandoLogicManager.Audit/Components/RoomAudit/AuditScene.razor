@@ -11,6 +11,7 @@
     { <p>No positioned geometry. Select targets in the table.</p> }
     else
     {
+        string? connectionRingStyle = null;
         <svg class="audit-scene" viewBox="@ViewBox(scene)" data-fit="@ViewBox(scene)" tabindex="0" role="group" aria-label="Room scene. Drag to pan; wheel to zoom. Left click or Enter selects origin; right click or Shift Enter selects destination. Connections inspect requirements only.">
             <defs><marker id="@($"audit-arrow-{Owner}")" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="context-stroke" /></marker></defs>
             @if (scene.HasValidBounds && scene.Image?.IsAvailable == true)
@@ -47,13 +48,23 @@
                     { <circle cx="@N(marker.X)" cy="@N(-marker.Y)" r="1.8" /> }
                     else
                     {
+                        var rectX = N(marker.X - 5.25);
+                        var rectY = N(y);
+                        var rectHeight = N(height);
+                        const string rectWidth = "10.5", rectRadius = ".6";
+                        if (IsFocusedConnection(target))
+                            connectionRingStyle = $"--audit-ring-x:{rectX}px;--audit-ring-y:{rectY}px;--audit-ring-width:{rectWidth}px;--audit-ring-height:{rectHeight}px;--audit-ring-radius:{rectRadius}px";
                         <g>
-                            <rect x="@N(marker.X - 5.25)" y="@N(y)" width="10.5" height="@N(height)" rx=".6" />
+                            <rect x="@rectX" y="@rectY" width="@rectWidth" height="@rectHeight" rx="@rectRadius" />
                             <text class="audit-scene-alias" style="@(rows.Length > 1 ? $"font-size: {N(3.75 / rows.Length)}px" : null)" x="@N(marker.X)" y="@N(y + height / 2)" text-anchor="middle" dominant-baseline="central">@marker.Label@(rows.Length > 1 ? $"·{index + 1}" : "")</text>
                         </g>
                     }
                 </g>
                 }
+            }
+            @if (connectionRingStyle is not null)
+            {
+                <rect class="audit-connection-ring" data-audit-layer="exit" aria-hidden="true" focusable="false" pointer-events="none" style="@connectionRingStyle" />
             }
             <g data-audit-layer="exit" class="audit-route-lines" aria-label="Selected directed route">
                 @foreach (var connection in Snapshot.Rows.Where(x => x.Kind == "connection" && Route.Connections.Contains(x.Id)))
@@ -130,8 +141,9 @@
     private string Status(AuditTarget target) => Reverse is not null ? Reverse.Status(target) : Evaluator.TargetStatus(target, Evaluation);
     private static string StatusClass(string status) => status.StartsWith("Unresolved", StringComparison.Ordinal) ? "audit-scene-unresolved" : status == "Accessible" ? "audit-scene-reached" : status is "—" or "Disconnected" ? "audit-scene-neutral" : "audit-scene-blocked";
     private bool OnRoute(AuditTarget target) => target.Kind == "subroom" ? Route.Nodes?.Contains(target.Id) == true : target.Kind == "connection" ? Route.Connections.Contains(target.Id) : Route.OriginKey == $"{target.Kind}:{target.Id}";
+    private bool IsFocusedConnection(AuditTarget target) => target.Kind == "connection" && Route.Step == target.Id;
     private string Decoration(AuditTarget target, string status) =>
-        $"audit-scene-target {(Reverse is null && (Selected is not null || Route.OriginKey is not null) && !OnRoute(target) ? "audit-scene-neutral" : StatusClass(status))} {(Selected == target ? "audit-selected" : "")} {(Hovered == target ? "audit-table-preview" : "")} {(OnRoute(target) ? "audit-route-marker" : "")} {(target.Kind == "connection" && Route.Step == target.Id ? "audit-focused-marker" : "")} {(Origin == $"{target.Kind}:{target.Id}" ? "audit-origin" : "")}";
+        $"audit-scene-target {(Reverse is null && (Selected is not null || Route.OriginKey is not null) && !OnRoute(target) ? "audit-scene-neutral" : StatusClass(status))} {(Selected == target ? "audit-selected" : "")} {(Hovered == target ? "audit-table-preview" : "")} {(OnRoute(target) ? "audit-route-marker" : "")} {(IsFocusedConnection(target) ? "audit-focused-marker" : "")} {(Origin == $"{target.Kind}:{target.Id}" ? "audit-origin" : "")}";
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (mounting || disposed || cameraFailed) return;

@@ -54,6 +54,11 @@
     cursor: not-allowed;
     opacity: .72;
 }
+/* Keep the disabled role pair intact instead of compositing it with the panel. */
+[data-logic-palette="Custom"] .scene-image-capture-options input[type="number"]:disabled {
+    opacity: 1;
+    -webkit-text-fill-color: currentColor;
+}
 .scene-image-source-controls > label:not(.scene-image-upload),
 .scene-image-capture-field-group > label { display: grid; gap: .18rem; }
 .scene-image-capture-field-group > label { margin-top: .35rem; }

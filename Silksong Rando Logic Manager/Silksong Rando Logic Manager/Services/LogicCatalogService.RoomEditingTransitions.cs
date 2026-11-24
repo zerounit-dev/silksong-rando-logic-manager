@@ -72,10 +72,11 @@ public sealed partial class LogicCatalogService
         { RoomEditingMutationScope.Missing(tracker, id); return null; }
         var current = source is null ? null : TransitionValues(source);
         Wire.RoomTransitionValues value;
-        if (operation is Wire.CreateRoomTransition create) value = create.Submitted;
+        if (operation is Wire.CreateRoomTransition create) value = create.Submitted with { Alias = Wire.RoomAuthoredAlias.Commit(create.Submitted.Alias) };
         else if (operation is Wire.SaveRoomTransition save)
         {
-            var merge = Wire.RoomEditingMerge.Transition(save.Origin.Original, save.Submitted, current!, tracker.TransitionReview);
+            var submitted = save.Submitted with { Alias = Wire.RoomAuthoredAlias.Commit(save.Submitted.Alias, save.Origin.Original.Alias) };
+            var merge = Wire.RoomEditingMerge.Transition(save.Origin.Original, submitted, current!, tracker.TransitionReview);
             if (!merge.CanApply)
             {
                 tracker.TransitionReview = null;
@@ -83,7 +84,7 @@ public sealed partial class LogicCatalogService
                 RoomEditingMutationScope.Block(tracker, Wire.RoomBlockedDisposition.ConflictAwaitingChoice,
                     merge.ReviewSuperseded ? "The reviewed transition values changed again. Review the current values." : "This transition changed elsewhere.",
                     new Wire.RoomTransitionConflictEvidence(current!, save.Submitted,
-                        Wire.RoomEditingMerge.Transition(save.Origin.Original, save.Submitted, current!).DivergentFields));
+                        Wire.RoomEditingMerge.Transition(save.Origin.Original, submitted, current!).DivergentFields));
                 return null;
             }
             value = merge.Values;

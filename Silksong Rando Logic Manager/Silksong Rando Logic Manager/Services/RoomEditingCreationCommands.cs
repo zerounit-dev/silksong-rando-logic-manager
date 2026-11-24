@@ -37,7 +37,7 @@ internal sealed class RoomEditingCreationCommands(LogicCatalogService catalogue)
         try
         {
             await catalogue.CreateConnectionWithOutcomeAsync(entry.Identity.RoomId,
-                new SubroomConnection { Alias = value.Alias, FriendlyName = value.FriendlyName,
+                new SubroomConnection { Alias = Wire.RoomAuthoredAlias.Commit(value.Alias), FriendlyName = value.FriendlyName,
                     SourceSubroomReferenceText = value.SourceSubroomReferenceText,
                     DestinationSubroomReferenceText = value.DestinationSubroomReferenceText,
                     Requirements = value.Requirements, Notes = value.Notes, IsTodo = value.IsTodo,

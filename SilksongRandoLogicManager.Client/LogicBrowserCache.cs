@@ -307,10 +307,10 @@ public sealed class LogicBrowserCache(IJSRuntime js, HttpClient http, SessionAcc
         timeout.CancelAfter(TimeSpan.FromSeconds(120));
         return timeout;
     }
-    public async Task<LocalCacheState> StartupAsync(CancellationToken token = default,
+    internal async Task<LocalCacheState> StartupAsync(bool requiredForSplash, CancellationToken token,
         Func<InitialCatalogueProgress, Task>? initialProgress = null)
     {
-        try { return await StartupCoreAsync(token, initialProgress); }
+        try { return await StartupCoreAsync(requiredForSplash, token, initialProgress); }
         catch (Exception error) { access.FailInitial(error); throw; }
     }
     public async Task InstallCurrentRuntimeAsync(CancellationToken token = default, Func<InitialCatalogueProgress, Task>? progress = null)
@@ -349,7 +349,7 @@ public sealed class LogicBrowserCache(IJSRuntime js, HttpClient http, SessionAcc
         catch (Exception error) { if (!runtime.Retired && error is not SessionAccessException) runtime.InstallationFailed(); throw; }
         finally { synchronization.Release(); }
     }
-    private async Task<LocalCacheState> StartupCoreAsync(CancellationToken token,
+    private async Task<LocalCacheState> StartupCoreAsync(bool requiredForSplash, CancellationToken token,
         Func<InitialCatalogueProgress, Task>? initialProgress)
     {
         using var timeout = SynchronizationTimeout(token);
@@ -360,15 +360,14 @@ public sealed class LogicBrowserCache(IJSRuntime js, HttpClient http, SessionAcc
             var captured = await ReadStateAsync(timeout.Token);
             using var request = new HttpRequestMessage(HttpMethod.Get, "/api/v3/cache/startup");
             if (captured is not null) request.Headers.Add(Header, JsonSerializer.Serialize(captured.Checkpoint, Json));
-            using var response = await http.SendAsync(request, timeout.Token);
-            response.EnsureSuccessStatusCode();
+            using var response = await SendCacheRequestAsync(request, HttpCompletionOption.ResponseContentRead, requiredForSplash, timeout.Token);
             var startup = await response.Content.ReadFromJsonAsync<LogicCacheStartup>(Json, timeout.Token)
                 ?? throw new JsonException("Missing combined startup response.");
             runtime.RequireActive();
             access.Accept(startup.Session);
             if (startup.Cache is null) throw new JsonException("Missing protected startup cache result.");
             ObserveImages(startup.Images);
-            installed = await ApplyAsync(startup.Cache, captured, timeout.Token, initialProgress);
+            installed = await ApplyAsync(startup.Cache, captured, timeout.Token, initialProgress, requiredForSplash);
             LastSuccessfulSynchronization = new(DateTime.UtcNow, installed.Checkpoint);
         }
         finally { synchronization.Release(); }
@@ -393,15 +392,42 @@ public sealed class LogicBrowserCache(IJSRuntime js, HttpClient http, SessionAcc
         if (CanAdoptLocal) await NotifyAsync(installed);
         return installed;
     }
-    private async Task<LogicCacheChanges> ChangesAsync(LocalCacheState? from, CancellationToken token)
+    private async Task<HttpResponseMessage> SendCacheRequestAsync(HttpRequestMessage request, HttpCompletionOption completion,
+        bool requiredForSplash, CancellationToken token)
     {
+        var evidence = requiredForSplash ? new StartupHttpEvidence() : null;
+        if (evidence is not null) request.Options.Set(StartupHttpEvidence.Option, evidence);
+        try
+        {
+            var response = await http.SendAsync(request, completion, token);
+            try { return response.EnsureSuccessStatusCode(); }
+            catch { response.Dispose(); throw; }
+        }
+        catch (Exception error) when (evidence is not null)
+        {
+            evidence.Associate(error);
+            throw;
+        }
+    }
+
+    private async Task<LogicCacheChanges> ChangesAsync(LocalCacheState? from, CancellationToken token, bool requiredForSplash = false)
+    {
+        if (requiredForSplash)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v3/cache/changes")
+            { Content = JsonContent.Create(new LogicCacheCheck(from?.Checkpoint), options: Json) };
+            using var tracked = await SendCacheRequestAsync(request, HttpCompletionOption.ResponseContentRead, true, token);
+            return await ReadChangesAsync(tracked, token);
+        }
         using var response = await http.PostAsJsonAsync("/api/v3/cache/changes", new LogicCacheCheck(from?.Checkpoint), Json, token);
         response.EnsureSuccessStatusCode();
-        return await response.Content.ReadFromJsonAsync<LogicCacheChanges>(Json, token)
-            ?? throw new JsonException("Missing complete cache changes response.");
+        return await ReadChangesAsync(response, token);
     }
+    private static async Task<LogicCacheChanges> ReadChangesAsync(HttpResponseMessage response, CancellationToken token) =>
+        await response.Content.ReadFromJsonAsync<LogicCacheChanges>(Json, token)
+            ?? throw new JsonException("Missing complete cache changes response.");
     private async Task<LocalCacheState> ApplyAsync(LogicCacheChanges changes, LocalCacheState? captured, CancellationToken token,
-        Func<InitialCatalogueProgress, Task>? initialProgress = null)
+        Func<InitialCatalogueProgress, Task>? initialProgress = null, bool requiredForSplash = false)
     {
         // Preserve initialization before any database-image HTTP read, including failures.
         try { await ModuleAsync(); }
@@ -420,8 +446,11 @@ public sealed class LogicBrowserCache(IJSRuntime js, HttpClient http, SessionAcc
                 var preparation = await RequestAsync<LocalCacheState?>(new { operation = "prepare-install" }, token, "install");
                 captured = preparation.Result;
                 if (initialProgress is not null) await initialProgress(new(InitialLoadingPhase.Download));
-                using var response = await http.GetAsync("/api/v3/cache/database", HttpCompletionOption.ResponseHeadersRead, token);
-                response.EnsureSuccessStatusCode();
+                using var request = requiredForSplash ? new HttpRequestMessage(HttpMethod.Get, "/api/v3/cache/database") : null;
+                using var response = request is not null
+                    ? await SendCacheRequestAsync(request, HttpCompletionOption.ResponseHeadersRead, true, token)
+                    : await http.GetAsync("/api/v3/cache/database", HttpCompletionOption.ResponseHeadersRead, token);
+                if (request is null) response.EnsureSuccessStatusCode();
                 if (response.Content.Headers.ContentType?.MediaType != "application/vnd.sqlite3" ||
                     !response.Headers.TryGetValues(Header, out var headers)) throw new JsonException("Missing prepared SQLite metadata.");
                 var metadata = JsonSerializer.Deserialize<LogicCacheCheckpoint>(headers.Single(), Json)
@@ -444,7 +473,7 @@ public sealed class LogicBrowserCache(IJSRuntime js, HttpClient http, SessionAcc
             // The same 120s cancellation bounds repeated genuine CAS contention.
             if (initialProgress is not null) await initialProgress(new(InitialLoadingPhase.Neutral));
             captured = installed.State;
-            changes = await ChangesAsync(captured, token);
+            changes = await ChangesAsync(captured, token, requiredForSplash);
         }
     }
     public void ObserveImages(IReadOnlyList<LogicCacheImageObservation> observations)

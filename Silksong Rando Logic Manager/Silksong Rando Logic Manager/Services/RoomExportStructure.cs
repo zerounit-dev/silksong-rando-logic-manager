@@ -92,11 +92,12 @@ internal static class RoomExportStructure
             }
             foreach (var row in Get(transitionsByRoom, room.Row.Id).OrderBy(x => x.SortOrder).ThenBy(x => CanonicalValue(x.Alias), StringComparer.Ordinal).ThenBy(x => x.Id))
             {
-                var segment = ValidAlias(row.Alias) ? CanonicalValue(row.Alias) : null;
+            var aliasFailure = AliasFailure(row.Alias);
+            var segment = aliasFailure is null ? CanonicalValue(row.Alias) : null;
                 var id = room.Id is not null && segment is not null ? $"{room.Id}@{segment}" : null;
                 var state = new TransitionState(row, room, id);
                 transitionStates.Add(row.Id, state);
-                if (!ValidAlias(row.Alias)) Fail(room, "transition alias must contain only letters and decimal digits", "transition", Display(row.Name, row.Alias));
+            if (aliasFailure is not null) Fail(room, $"transition alias {aliasFailure}", "transition", Display(row.Name, row.Alias));
                 else if (segment is null) Fail(room, "transition alias does not produce a nonempty canonical export segment", "transition", Display(row.Name, row.Alias));
                 if (string.IsNullOrWhiteSpace(row.Name)) Fail(room, "transition name is blank", "transition", Display(row.Name, row.Alias));
                 if (id is not null) Register(id, $"transition '{Display(row.Name, row.Alias)}'", identityOwners, roomFailures, room, "transition", Display(row.Name, row.Alias));
@@ -164,8 +165,9 @@ internal static class RoomExportStructure
                 var target = ResolveSubroom(roomFailures, room, row.DestinationText, row.ResolvedDestinationId, roomSubrooms, "connection", Display(row.Name, row.Alias), "destination subroom");
                 if (roomSubrooms.Length == 0) Fail(room, "an active connection cannot exist in a room without active subrooms", "connection", Display(row.Name, row.Alias));
                 if (source is not null && target is not null && source.Row.Id == target.Row.Id) Fail(room, "connection source and destination form a self-loop", "connection", Display(row.Name, row.Alias));
-                var alias = ValidAlias(row.Alias) ? CanonicalValue(row.Alias) : null;
-                if (!ValidAlias(row.Alias)) Fail(room, "connection alias must contain only letters and decimal digits", "connection", Display(row.Name, row.Alias));
+            var aliasFailure = AliasFailure(row.Alias);
+            var alias = aliasFailure is null ? CanonicalValue(row.Alias) : null;
+            if (aliasFailure is not null) Fail(room, $"connection alias {aliasFailure}", "connection", Display(row.Name, row.Alias));
                 else if (alias is null) Fail(room, "connection alias does not produce a nonempty canonical export segment", "connection", Display(row.Name, row.Alias));
                 if (string.IsNullOrWhiteSpace(row.Name)) Fail(room, "connection name is blank", "connection", Display(row.Name, row.Alias));
                 var id = room.Id is not null && source?.Id is not null && target?.Id is not null && alias is not null
@@ -308,7 +310,12 @@ internal static class RoomExportStructure
 
     internal static string? CanonicalValue(string? value) => RoomPresentationRules.CanonicalSegment(value);
 
-    private static bool ValidAlias(string? value) => !string.IsNullOrWhiteSpace(value) && value.EnumerateRunes().All(rune => Rune.IsLetter(rune) || Rune.GetUnicodeCategory(rune) == UnicodeCategory.DecimalDigitNumber);
+    private static string? AliasFailure(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || !value.EnumerateRunes().All(rune => Rune.IsLetter(rune) || Rune.GetUnicodeCategory(rune) == UnicodeCategory.DecimalDigitNumber))
+            return "must contain only letters and decimal digits";
+        return value.Length > SilksongRandoLogicManager.Contracts.RoomAuthoredAlias.MaxLength ? "must be at most three characters long" : null;
+    }
     private static string Display(string? primary, string? secondary) => !string.IsNullOrWhiteSpace(primary) ? primary : !string.IsNullOrWhiteSpace(secondary) ? secondary : "unnamed row";
     private static IReadOnlyList<T> Get<T>(IReadOnlyDictionary<Guid, T[]> source, Guid roomId) => source.TryGetValue(roomId, out var values) ? values : [];
 

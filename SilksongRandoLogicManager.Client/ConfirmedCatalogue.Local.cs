@@ -29,7 +29,7 @@ public sealed partial class ConfirmedCatalogue
         if (!warm)
         {
             await progress(new(InitialLoadingPhase.Neutral));
-            await browser.StartupAsync(lifetime.Token, progress);
+            await browser.StartupAsync(requiredForSplash: true, token: lifetime.Token, initialProgress: progress);
             await progress(new(InitialLoadingPhase.Neutral));
         }
         cold.End(warm ? TimingOutcome.Skipped : TimingOutcome.Returned);

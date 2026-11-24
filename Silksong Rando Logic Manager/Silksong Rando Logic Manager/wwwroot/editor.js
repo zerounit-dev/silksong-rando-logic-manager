@@ -1769,6 +1769,8 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
           return field?.dataset?.v2HeaderField ? { kind: "header", client: "", field: field.dataset.v2HeaderField } : null;
       };
       const nativeKey = identity => JSON.stringify([identity.kind, identity.client, identity.field]);
+      const roomAliasField = field => field instanceof HTMLInputElement && field.hasAttribute("data-v3-room-alias-initial");
+      const projectRoomAlias = value => value.replace(/[\r\n]/g, "");
       const nativeValue = field => activeRequirement?.inline === field && activeRequirement.proxy && !field.disabled && !field.readOnly
           ? activeRequirement.proxy.value : field instanceof HTMLInputElement && field.type === "checkbox" ? String(field.checked) : field.value;
        const nativeInitialValue = field => field instanceof HTMLInputElement && field.type === "checkbox" ? String(field.defaultChecked)
@@ -1783,26 +1785,36 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
            }
            field.value=value;
        };
-       const observeRoomNative = (field, nativeEvent = false) => {
+       const observeRoomNative = (field, nativeEvent = false, settledInput = false) => {
           if (!roomProjectionEnabled || !control(field) || !root.contains(field)) return null;
           const identity = nativeIdentity(field);
           if (!identity) return null;
             const key = nativeKey(identity), prior = roomNative.get(key);
             // Installation can retire a field before Razor removes its old DOM.
             if (retiredRoomNative.has(key)) return null;
+           const alias = roomAliasField(field), composing = composingRoomField(field);
+           const initial = alias ? field.dataset.v3RoomAliasInitial : nativeInitialValue(field);
            // A section transfer/visibility change may recreate a DOM control while
            // retaining its permanent field identity. Its old Razor initial frame is
            // not user input. Restore the installed native value before observing it;
            // a value already edited away from that frame wins instead.
            if (!roomNativeElements.has(field)) {
                roomNativeElements.add(field);
-                 if (prior && !nativeEvent && !composingRoomField(field) && nativeValue(field) === nativeInitialValue(field)) {
+                 if (prior && !nativeEvent && !composing && nativeValue(field) === (alias ? projectRoomAlias(initial) : initial)) {
                    writeRoomNativeValue(field,prior.value);
                }
            }
-           const value = nativeValue(field);
+           let value = nativeValue(field);
+           if (alias) {
+               // Keep the exact installed/initial Alias in the native frame until
+               // an edit, even though the text input strips CR/LF from its value.
+               // During IME retain the last settled value and generation, not the
+               // provisional string (including on a boundary from another field).
+               const baseline = prior?.value ?? initial;
+               if (composing || !settledInput && value === projectRoomAlias(baseline)) value = baseline;
+           }
            if(field instanceof HTMLSelectElement)for(const option of field.querySelectorAll("option[data-v3-room-unknown]"))if(option.value!==value)option.remove();
-           const state = { ...identity, value, generation: prior ? prior.generation + (prior.value === value ? 0 : 1) : (nativeInitialValue(field) === value ? 0 : 1), composing: composingRoomField(field) };
+           const state = { ...identity, value, generation: prior ? prior.generation + (prior.value === value ? 0 : 1) : (initial === value ? 0 : 1), composing };
           roomNative.set(key, state);
           return state;
       };
@@ -1941,7 +1953,10 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
               return result;
           });
       };
-            const keydown = event => { if(!owned(event)||typeof event.key!=="string")return; const field=event.target;if(expandedRequirementEditor(field)){refreshRequirementAccess(activeRequirement);if(event.key==="Tab"||event.key==="Escape"){event.preventDefault();event.stopImmediatePropagation();closeRequirements(true);}return;}if(field.disabled||field.readOnly)return; const kind=kindOf(field); if(!kind||!control(field))return; if(event.key==="Tab"){if(field.value?.length>0)tabSources.add(field);return;} if(!event.key.startsWith("Arrow")||field instanceof HTMLSelectElement||(field instanceof HTMLInputElement&&field.type==="checkbox"))return; const isRequirement=requirementEditor(field);if(isRequirement&&(event.isComposing===true||event.keyCode===229))return; const c=config(kind), owner=owners[kind], direction=event.key.slice(5).toLowerCase(), suffix=`${direction[0].toUpperCase()}${direction.slice(1)}`, encoded=data(field,kind,suffix); if(!encoded||!caretAtBoundary(field,event.key)||!owner?.invokeMethodAsync)return; const [row,target]=encoded.split("|"), latent=data(field,kind,`${suffix}Latent`)==="true"; if(!row||!target||(!latent&&!root.querySelector(`#editor-row-${row}-${target}`)))return; event.preventDefault();event.stopImmediatePropagation(); const args=[c.method,field.dataset[c.client],field.dataset[c.field],direction,field.value];dispatchBoundary(kind,owner,args).catch(()=>{}); };
+            const keydown = event => { if(!owned(event)||typeof event.key!=="string")return; const field=event.target;if(expandedRequirementEditor(field)){refreshRequirementAccess(activeRequirement);if(event.key==="Tab"||event.key==="Escape"){event.preventDefault();event.stopImmediatePropagation();closeRequirements(true);}return;}if(field.disabled||field.readOnly)return; const kind=kindOf(field); if(!kind||!control(field))return; if(event.key==="Tab"){if(field.value?.length>0)tabSources.add(field);return;} if(!event.key.startsWith("Arrow")||field instanceof HTMLSelectElement||(field instanceof HTMLInputElement&&field.type==="checkbox"))return;
+                const composingKey = event.isComposing===true || event.keyCode===229;
+                if(requirementEditor(field)&&composingKey || roomProjectionEnabled&&roomAliasField(field)&&(composingKey||composingRoomField(field)))return;
+                const c=config(kind), owner=owners[kind], direction=event.key.slice(5).toLowerCase(), suffix=`${direction[0].toUpperCase()}${direction.slice(1)}`, encoded=data(field,kind,suffix); if(!encoded||!caretAtBoundary(field,event.key)||!owner?.invokeMethodAsync)return; const [row,target]=encoded.split("|"), latent=data(field,kind,`${suffix}Latent`)==="true"; if(!row||!target||(!latent&&!root.querySelector(`#editor-row-${row}-${target}`)))return; event.preventDefault();event.stopImmediatePropagation(); const args=[c.method,field.dataset[c.client],field.dataset[c.field],direction,field.value];dispatchBoundary(kind,owner,args).catch(()=>{}); };
          const pointerdown = event => { pointerRequirementCaret=null;if(!owned(event)||event.isPrimary!==true||event.button!==0)return;const inline=event.target;if(requirementEditor(inline))pointerRequirementCaret={id:inline.id,pointerId:event.pointerId,offset:pointerSourceOffset(inline,event)}; };
          const pointercancel = () => { pointerRequirementCaret=null; };
          const dblclick = event => { if(!owned(event))return;const inline=event.target;if(!requirementEditor(inline))return;event.stopImmediatePropagation();const caret=pointerRequirementCaret?.id===inline.id?pointerRequirementCaret.offset:null;pointerRequirementCaret=null;openRequirements(inline,caret); };
@@ -1994,7 +2009,7 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
                  if(target instanceof HTMLInputElement&&!target.disabled&&!target.readOnly&&field.closest("tr")?.contains(target))target.value=field.value;
              }
                if(expandedRequirementEditor(field)){if(activeRequirement?.proxy===field&&synchronizeRequirement(activeRequirement))observeRoomNative(activeRequirement.inline,true);return;}
-               if(owned(event)){observeRoomNative(field,true);if(field.dataset?.v2ChildMirrorTarget)observeRoomNative(root.querySelector(`#${CSS.escape(field.dataset.v2ChildMirrorTarget)}`),true);}
+               if(owned(event)){observeRoomNative(field,true,!event.isComposing && !event.inputType?.includes("Composition"));if(field.dataset?.v2ChildMirrorTarget)observeRoomNative(root.querySelector(`#${CSS.escape(field.dataset.v2ChildMirrorTarget)}`),true);}
               if(requirementEditor(field))renderInlineRequirement(field);
          };
         const scroll=event=>{if(activeRequirement?.proxy===event.target)alignExpandedRequirement(activeRequirement);};
@@ -2003,6 +2018,7 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
               if(!roomProjectionEnabled||roomCompositionRetired||!owned(event))return;
               const field=activeRequirement?.proxy===event.target?refreshRequirementAccess(activeRequirement):event.target;
               if(!control(field)||field.disabled||field.readOnly||!nativeIdentity(field))return;
+              if(roomAliasField(field))observeRoomNative(field);
               roomCompositionContinuation++;roomComposing.add(event.target);
               if(activeRequirement?.proxy===event.target)activeRequirement.composing=true;
               observeRoomNative(field,true);
@@ -2053,7 +2069,11 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
                             const encoded=field?.dataset?.[`${descriptor.directionPrefix}${suffix}`];
                             if(encoded){const [client,fieldName]=encoded.split("|");if(client&&fieldName)focusTarget=`editor-row-${client}-${fieldName}`;}
                         }
-                        return reference.invokeMethodAsync("DispatchRoomBoundary",kind,method,args,snapshotRoomNative(),roomInteraction,focusTarget);
+                        const fields=snapshotRoomNative();
+                        // The retained positional text argument is not the V3
+                        // edit source. Do not forward provisional Alias text there either.
+                        if(method===descriptor.blur && args[1]==="alias" && fields.some(field=>field.kind===kind && field.client===args[0] && field.field==="alias" && field.composing))args[3]=null;
+                        return reference.invokeMethodAsync("DispatchRoomBoundary",kind,method,args,fields,roomInteraction,focusTarget);
                     }};
                    api.register(receiver,kind,descriptor);
                    snapshotRoomNative();
@@ -2067,6 +2087,11 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
                 finishRoomSceneDraft:(room,owner,burst,revision,result)=>{if(disposed)throw new Error("The room native owner is unavailable.");return root.querySelector("[data-scene-layout-canvas=true]")?.__v2SceneViewport?.finishKeyboardAdmission?.(room,owner,burst,revision,result)===true;},
                 observeRoomSceneDrafts:(values,gate)=>{if(disposed)throw new Error("The room native owner is unavailable.");root.querySelector("[data-scene-layout-canvas=true]")?.__v2SceneViewport?.observeKeyboard?.(values,gate);},
                 roomInteractionGeneration:()=>roomInteraction,
+                focusedRoomHistoryInteraction:key=>{
+                    if(disposed||!roomProjectionEnabled||!document.hasFocus())return null;
+                    const dialog=document.activeElement?.closest("#v3-room-history-dialog[data-room-history-focus-key]");
+                    return dialog&&root.contains(dialog)&&dialog.dataset.roomHistoryFocusKey===key ? roomInteraction : null;
+                },
                  installRoomNative,
                 focusRoomBoundary:(id,interaction)=>{if(disposed||!roomProjectionEnabled||interaction!==roomInteraction)return false;const target=document.getElementById(id);if(!target||!root.contains(target)||target.disabled||target.readOnly)return false;window.focusEditorField(id);return true;},
               followBoundary,

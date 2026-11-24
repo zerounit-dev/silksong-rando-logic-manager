@@ -41,7 +41,7 @@ public sealed class GenerateLogicExecutableGraph : Microsoft.Build.Utilities.Tas
                 "lib/sqlite/sqlite3.wasm", "lib/sqlite/sqlite3.mjs", "workspace-request.js", "requirements.js", "room-export.js", "room-exchange.js",
                 "js/logicCacheBroker.mjs", "js/logicCacheOwner.mjs", "js/logicCache.mjs", "catalogue.js", "sidebar-drag.js",
                 "scene-import-page.js", "scene-preview.js", "room-audit-storage.js", "room-audit-switcher.js", "room-audit-scene.js",
-                "map-support.js", "editor.js", "requirement-catalogue.js", "map-navigation.js", "archipelago.js" };
+                "map-support.js", "editor.js", "requirement-catalogue.js", "map-navigation.js", "archipelago.js", "room-history-time.js" };
             var sources = names.ToDictionary(n => n, n => File.Exists(Path.Combine(client, n)) ? Path.Combine(client, n) : Path.Combine(server, n), StringComparer.Ordinal);
             if (!Regex.IsMatch(Identity, "\\Aapp-[0-9]{21}\\z")) throw new InvalidOperationException("Invalid application build stamp.");
             var identity = Identity;

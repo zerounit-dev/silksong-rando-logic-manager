@@ -8,6 +8,7 @@ using Silksong_Rando_Logic_Manager.Data;
 using Silksong_Rando_Logic_Manager.Services;
 using Silksong_Rando_Logic_Manager.Services.HttpLogging;
 using Silksong_Rando_Logic_Manager.Authentication;
+using Silksong_Rando_Logic_Manager.Services.Publishing;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Net.Sockets;
@@ -161,6 +162,7 @@ app.UseStaticFiles();
 app.UseAntiforgery();
 app.MapAccountHttp();
 app.MapV3Catalogue();
+app.MapPublishingReview();
 
 app.MapFallbackToFile("{*path:nonfile:clientUi}", "index.html");
 

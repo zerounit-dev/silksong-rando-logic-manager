@@ -66,6 +66,8 @@ html:has(.load-ui1), body:has(.load-ui1) { min-width: 0; overflow: auto; }
 .v3-shell .sidebar-export-footer .tree-action { display: inline-flex; align-items: center; justify-content: center; gap: .18rem; box-sizing: border-box; width: 100%; min-width: 0; font: inherit; font-size: .64rem; line-height: normal; text-align: center; text-decoration: none; }
 .v3-shell .sidebar-export-row { min-width: 0; }
 .v3-shell .sidebar-export-footer .scene-review-trigger { font-size: .68rem; }
+/* Only the enabled sidebar upload action should lose the standalone scene-picker fill. */
+.sidebar-export-footer > .scene-review-trigger:not(:disabled, [aria-disabled="true"]) { background: transparent; }
 .v3-shell .sidebar-export-footer .scene-review-trigger .v3-icon-slot > i { margin-right: 0; }
 .v3-shell .sidebar-export-row > .sidebar-export-control { flex: 1 1 0; width: auto; }
 .v3-shell .sidebar-export-footer .tree-action:focus-visible { outline: 1px solid var(--ui-focus); outline-offset: 1px; }
@@ -151,8 +153,36 @@ html:has(.load-ui1), body:has(.load-ui1) { min-width: 0; overflow: auto; }
 .v3-shell .sidebar-export-footer .sidebar-utility-action > .v3-icon-slot > i { font-size: inherit; }
 .v3-shell .sidebar-export-footer .sidebar-utility-action > .v3-icon-slot { width: 1.25em; flex-basis: 1.25em; }
 .v3-shell .sidebar-utility-row > logic-theme-picker { display: flex; flex: none; }
-.sidebar-theme-menu { position: fixed; z-index: 10; width: 7rem; overflow: auto; padding: .15rem; border: 1px solid var(--ui-border-control); background: var(--ui-surface-raised); color: var(--ui-text); box-shadow: 0 .2rem .65rem var(--ui-dialog-shadow); }
+.sidebar-theme-menu { position: fixed; z-index: 10; width: max-content; min-width: 7rem; overflow: auto; padding: .15rem; border: 1px solid var(--ui-border-control); background: var(--ui-surface-raised); color: var(--ui-text); box-shadow: 0 .2rem .65rem var(--ui-dialog-shadow); }
 .sidebar-theme-menu > button { display: flex; align-items: center; gap: .35rem; width: 100%; padding: .25rem .35rem; border: 0; background: transparent; color: inherit; font-size: .75rem; text-align: left; cursor: pointer; }
 .sidebar-theme-menu > button:hover { background: var(--ui-hover); }
 .sidebar-theme-menu > button:focus-visible { background: var(--ui-hover); outline: 1px solid var(--ui-focus); outline-offset: -1px; }
-.sidebar-theme-menu > button[aria-checked="false"] > i { visibility: hidden; }
+.sidebar-theme-choice-slot { display: inline-grid; flex: 0 0 1.25em; width: 1.25em; place-items: center; }
+.sidebar-theme-preview { display: block; width: .85em; height: .85em; border: 1px solid currentColor; background: var(--theme-preview-color, transparent); }
+.sidebar-theme-preview[data-theme-preview="Auto"] { --theme-preview-color: linear-gradient(to right, #f6f5f1 50%, #202020 0); }
+.sidebar-theme-preview[data-theme-preview="Light"] { --theme-preview-color: #f6f5f1; }
+.sidebar-theme-preview[data-theme-preview="Dark"] { --theme-preview-color: #202020; }
+.sidebar-theme-preview[data-theme-preview="Void"] { --theme-preview-color: #000; }
+.sidebar-theme-preview[data-theme-preview="Hornet"] { --theme-preview-color: var(--hornet-cloak); }
+.sidebar-theme-preview[data-theme-preview="Hero"] { --theme-preview-color: linear-gradient(to right, #ce353d 0 33%, #239a53 33% 66%, #336de2 66%); }
+.sidebar-theme-menu > button[aria-checked="false"] .fa-check,
+.sidebar-theme-menu > button[aria-checked="true"] .sidebar-theme-preview { display: none; }
+
+dialog.custom-appearance-dialog { box-sizing: border-box; width: min(24rem, calc(100% - 2rem)); color: var(--ui-text); }
+.custom-appearance-dialog::backdrop { background: var(--ui-scrim); }
+.custom-appearance-dialog label { display: flex; align-items: center; gap: .5rem; margin-bottom: .75rem; }
+.custom-appearance-dialog input[type="color"] { border: 1px solid var(--ui-border-control); background: var(--ui-surface-raised); cursor: pointer; }
+.custom-appearance-dialog .confirmation-actions button:hover { background: var(--ui-hover); border-color: var(--ui-border-interactive); }
+.custom-appearance-dialog :is(input, button):focus-visible { outline: 2px solid var(--ui-focus); outline-offset: 2px; }
+.custom-appearance-status:not(:empty) { position: fixed; z-index: 10; inset: auto auto 1rem 1rem; max-width: min(24rem, calc(100% - 2rem)); padding: .45rem; transform: translateY(-2.5rem); pointer-events: none; background: var(--ui-surface-raised); color: var(--ui-text); border: 1px solid var(--ui-border-control); }
+/* The footer trigger is on red, but its detached-looking surfaces use page fills. */
+:root[data-logic-palette="Hornet"] .sidebar :is(.sidebar-theme-menu, .custom-appearance-status, .custom-appearance-dialog) {
+    --ui-text: var(--hornet-page-ink);
+    --ui-border-control: var(--hornet-page-control);
+    --ui-focus: var(--hornet-page-focus);
+}
+@media (forced-colors: active) {
+    /* Preserve the meaning of the decorative preview only; keep system ink and focus for the menu. */
+    .sidebar-theme-preview { forced-color-adjust: none; border-color: ButtonText; }
+    .custom-appearance-dialog :is(input, button):focus-visible { outline-color: Highlight; }
+}

@@ -6,8 +6,8 @@ copy, follow the [Docker setup guide](readme/CONTAINERS.md).
 For a new installation, create two private folders on your machine: one for
 `appsettings.json` and one for `silksong-rando-logic.db` and the files Logic Manager
 creates. The guide shows how to tell Docker where those folders are. Get the
-starting database from the [logic documentation repository](https://github.com/zerounit-dev/silksong-rando-ap-logic)
-using the snapshot listed for your app release. If you already run Logic Manager,
+starting database from the [public logic database page](https://github.com/zerounit-dev/silksong-rando-ap-logic/blob/main/silksong-rando-logic.db).
+If you already run Logic Manager,
 back up and reuse your existing folders. **Do not replace your database.**
 
 Authentication setup, private state, upgrade and recovery instructions:
@@ -183,8 +183,7 @@ API URLs including `/api/v3/`, shared media and downloads are unchanged. The for
 server application or declare feature parity. See documentation/ROUTE_CUTOVER_CONTRACT.md.
 
 Source builds require the .NET 10 SDK. Before running a fresh source checkout,
-use the database snapshot linked in your application release notes. Verify the
-download against the listed SHA-256 and put `silksong-rando-logic.db` in your
+download `silksong-rando-logic.db` from the public database page above and put it in your
 selected Storage folder. If you already use Logic Manager, use your existing
 data folder instead. After preparing your data and settings, run:
 

@@ -1,0 +1,4 @@
+.pr-note { margin: .5rem .6rem; color: var(--ui-text-secondary); }
+.pr-image-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem; padding: .6rem; }
+.pr-image-pair figure { margin: 0; min-width: 0; }
+.pr-image-pair img { display: block; max-width: 100%; height: auto; max-height: 32768px; object-fit: contain; object-position: top left; margin-top: .35rem; }

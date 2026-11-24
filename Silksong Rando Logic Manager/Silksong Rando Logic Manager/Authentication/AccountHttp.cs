@@ -23,6 +23,7 @@ public static class AccountHttp
         });
         app.MapGet("/account/login", LoginGet).RequireRateLimiting("account-login");
         app.MapPost("/account/login", LoginPost).RequireRateLimiting("account-login");
+        app.MapPost("/api/auth/appearance", SaveAppearancePost);
         app.MapGet("/account/replace-password", ReplaceGet);
         app.MapPost("/account/replace-password", ReplacePost);
         app.MapPost("/account/logout", async (HttpContext context, AuthenticationMode mode) =>
@@ -59,12 +60,35 @@ public static class AccountHttp
         var identity = await access.CurrentAsync();
         if (identity is not null) return Results.Redirect(identity.Replacement ? ReplacementDestination(values["returnUrl"]) : LocalReturn(values["returnUrl"]));
         if (mode.Bypass) return Results.Redirect("/");
-        var principal = await accounts.AuthenticateAsync(values["username"].ToString(), values["credential"].ToString());
-        if (principal is null) { context.Response.StatusCode = 400; return Login(context, "Could not sign in. Check your username and password, or try again later.", LocalReturn(values["returnUrl"])); }
+        var login = await accounts.AuthenticateAsync(values["username"].ToString(), values["credential"].ToString());
+        if (login is not { } authenticated) { context.Response.StatusCode = 400; return Login(context, "Could not sign in. Check your username and password, or try again later.", LocalReturn(values["returnUrl"])); }
+        var (principal, color) = authenticated;
         await context.SignInAsync(IdentityConstants.ApplicationScheme, principal,
             new AuthenticationProperties { IsPersistent = true });
-        return Results.Redirect(principal.HasClaim(AccessPolicies.ReplacementClaim, "true") ? ReplacementDestination(values["returnUrl"]) : LocalReturn(values["returnUrl"]));
+        var destination = principal.HasClaim(AccessPolicies.ReplacementClaim, "true") ? ReplacementDestination(values["returnUrl"]) : LocalReturn(values["returnUrl"]);
+        return color is null ? Results.Redirect(destination) : AppearanceHandoff(color, destination);
     }
+
+    private static async Task<IResult> SaveAppearancePost(HttpContext context, AccountsService accounts)
+    {
+        NoStore(context);
+        // Require the originating workspace for every request routed here. Common
+        // admission still checks Normal access, antiforgery and any supplied header.
+        await WorkspaceBinding.RequireAsync(context, context.Request.Headers[WorkspaceBinding.Header]);
+        if (!context.Request.HasFormContentType) return Results.StatusCode(StatusCodes.Status415UnsupportedMediaType);
+        var values = await context.Request.ReadFormAsync(context.RequestAborted);
+        if (values.Count != 1 || values.Files.Count != 0 || values["color"].Count != 1 ||
+            !AccountsService.IsAppearanceColor(values["color"][0]))
+            return Results.BadRequest(new AccessDenial("invalid_color", "Choose an opaque sRGB color."));
+        await accounts.SaveAppearanceAsync(values["color"][0]!, context.RequestAborted);
+        return Results.NoContent();
+    }
+
+    private static IResult AppearanceHandoff(string color, string destination) => Results.Content(
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Signed in | Silksong Logic Manager</title>" +
+        "<script data-logic-login-color=\"" + E(color) + "\" data-logic-login-destination=\"" + E(destination) + "\">" +
+        EmbeddedPageAsset("AppearanceResolver") + "</script></head><body><main><h1>Signed in</h1><p><a href=\"" + E(destination) +
+        "\">Continue</a></p></main></body></html>", "text/html; charset=utf-8");
 
     private static async Task<IResult> ReplaceGet(HttpContext context, LiveAccess access)
     {
@@ -256,7 +280,8 @@ public static class AccountHttp
         button.primary{background:var(--ui-primary);color:var(--ui-on-primary);border-color:var(--ui-primary)}
         button.primary:hover:not(:disabled){background:var(--ui-primary-hover);color:var(--ui-on-primary)}
         button.danger{border-color:var(--appearance-danger,#97645a);color:var(--appearance-danger,#783b32)}
-        button.danger:hover:not(:disabled){border-color:var(--appearance-danger,#783b32);background:var(--appearance-danger-bg,#f2e6e1)}
+        button.danger:hover:not(:disabled){border-color:var(--appearance-danger-on-fill, var(--appearance-danger,#783b32));background:var(--appearance-danger-bg,#f2e6e1)}
+        :root[data-logic-palette="Hero"] button.danger:hover:not(:disabled){color:var(--appearance-danger-on-fill)}
         .credential{border:2px solid var(--appearance-control,#575650);background:var(--ui-surface);padding:1rem;margin:1rem 0}
         .credential h2{margin-top:0}
         label{display:block;margin:.6rem 0}

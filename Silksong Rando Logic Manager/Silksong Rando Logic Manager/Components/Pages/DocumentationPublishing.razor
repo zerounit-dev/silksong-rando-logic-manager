@@ -11,7 +11,7 @@
 @inject IJSRuntime JS
 
 <PageTitle>Documentation publishing | Silksong Logic Manager</PageTitle>
-<main class="publishing-tool tools-body">
+<main @ref="reviewHost" class="publishing-tool tools-body">
     <h1 class="tool-title">documentation publishing</h1>
     @if (view is null && Diagnostics.ErrorDetails is { } initialError)
     {
@@ -21,7 +21,7 @@
     {
         <p class="publishing-context tool-metadata">@view.Repository · @view.Branch</p>
         <div class="publishing-activity">
-            <span>Last recorded room edit: @(latestActivity is null ? "Loading…" : !latestActivity.Available ? "History unavailable." : latestActivity.RecordedUtc is { } last ? ActivityTime(last) : "No recorded room edits.")</span>
+            <span>Last recorded room edit: @(latestActivity is null ? "Loading…" : !latestActivity.Available ? "History unavailable." : latestActivity.RecordedUtc is { } last ? (latestLocalTime ?? ActivityUtcTime(last)) : "No recorded room edits.")</span>
             <button @ref="recentLauncher" class="tool-action" type="button" aria-haspopup="dialog" @onclick="OpenRecentEdits">recent edits</button>
         </div>
         <section class="publishing-card" aria-label="Preparation">
@@ -33,7 +33,7 @@
             <p class="tool-progress" role="status" aria-live="polite">
                 @if (EffectiveBusy)
                 {
-                    <span><i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i> @(view.Busy ? "Publishing operation in progress." : AdmissionStatus)</span><br />
+                    <span><i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i> @(view.Phase == "Restoring" ? "Restoring publishing review." : view.Busy ? "Publishing operation in progress." : AdmissionStatus)</span><br />
                 }
                 @if (view.Progress is { } progress)
                 {
@@ -72,27 +72,59 @@
                 <label class="tool-label" for="publishing-message">Commit message</label>
                 <textarea class="tool-control" id="publishing-message" @bind="message" disabled="@EffectiveBusy" rows="3"></textarea>
                 <button class="tool-action" type="button" disabled="@(EffectiveBusy || view.Changes.Count == 0 || !view.CredentialsReady || string.IsNullOrWhiteSpace(message))" aria-busy="@((ActiveCommand == PublishingCommand.Commit).ToString().ToLowerInvariant())" @onclick="Commit"><i class="@CommandIcon(PublishingCommand.Commit, "fa-upload")" aria-hidden="true"></i> commit and push</button>
-                @foreach (var group in view.Changes.GroupBy(x => x.Group))
+                @if (!EffectiveBusy && view.Review is { } review)
                 {
-                    <section class="publishing-review-group">
-                        <h3>@group.Key</h3>
-                        @foreach (var change in group)
+                    var epoch = view.ReviewEpoch;
+                    var layout = ReviewLayout(review, epoch);
+                    <div @key="(review.Generation, epoch)" class="publishing-review-group" data-review-root="@layoutRevision"
+                         data-review-total="@(layout.Total)"
+                         data-review-width-owners="@(string.Join(' ', openRooms.Values.Where(x => x.Room is not null).Select(x => x.WidthOwner)))">
+                        @if (layout.Banded)
                         {
-                            <details @key="change.Path">
-                                <summary>@change.Change · @change.Path · @change.BeforeBytes → @change.AfterBytes bytes</summary>
-                                @if (change.Kind == "Image" && change.Change != "Removed")
+                            <div class="publishing-review-band" data-review-band-limit="@PublishingReviewLayout.BandHeight" style="height:@(initialBandHeight)px">
+                                @if (bandWindow is { } window)
                                 {
-                                    <button class="tool-action" type="button" disabled="@EffectiveBusy" @onclick="() => Image(change.Path)">preview candidate image</button>
-                                    @if (previews.TryGetValue(change.Path, out var preview)) { <img src="@preview" alt="Candidate @change.Path" /> }
+                                    <div class="publishing-review-window" data-review-origin="@window.Origin" data-review-first-y="@window.First" data-review-last-y="@window.Last">
+                                        @foreach (var slice in window.Slices)
+                                        {
+                                            <div @key="slice.Span.Key" class="publishing-review-slice" style="top:@(slice.Start - window.Origin)px"
+                                                 data-review-span="@slice.Span.Key" data-review-start="@slice.Start" data-review-first="@slice.First"
+                                                 data-review-measure="@(slice.Span.Rows is null ? slice.Span.Key : null)">
+                                                @slice.Body
+                                            </div>
+                                        }
+                                    </div>
                                 }
-                                else if (change.Path.EndsWith(".md") || change.Path.EndsWith(".json"))
-                                {
-                                    <button class="tool-action" type="button" disabled="@EffectiveBusy" @onclick="() => Diff(change.Path)">show text diff</button>
-                                    @if (diffs.TryGetValue(change.Path, out var diff)) { <pre>@diff</pre> }
-                                }
-                            </details>
+                            </div>
+                            <div hidden class="publishing-review-scrollbar publishing-review-scrollbar-y" role="scrollbar" aria-label="Publication review position"
+                                 aria-controls="publishing-scroll-surface" aria-orientation="vertical" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" tabindex="0"><span></span></div>
                         }
-                    </section>
+                        else
+                        {
+                            @foreach (var zone in review.Zones)
+                            {
+                                <div @key="zone.Name" class="publishing-review-zone">
+                                    @ZoneToggle(review, epoch, zone)
+                                    @if (openZones.Contains(zone.Name))
+                                    {
+                                        @foreach (var room in zone.Rooms) { @RoomDisclosure(review, epoch, room, layout) }
+                                    }
+                                </div>
+                            }
+                            @if (review.Publication is { } publication) { @RoomDisclosure(review, epoch, publication, layout) }
+                            @if (review.Unmapped is { } unmapped) { @RoomDisclosure(review, epoch, unmapped, layout) }
+                        }
+                    </div>
+                }
+                else if (!EffectiveBusy && view.ReviewError is { } problem)
+                {
+                    <p class="publishing-error" role="alert">@problem</p>
+                    <ul class="publishing-review-inventory">
+                    @foreach (var change in view.Changes)
+                    {
+                        <li>@change.Change · @change.Path</li>
+                    }
+                    </ul>
                 }
             </section>
         }
@@ -107,9 +139,10 @@
             <table class="publishing-activity-table">
                 <thead><tr><th scope="col">User</th><th scope="col">Room name</th><th scope="col">Timestamp</th></tr></thead>
                 <tbody>
-                    @foreach (var row in recentActivity.Rows)
+                    @for (var index = 0; index < recentActivity.Rows.Count; index++)
                     {
-                        <tr class="@(row.WithinLastHour ? "publishing-activity-hour" : null)"><td>@row.User</td><td>@row.RoomName</td><td>@ActivityTime(row.RecordedUtc)</td></tr>
+                        var row = recentActivity.Rows[index];
+                        <tr class="@(row.WithinLastHour ? "publishing-activity-hour" : null)"><td>@row.User</td><td>@row.RoomName</td><td>@(recentLocalTimes?[index] ?? ActivityUtcTime(row.RecordedUtc))</td></tr>
                     }
                 </tbody>
             </table>
@@ -128,7 +161,76 @@
     private readonly CancellationTokenSource activityLifetime = new();
     private ElementReference recentDialog, recentLauncher;
     private IJSObjectReference? activityModule, activityDialogOwner;
-    private static string ActivityTime(DateTime utc) => utc.ToString("yyyy-MM-dd HH:mm 'UTC'", System.Globalization.CultureInfo.InvariantCulture);
+    private Task<IJSObjectReference?>? activityModuleImport;
+    private string? latestLocalTime;
+    private string?[]? recentLocalTimes;
+    private bool latestTimeRequested;
+    private long recentTimeRequested;
+    private static string ActivityUtcTime(DateTime utc) => utc.ToString("yyyy-MM-dd HH:mm 'UTC'", System.Globalization.CultureInfo.InvariantCulture);
+    private static long ActivityUnixMilliseconds(DateTime utc) => new DateTimeOffset(utc.Ticks, TimeSpan.Zero).ToUnixTimeMilliseconds();
+
+    private async Task<IJSObjectReference?> GetActivityModule()
+    {
+        if (disposed || activityModule is not null) return activityModule;
+        var pending = activityModuleImport ??= ImportActivityModule();
+        try { return await pending; }
+        finally { if (ReferenceEquals(activityModuleImport, pending)) activityModuleImport = null; }
+    }
+
+    private async Task<IJSObjectReference?> ImportActivityModule()
+    {
+        var imported = await JS.InvokeAsync<IJSObjectReference>("import", "./publishing-activity.js");
+        if (disposed) { await imported.DisposeAsync(); return null; }
+        return activityModule = imported;
+    }
+
+    private async Task LocalizeActivityTimesAfterRender()
+    {
+        if (disposed || view is null) return;
+        DateTime? latest = !latestTimeRequested && latestActivity is { Available: true } ? latestActivity.RecordedUtc : null;
+        var read = activityRead;
+        var rows = read != recentTimeRequested && recentActivity is { Available: true } ? recentActivity.Rows : null;
+        if (latest is null && (rows is null || rows.Count == 0)) return;
+
+        var instants = new List<long>();
+        if (latest is { } last)
+        {
+            latestTimeRequested = true;
+            instants.Add(ActivityUnixMilliseconds(last));
+        }
+        if (rows is { Count: > 0 })
+        {
+            recentTimeRequested = read;
+            foreach (var row in rows) instants.Add(ActivityUnixMilliseconds(row.RecordedUtc));
+        }
+        try
+        {
+            var module = await GetActivityModule();
+            if (disposed || module is null) return;
+            var labels = await module.InvokeAsync<string?[]>("formatTimes", activityLifetime.Token, (object)instants, latest is not null);
+            if (disposed || labels?.Length != instants.Count) return;
+
+            var changed = false;
+            if (latest is not null && labels[0] is { } label)
+            {
+                latestLocalTime = label;
+                changed = true;
+            }
+            // Rows are in read order. Never apply labels from a closed, superseded open to a new read.
+            if (rows is { Count: > 0 } && read == activityRead)
+            {
+                recentLocalTimes = latest is null ? labels : labels[1..];
+                changed = true;
+            }
+            if (changed) StateHasChanged();
+        }
+        catch (OperationCanceledException) when (activityLifetime.IsCancellationRequested) { }
+        catch (JSDisconnectedException) { }
+        catch (Exception exception)
+        {
+            try { Logger.LogWarning(exception, "Browser publisher activity time formatting unavailable; using UTC."); } catch { }
+        }
+    }
 
     private async Task LoadLatestActivity()
     {
@@ -144,7 +246,7 @@
     {
         if (disposed || loadingActivity || openActivityPending || initializingActivityDialog) return;
         var read = ++activityRead;
-        recentActivity = null; loadingActivity = true; openActivityPending = true;
+        recentActivity = null; recentLocalTimes = null; loadingActivity = true; openActivityPending = true;
         StateHasChanged();
         try
         {
@@ -165,15 +267,11 @@
         initializingActivityDialog = true;
         try
         {
-            if (activityModule is null)
-            {
-                var imported = await JS.InvokeAsync<IJSObjectReference>("import", "./publishing-activity.js");
-                if (disposed) { await imported.DisposeAsync(); return; }
-                activityModule = imported;
-            }
+            var module = await GetActivityModule();
+            if (disposed || module is null) return;
             if (activityDialogOwner is null)
             {
-                var created = await activityModule.InvokeAsync<IJSObjectReference>("create", recentDialog, recentLauncher);
+                var created = await module.InvokeAsync<IJSObjectReference>("create", recentDialog, recentLauncher);
                 if (disposed) { await created.InvokeVoidAsync("dispose"); await created.DisposeAsync(); return; }
                 activityDialogOwner = created;
             }
@@ -190,8 +288,117 @@
     }
     private string message = "";
     private string? previewError;
-    private readonly Dictionary<string, string> previews = [];
-    private readonly Dictionary<string, string> diffs = [];
+    private readonly Dictionary<int, RoomDisclosureState> openRooms = [];
+    private readonly HashSet<string> openZones = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, object> openingZones = new(StringComparer.Ordinal);
+    private async Task ToggleZone(PublishingRoomReview review, long epoch, PublishingReviewZone zone)
+    {
+        bool Current() => !disposed && !EffectiveBusy && ReferenceEquals(review, view?.Review) && view?.ReviewEpoch == epoch;
+        if (!Current()) return;
+        if (openZones.Remove(zone.Name))
+        {
+            foreach (var room in zone.Rooms) openRooms.Remove(room.Id);
+            ReviewChanged();
+            return;
+        }
+        var opening = new object();
+        if (!openingZones.TryAdd(zone.Name, opening)) return;
+        try
+        {
+            if (!await Publishing.CheckReviewAsync(Access, review.Generation, epoch)) { if (Current()) await Refresh(); return; }
+            if (Current() && ReferenceEquals(openingZones.GetValueOrDefault(zone.Name), opening)) { openZones.Add(zone.Name); ReviewChanged(); }
+        }
+        catch (Silksong_Rando_Logic_Manager.Authentication.AccessDeniedException denied)
+        {
+            if (Current()) DenyReview(denied.Message);
+        }
+        catch (Exception exception)
+        {
+            if (!Current()) return;
+            Logger.LogError(exception, "Opening publishing review zone failed.");
+            Diagnostics.Show($"Opening publishing review zone failed.\n{exception}");
+        }
+        finally { if (ReferenceEquals(openingZones.GetValueOrDefault(zone.Name), opening)) openingZones.Remove(zone.Name); }
+    }
+
+    private void RetireReview()
+    {
+        openRooms.Clear(); openZones.Clear(); openingZones.Clear();
+        reviewLayout = null;
+        anchorLayouts.Clear();
+        ReviewChanged();
+    }
+    private void DenyReview(string message)
+    {
+        RetireReview();
+        view = view! with { Review = null, ReviewError = null };
+        previewError = message;
+    }
+    private sealed class RoomDisclosureState
+    {
+        internal string WidthOwner { get; } = Guid.NewGuid().ToString("N");
+        internal PublishingReviewRoom? Room { get; set; }
+        internal string? Error { get; set; }
+        internal readonly Dictionary<int, HashSet<PublishingDiffProjection.Block>> Expanded = [];
+        internal readonly Dictionary<int, PublishingDiffRows> Index = [];
+        internal readonly HashSet<(int Entry, string Side)> FailedImages = [];
+    }
+
+    private RenderFragment ZoneToggle(PublishingRoomReview review, long epoch, PublishingReviewZone zone) => @<button
+        type="button" class="tool-action publishing-zone-toggle" data-review-key="@ZoneKey(zone)"
+        aria-expanded="@(openZones.Contains(zone.Name) ? "true" : "false")" @onclick="() => ToggleZone(review, epoch, zone)">
+        <strong>@zone.Name</strong> · @zone.Rooms.Count affected @(zone.Rooms.Count == 1 ? "room" : "rooms")
+    </button>;
+
+    private RenderFragment RoomToggle(PublishingRoomReview review, long epoch, PublishingReviewRoom room) => @<button
+        type="button" class="tool-action publishing-room-toggle" data-review-key="@RoomKey(room)"
+        aria-expanded="@(openRooms.ContainsKey(room.Id) ? "true" : "false")" @onclick="() => ToggleRoom(review.Generation, epoch, room.Id)">
+        @room.Name
+        @if (room.TextCount > 0) { <text> · @room.TextCount text @(room.TextCount == 1 ? "file" : "files")</text> }
+        @if (room.ImageCount > 0) { <text> · @room.ImageCount @(room.ImageCount == 1 ? "image" : "images")</text> }
+        @if (room.OtherCount > 0) { <text> · @room.OtherCount other @(room.OtherCount == 1 ? "artifact" : "artifacts")</text> }
+    </button>;
+
+    private RenderFragment RoomDisclosure(PublishingRoomReview review, long epoch, PublishingReviewRoom room, PublishingReviewLayout layout) => @<div class="publishing-review-room" @key="room.Id">
+        @RoomToggle(review, epoch, room)
+        @if (openRooms.TryGetValue(room.Id, out var disclosure))
+        {
+            @if (disclosure.Room is { } payload)
+            {
+                <div class="pr-files">
+                    @foreach (var file in payload.Files)
+                    {
+                        var key = FileKey(file);
+                        <section class="pr-file" @key="file.Entry">
+                            @foreach (var span in layout.FileSpans(key))
+                            {
+                                @if (span.RenderRows is { } rows) { @rows(null) }
+                                else { @span.Body }
+                            }
+                        </section>
+                    }
+                </div>
+            }
+            else { @RoomStatus(room, disclosure) }
+        }
+    </div>;
+
+    private RenderFragment RoomStatus(PublishingReviewRoom room, RoomDisclosureState state) => @<div data-review-key="@(RoomKey(room) + ":status")">
+        @if (state.Error is { } error) { <p class="publishing-error" role="alert">@error</p> }
+        else { <p role="status">Opening review.</p> }
+    </div>;
+
+    private RenderFragment FileHeading(PublishingReviewFile file, string key) => @<h4 class="pr-file-heading" data-review-key="@key">
+        <span class="pr-change">@file.Change.Change</span> <code>@file.Change.Path</code>
+    </h4>;
+    private RenderFragment FileNotice(string notice, string key) => @<p class="pr-note" data-review-key="@key">@notice</p>;
+    private RenderFragment FileDetail(PublishingReviewRoom room, int fileIndex, Guid generation, long epoch, RoomDisclosureState state, string key) => @<div data-review-key="@key">
+        <PublishingReviewFileBody Room="room" FileIndex="fileIndex" Generation="generation" Epoch="epoch" Failed="state.FailedImages" />
+    </div>;
+    private RenderFragment DiffRows(PublishingReviewFile file, PublishingDiffRows rows, PublishingDiffRows.Item[]? items, string key, string widthOwner,
+        EventCallback<PublishingDiffRows.Item> reveal) => @<PublishingUnifiedDiff
+            Path="@file.Change.Path" TrackKey="@key" WidthOwner="@widthOwner" Rows="rows" Window="items" Reveal="reveal" />;
+
     private IDisposable? subscription;
     private volatile bool disposed;
     private bool refreshing, refreshPending;
@@ -218,7 +425,10 @@
     private long deliveredSequence;
     private IReadOnlyList<PublishingTiming> pendingTimings = [];
     private readonly Queue<IReadOnlyList<PublishingTiming>> pendingPreviewTimings = new();
-    protected override async Task OnAfterRenderAsync(bool firstRender)
+    protected override Task OnAfterRenderAsync(bool firstRender) =>
+        Task.WhenAll(RunPublishingAfterRender(), LocalizeActivityTimesAfterRender(), firstRender ? ObserveReviewTrack() : Task.CompletedTask);
+
+    private async Task RunPublishingAfterRender()
     {
         await OpenActivityDialogAfterRender();
         if (disposed || initializingTimings) return;
@@ -318,7 +528,7 @@
                 {
                     var next = await Publishing.ReadAsync(Access, page, deliveredOperation, deliveredSequence);
                     if (disposed) return;
-                    if (next.CandidateId != view?.CandidateId || next.Phase != "Prepared") { previews.Clear(); diffs.Clear(); }
+                    if (!ReferenceEquals(next.Review, view?.Review) || next.ReviewEpoch != view?.ReviewEpoch) RetireReview();
                     view = next;
                     // Identity comes from actual running service work, not a local
                     // click that another page's admission may have beaten.
@@ -347,6 +557,8 @@
                     // One failed drain, not one modal per overlapping request.
                     refreshPending = false;
                     if (disposed) return;
+                    RetireReview();
+                    if (view is not null) view = view with { Review = null, ReviewError = null };
                     Logger.LogError(exception, "Refreshing documentation publishing failed.");
                     Diagnostics.Show($"Refreshing documentation publishing failed.\n{exception}");
                     StateHasChanged();
@@ -384,6 +596,7 @@
     {
         if (disposed || EffectiveBusy) return;
         pendingCommand = command;
+        RetireReview();
         try
         {
             previewError = null;
@@ -407,57 +620,75 @@
             if (!disposed) StateHasChanged();
         }
     }
-    private async Task Diff(string path)
+    private bool CurrentRoom(Guid generation, long epoch, int room, RoomDisclosureState state) => !disposed && !EffectiveBusy
+        && view?.Review?.Generation == generation && view.ReviewEpoch == epoch && ReferenceEquals(openRooms.GetValueOrDefault(room), state);
+
+    private async Task ToggleRoom(Guid generation, long epoch, int room)
     {
-        if (disposed || EffectiveBusy) return;
-        var candidate = view!.CandidateId!;
+        if (disposed || EffectiveBusy || view?.Review?.Generation != generation || view.ReviewEpoch != epoch) return;
+        if (openRooms.Remove(room)) { ReviewChanged(); return; }
+        var state = new RoomDisclosureState();
+        openRooms.Add(room, state);
+        ReviewChanged();
         var timings = Publishing.CreatePreviewTimings();
-        using var caller = timings.Begin("Text preview caller (server handler)");
+        using var caller = timings.Begin("Room open to admitted review payload (server)");
+        var browserTiming = PreviewBrowserStart(timings);
         try
         {
-            await PreviewBrowserStart(timings);
-            var diff = await Publishing.ReadTextDiffAsync(Access, page, candidate, path, timings);
+            var payload = await Publishing.ReadReviewRoomAsync(Access, generation, epoch, room, timings);
+            if (!CurrentRoom(generation, epoch, room, state)) return;
+            if (payload is null) { openRooms.Remove(room); ReviewChanged(); await Refresh(); return; }
+            state.Room = payload;
+            ReviewChanged();
             caller.Complete();
-            if (disposed || view?.CandidateId != candidate || view.Phase != "Prepared") return;
-            diffs[path] = diff; previewError = null;
         }
-        catch (PublishingBlock exception) { if (!disposed && view?.CandidateId == candidate) previewError = exception.Message; }
-        catch (Exception exception)
+        catch (Exception exception) { HandleReviewError(generation, epoch, room, state, exception); }
+        finally
         {
-            if (disposed) return;
-            previewError = "The text preview failed. See the error details.";
-            Logger.LogError(exception, "Loading publishing text preview failed.");
-            Diagnostics.Show($"Loading publishing text preview failed.\n{exception}");
+            caller.Dispose();
+            if (!disposed) StateHasChanged();
+            await browserTiming;
+            await DeliverPreviewTimings(timings);
         }
-        finally { caller.Dispose(); await DeliverPreviewTimings(timings); }
     }
-    private async Task Image(string path)
+
+    private async Task<bool> AdmitWindow(Guid generation, long epoch, int room, RoomDisclosureState state)
     {
-        if (disposed || EffectiveBusy) return;
-        var candidate = view!.CandidateId!;
-        var timings = Publishing.CreatePreviewTimings();
-        using var caller = timings.Begin("Image preview caller (server handler)");
+        if (!CurrentRoom(generation, epoch, room, state)) return false;
         try
         {
-            await PreviewBrowserStart(timings);
-            var image = await Publishing.ReadImageAsync(Access, page, candidate, path, timings);
-            caller.Complete();
-            if (disposed || view?.CandidateId != candidate || view.Phase != "Prepared") return;
-            previews[path] = image; previewError = null;
+            var admitted = await Publishing.CheckReviewAsync(Access, generation, epoch);
+            if (admitted) return CurrentRoom(generation, epoch, room, state);
+            if (CurrentRoom(generation, epoch, room, state)) { openRooms.Remove(room); ReviewChanged(); await Refresh(); }
         }
-        catch (PublishingBlock exception) { if (!disposed && view?.CandidateId == candidate) previewError = exception.Message; }
         catch (Exception exception)
         {
-            if (disposed) return;
-            previewError = "The image preview failed. See the error details.";
-            Logger.LogError(exception, "Loading publishing image preview failed.");
-            Diagnostics.Show($"Loading publishing image preview failed.\n{exception}");
+            HandleReviewError(generation, epoch, room, state, exception);
+            if (!disposed) StateHasChanged();
         }
-        finally { caller.Dispose(); await DeliverPreviewTimings(timings); }
+        return false;
+    }
+
+    private void HandleReviewError(Guid generation, long epoch, int room, RoomDisclosureState state, Exception exception)
+    {
+        if (!CurrentRoom(generation, epoch, room, state)) return;
+        if (exception is Silksong_Rando_Logic_Manager.Authentication.AccessDeniedException denied)
+        {
+            DenyReview(denied.Message);
+            return;
+        }
+        state.Room = null;
+        ReviewChanged();
+        if (exception is PublishingBlock expected) { state.Error = expected.Message; return; }
+        state.Error = "The prepared room review could not be opened. See the error details.";
+        Logger.LogError(exception, "Opening publishing room review failed.");
+        Diagnostics.Show($"Opening publishing room review failed.\n{exception}");
     }
     public async ValueTask DisposeAsync()
     {
         disposed = true;
+        RetireReview();
+        await DisposeReviewTrack();
         activityLifetime.Cancel();
         if (activityDialogOwner is not null)
         {

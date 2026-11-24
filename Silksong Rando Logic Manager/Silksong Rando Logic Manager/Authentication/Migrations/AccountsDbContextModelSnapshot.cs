@@ -6,5 +6,5 @@ namespace Silksong_Rando_Logic_Manager.Authentication.Migrations;
 [DbContext(typeof(AccountsDbContext))]
 public sealed class AccountsDbContextModelSnapshot : ModelSnapshot
 {
-    protected override void BuildModel(ModelBuilder modelBuilder) => PermissionsAccountsModel.Build(modelBuilder);
+    protected override void BuildModel(ModelBuilder modelBuilder) => AppearanceAccountsModel.Build(modelBuilder);
 }

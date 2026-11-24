@@ -89,7 +89,7 @@ public sealed partial class RoomWorkspace
         {
             var kind = Kind(row); var client = row.ClientId.ToString();
             var draft = Copy(row);
-            ReadRow(draft, (field, current) => frame.TryGetValue(new(kind, client, field), out var value) ? value.Value : current);
+            ReadRow(draft, (field, current) => frame.TryGetValue(new(kind, client, field), out var value) ? ReadRowField(value, current) : current);
             if (row.EntityId is null ? Meaningful(draft) : !Fields(row).SequenceEqual(Fields(draft))) return true;
         }
         return false;
@@ -114,9 +114,9 @@ public sealed partial class RoomWorkspace
         if (item is not null || !CanRetainProjection(native)) Install(Stage(Queue.Confirmed, Queue.PendingIntent, native, Queue.Blocked));
         return item;
     }
-    public RoomQueuedOperation? AcceptRow(string kind, Guid clientId, ImmutableArray<RoomNativeField> native)
-        => Accept(() => AcceptRowCore(kind, clientId, native));
-    private RoomQueuedOperation? AcceptRowCore(string kind, Guid clientId, ImmutableArray<RoomNativeField> native)
+    public RoomQueuedOperation? AcceptRow(string kind, Guid clientId, ImmutableArray<RoomNativeField> native, IJSInProcessObjectReference nativeOwner)
+        => Accept(() => AcceptRowCore(kind, clientId, native, nativeOwner));
+    private RoomQueuedOperation? AcceptRowCore(string kind, Guid clientId, ImmutableArray<RoomNativeField> native, IJSInProcessObjectReference nativeOwner)
     {
         LastBoundaryAccepted = true; BoundaryFeedback = null;
         if (AuthoringBlocked) return null;
@@ -125,7 +125,25 @@ public sealed partial class RoomWorkspace
         if (original.IsArchived) return null;
         var submitted = Copy(original);
         var map = native.Where(x => x.Kind == kind && x.Client == clientId.ToString()).ToDictionary(x => x.Field);
-        ReadRow(submitted, (field, current) => map.TryGetValue(field, out var value) ? value.Value : current);
+        ReadRow(submitted, (field, current) => map.TryGetValue(field, out var value) ? ReadRowField(value, current) : current);
+        var alias = map.GetValueOrDefault("alias");
+        string? committedAlias = null;
+        // The native input's display is not an edit. Only a new, settled Alias
+        // generation can replace the exact projected origin in a whole-row save.
+        if (alias is not null && HasNewAliasEdit(alias))
+        {
+            switch (original, submitted)
+            {
+                case (RoomTransitionRow a, RoomTransitionRow b):
+                    committedAlias = RoomAuthoredAlias.Commit(b.Values.Alias, a.EntityId is null ? null : a.Values.Alias);
+                    b.Values = b.Values with { Alias = committedAlias };
+                    break;
+                case (RoomConnectionRow a, RoomConnectionRow b):
+                    committedAlias = RoomAuthoredAlias.Commit(b.Values.Alias, a.EntityId is null ? null : a.Values.Alias);
+                    b.Values = b.Values with { Alias = committedAlias };
+                    break;
+            }
+        }
         if (original is RoomCheckRow { EntityId: null } && Meaningful(submitted))
         {
             var competing = Queue.PendingIntent.Any(x => x.Operation is CreateRoomCheck)
@@ -159,11 +177,25 @@ public sealed partial class RoomWorkspace
         if (item is not null && original is RoomCheckRow) checkOperationSections.Add(item.OperationId, Section(original));
         if (original.EntityId is null && operation is not null)
         {
-            creationFields.Add(item!.OperationId, map.Values.ToImmutableArray());
+            creationFields.Add(item!.OperationId, map.Values.Where(CanAcceptGeneration).ToImmutableArray());
             var section = Section(original);
             if (!revertedCreations.Remove(original.ClientId)) { tails[section] = latent[section]; latent[section] = Guid.NewGuid(); }
         }
         AcceptGenerations(map.Values);
+        // Even a trim-to-baseline no-op must display the accepted Alias. Use the
+        // existing native installer with a fresh complete frame (it owns retirement
+        // too), changing only the exact non-composing Alias generation we accepted.
+        if (committedAlias is not null && alias is not null && alias.Value != committedAlias)
+        {
+            var snapshot = nativeOwner.Invoke<RoomNativeField[]>("snapshotRoomNative").ToImmutableArray();
+            ValidateNative(snapshot);
+            var index = snapshot.IndexOf(alias);
+            if (index >= 0)
+                snapshot = nativeOwner.Invoke<RoomNativeField[]>("installRoomNative",
+                    new object?[] { snapshot.SetItem(index, alias with { Value = committedAlias }).ToArray(), false }).ToImmutableArray();
+            Observe(snapshot);
+            native = snapshot;
+        }
         if (item is not null || !CanRetainProjection(native)) Install(Stage(Queue.Confirmed, Queue.PendingIntent, native, Queue.Blocked));
         return item;
     }
@@ -184,7 +216,8 @@ public sealed partial class RoomWorkspace
         if (row is null || AuthoringBlocked) return;
         var draft = Copy(row);
         var fields = live.Where(x => x.Kind == kind && x.Client == clientId.ToString()).ToDictionary(x => x.Field);
-        ReadRow(draft, (field, current) => fields.TryGetValue(field, out var value) ? value.Value : current);
+        if (fields.Values.Any(x => !CanAcceptGeneration(x))) return; // Do not retire an IME-owned Alias tail.
+        ReadRow(draft, (field, current) => fields.TryGetValue(field, out var value) ? ReadRowField(value, current) : current);
         if (Meaningful(draft)) return;
         var section = Section(row);
         if (!revertedCreations.Remove(clientId)) { tails[section] = latent[section]; latent[section] = Guid.NewGuid(); }
@@ -277,9 +310,13 @@ public sealed partial class RoomWorkspace
             throw;
         }
     }
+    private static bool IsAuthoredAlias(RoomNativeField field) => field.Field == "alias" && field.Kind is ("transition" or "connection");
+    private static bool CanAcceptGeneration(RoomNativeField field) => !IsAuthoredAlias(field) || !field.Composing;
+    private bool HasNewAliasEdit(RoomNativeField field) => !field.Composing && field.Generation > accepted.GetValueOrDefault(Key(field));
+    private string ReadRowField(RoomNativeField field, string current) => !IsAuthoredAlias(field) || HasNewAliasEdit(field) ? field.Value : current;
     private void AcceptGenerations(IEnumerable<RoomNativeField> fields)
     {
-        foreach (var field in fields) accepted[Key(field)] = field.Generation;
+        foreach (var field in fields.Where(CanAcceptGeneration)) accepted[Key(field)] = field.Generation;
     }
     // This is deliberately stronger than "no operation": incomplete tails, restored
     // creators, retained missing rows and queued projection work use the full path.
@@ -295,7 +332,7 @@ public sealed partial class RoomWorkspace
         foreach (var row in rows)
         {
             var kind = Kind(row); var client = row.ClientId.ToString(); var draft = Copy(row);
-            ReadRow(draft, (field, current) => frame.TryGetValue(new(kind, client, field), out var value) ? value.Value : current);
+            ReadRow(draft, (field, current) => frame.TryGetValue(new(kind, client, field), out var value) ? ReadRowField(value, current) : current);
             if (!Fields(row).SequenceEqual(Fields(draft))) return false;
         }
         return true;

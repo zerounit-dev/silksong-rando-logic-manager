@@ -47,7 +47,7 @@ public partial class RoomWorkspaceEditor
         if (externalRoomDeleted) return false;
         if (workspace.Queue.Confirmed.Document is null && !workspace.Queue.HasPendingIntent && !workspace.Queue.RequestOutstanding
             && !workspace.Queue.RecoveryRequired && !workspace.Queue.TrackingUnavailable) return false;
-        if (localModal is not null || guide is not null || guideLoading || imageDraft is not null || imageBusy || roomLinksOpen || roomLinksOpening || scenePlacement is not null || editingComments || draining || controlPending || !browserReady || nativeOwner is null) return true;
+        if (historyOpening is not null || localModal is not null || guide is not null || guideLoading || imageDraft is not null || imageBusy || roomLinksOpen || roomLinksOpening || scenePlacement is not null || editingComments || draining || controlPending || !browserReady || nativeOwner is null) return true;
         try
         {
             ObserveShellOperation();

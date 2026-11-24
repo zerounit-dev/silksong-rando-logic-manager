@@ -138,11 +138,12 @@ public partial class RoomWorkspaceEditor
                 }
                 finally { browserSetupActive = false; }
             }
+            RestoreHistoryReceiverLossFocus();
             if (focusComments && nativeOwner is not null) { focusComments = false; nativeOwner.InvokeVoid("focus", "room-comments-editor"); }
             if (workspace.IsAdmitted && pendingBoundaryFocus is { } focus && nativeOwner is not null && !Shell.GeneralErrorOpen)
             {
                 pendingBoundaryFocus = null;
-                if (localModal is null && guide is null && workspace.Queue.Blocked is null && !workspace.Queue.TrackingUnavailable)
+                if (historyOpening is null && localModal is null && guide is null && workspace.Queue.Blocked is null && !workspace.Queue.TrackingUnavailable)
                 {
                     var focused = nativeOwner.Invoke<bool>("focusRoomBoundary", focus.Id, focus.Interaction);
                     if (!focused && returnFocusFallback is { } fallback && fallback.Primary == focus.Id && fallback.Interaction == focus.Interaction)
@@ -158,6 +159,7 @@ public partial class RoomWorkspaceEditor
             {
                 if (Shell.FocusRoomDialog("v3-room-local-dialog")) localModalPending = false;
             }
+            FocusHistory();
             if (imageDraft is not null && imageFocusPending && !Shell.GeneralErrorOpen)
             { if (Shell.FocusRoomDialog("v3-room-image-dialog")) imageFocusPending = false; }
             if (imageReleasePending && !draining && !controlPending) await ReleaseImageAsync();
@@ -253,7 +255,7 @@ public partial class RoomWorkspaceEditor
                 // Native control blur is deliberately a no-op; change alone owns
                 // select/checkbox saves. Text blur/Arrow freezes the complete row.
                 if (edit.Trigger == RoomNativeTrigger.ControlBlur) return Task.FromResult(true);
-                var operation = workspace.AcceptRow(kind, edit.ClientId, boundary.Fields);
+                var operation = workspace.AcceptRow(kind, edit.ClientId, boundary.Fields, nativeOwner);
                 if (operation is not null)
                 {
                     var field = edit.Column switch
@@ -489,6 +491,7 @@ public partial class RoomWorkspaceEditor
     }
     private Task RowActionCoreAsync(RoomRowActionIntent intent)
     {
+        if (intent.Action == RoomRowAction.History) return OpenHistoryAsync(intent);
         // Durable lifecycle buttons use the same room queue as native boundaries.
         if (intent.Action == RoomRowAction.FollowInverse ? InspectionBlocked || nativeOwner is null : AuthoringBlocked) return Task.CompletedTask;
         if (intent.Action is not (RoomRowAction.Annotation or RoomRowAction.FollowInverse) && !TransferKeyboardBeforeAction()) return Task.CompletedTask;

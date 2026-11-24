@@ -12,6 +12,7 @@ export function mount(root, dotnet, owner, externalModal = null) {
     const heightHandle = root.querySelector('[data-audit-image-height]');
     const output = root.closest('.audit-output');
     let box = fit.slice(), scale = 1, gesture = null, heightDrag = null, disposed = false, failed = false;
+    let ringResize;
     let imageHeight = svg ? svg.getBoundingClientRect().height : 330;
     const shown = { subroom: true, exit: true, check: true };
     const listeners = [];
@@ -37,7 +38,7 @@ export function mount(root, dotnet, owner, externalModal = null) {
     }
     // Native dialog commands own opening, focus containment, Escape/Close and focus return,
     // even without geometry or a mounted camera. The existing owner only cancels gestures.
-    // Only dialog membership/open changes are observed. No layer or viewport observation.
+    // This observer tracks only dialog membership and open state.
     const modals = new MutationObserver(records => {
         if (!current()) return;
         if (records.some(record => record.type === 'attributes' &&
@@ -48,10 +49,24 @@ export function mount(root, dotnet, owner, externalModal = null) {
         attributeFilter: ['open', 'data-audit-modal'], attributeOldValue: true });
     if (externalModal instanceof HTMLDialogElement)
         modals.observe(externalModal, { attributes: true, attributeFilter: ['open'], attributeOldValue: true });
-    function paint() {
+    function updateRingOutset() {
+        if (!svg || !current()) return;
+        let outset;
+        try {
+            const matrix = svg.getScreenCTM();
+            // This root viewBox (default xMidYMid meet) scales uniformly.
+            if (matrix) outset = 3 / Math.hypot(matrix.a, matrix.b);
+        } catch { /* Projection for decoration only. */ }
+        try {
+            if (Number.isFinite(outset) && outset > 0) svg.style.setProperty('--audit-ring-outset', `${outset}px`);
+            else svg.style.removeProperty('--audit-ring-outset');
+        } catch { /* Never disable the camera for a decoration failure. */ }
+    }
+    function paint(projectionChanged = false) {
         if (!svg) return;
         if (!box.every(Number.isFinite) || box[2] <= 0 || box[3] <= 0) throw new Error('Nonfinite audit camera.');
         svg.setAttribute('viewBox', box.join(' '));
+        if (projectionChanged) updateRingOutset();
     }
     function point(x, y) {
         const matrix = svg.getScreenCTM();
@@ -112,7 +127,7 @@ export function mount(root, dotnet, owner, externalModal = null) {
         const next = Math.min(32, Math.max(1 / 8, scale * factor));
         const ratio = scale / next, anchor = point(x, y);
         box = [anchor.x + (box[0] - anchor.x) * ratio, anchor.y + (box[1] - anchor.y) * ratio, box[2] * ratio, box[3] * ratio];
-        scale = next; paint();
+        scale = next; paint(ratio !== 1);
     }
     const category = kind => kind === 'connection' || kind === 'exit' ? 'exit' : kind === 'subroom' ? 'subroom' : kind === 'check' ? 'check' : null;
     function visibleHit(hit) {
@@ -196,7 +211,7 @@ export function mount(root, dotnet, owner, externalModal = null) {
     for (const button of root.querySelectorAll('[data-camera]')) listen(button, 'click', () => {
         if (!svg || button.disabled) return;
         release();
-        if (button.dataset.camera === 'fit') { box = fit.slice(); scale = 1; paint(); }
+        if (button.dataset.camera === 'fit') { box = fit.slice(); scale = 1; paint(true); }
         else { const r = svg.getBoundingClientRect(); zoom(button.dataset.camera === 'in' ? 1.25 : .8, r.x + r.width / 2, r.y + r.height / 2); }
     });
     for (const button of root.querySelectorAll('[data-audit-layer-toggle]')) listen(button, 'click', () => {
@@ -215,8 +230,14 @@ export function mount(root, dotnet, owner, externalModal = null) {
         try { reconcile(); if (modalOpen()) release(); if (!heightDrag) imageHeight = applyHeight(imageHeight); } catch (error) { fail(error); }
     }, dispose() {
         if (disposed) return;
+        ringResize?.disconnect();
         disposed = true; modals.disconnect(); release(); listeners.splice(0).forEach(remove => remove());
         if (owners.get(root) === api) owners.delete(root);
     } };
-    owners.set(root, api); reconcile(); paint(); imageHeight = applyHeight(imageHeight); return api;
+    owners.set(root, api); reconcile(); paint(true); imageHeight = applyHeight(imageHeight);
+    if (svg) try {
+        ringResize = new ResizeObserver(updateRingOutset);
+        ringResize.observe(svg);
+    } catch { /* Observation is only for the paint-only ring. */ }
+    return api;
 }

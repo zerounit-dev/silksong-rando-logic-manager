@@ -11,6 +11,7 @@ public static partial class V3CatalogueHttp
         api.MapPost("/history/record", (HttpContext context) => HistoryReadAsync(context, "record")).RequireAuthorization(AccessPolicies.Normal);
         api.MapPost("/history/time", (HttpContext context) => HistoryReadAsync(context, "time")).RequireAuthorization(AccessPolicies.Normal);
         api.MapPost("/history/diff", (HttpContext context) => HistoryReadAsync(context, "diff")).RequireAuthorization(AccessPolicies.Normal);
+        api.MapPost("/history/editor-record", EditorHistoryReadAsync).RequireAuthorization(AccessPolicies.Normal);
     }
 
     private static long HistoryRowId(string? text)

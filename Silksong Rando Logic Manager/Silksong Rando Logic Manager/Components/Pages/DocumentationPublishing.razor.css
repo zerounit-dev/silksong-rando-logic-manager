@@ -1,3 +1,7 @@
+/* Border-box width includes the ordinary Tools horizontal padding. The
+   unchanged .tools-content scroll host pans this canvas below its minimum. */
+main.tools-body.publishing-tool { min-width: 1050px; max-width: none; }
+main.tools-body.publishing-tool { padding-inline-end: calc(1.35rem + var(--publishing-scroll-inset, 0px)); }
 .publishing-context { overflow-wrap: anywhere; }
 .publishing-card { margin: 1rem 0; }
 .publishing-card h2 { margin-top: 0; }
@@ -9,12 +13,29 @@
 .publishing-tool button i { margin-right: .18rem; }
 .publishing-error { color: var(--danger-color, #b42332); overflow-wrap: anywhere; }
 p.publishing-error { white-space: pre-wrap; }
-.publishing-review-group { margin: 1rem 0; }
-.publishing-review-group details { border-top: 1px solid var(--border-color, #c8c8c8); padding: .65rem 0; }
-.publishing-review-group summary { cursor: pointer; overflow-wrap: anywhere; }
-.publishing-review-group pre { max-height: 32rem; overflow: auto; white-space: pre; font-size: .85rem; }
-.publishing-review-group img { display: block; max-width: 100%; margin-top: .6rem; }
-.publishing-card textarea { display: block; width: 100%; box-sizing: border-box; margin: .4rem 0 .75rem; }
+.publishing-review-group { position: relative; margin: 1rem 0; }
+.publishing-review-zone { border-top: 1px solid var(--ui-border-control); padding: .45rem 0; }
+.publishing-review-room { margin: .35rem 0; min-width: 0; }
+.publishing-review-zone > .publishing-review-room { margin-inline-start: min(1.2rem, 3vw); }
+.publishing-room-toggle, .publishing-zone-toggle { text-align: start; max-width: 100%; overflow-wrap: anywhere; }
+.publishing-room-toggle::before, .publishing-zone-toggle::before { content: '▸'; margin-inline-end: .4em; }
+.publishing-room-toggle[aria-expanded="true"]::before, .publishing-zone-toggle[aria-expanded="true"]::before { content: '▾'; }
+.publishing-review-inventory { overflow-wrap: anywhere; }
+.pr-files { min-width: 0; padding: .35rem 0 .65rem; }
+.pr-file { border: 1px solid var(--ui-border-control); margin: .7rem 0; min-width: 0; }
+.pr-file-heading { margin: 0; padding: .45rem .6rem; background: var(--ui-hover); font-size: .8rem; overflow-wrap: anywhere; }
+.pr-change { display: inline-block; margin-right: .35rem; }
+.pr-note { margin: .5rem .6rem; color: var(--ui-text-secondary); }
+.publishing-review-band { position: relative; overflow-y: clip; overflow-x: visible; overflow-anchor: none; }
+.publishing-review-window { position: absolute; inset-inline: 0; top: 0; visibility: hidden; --review-strip-visibility: hidden; }
+.publishing-review-window[data-review-active] { visibility: visible; --review-strip-visibility: visible; }
+.publishing-review-slice { position: absolute; inset-inline: 0; display: flow-root; min-height: 22px; }
+.publishing-review-slice[data-review-measure^="z:"] { border-top: 1px solid var(--ui-border-control); padding-block: .45rem; }
+.publishing-review-slice[data-review-measure^="r:"] { padding-block: .35rem; }
+.publishing-review-scrollbar { position: fixed; z-index: 2; background: var(--ui-surface-muted); touch-action: none; user-select: none; }
+.publishing-review-scrollbar > span { position: absolute; inset-inline: 2px; border: 1px solid var(--ui-border-interactive); border-radius: .3rem; background: var(--ui-text-secondary); }
+.publishing-review-scrollbar:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: -2px; }
+.publishing-card textarea { display: block; width: 100%; max-width: 42rem; box-sizing: border-box; margin: .4rem 0 .75rem; }
 .publishing-activity { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .75rem; overflow-wrap: anywhere; }
 .publishing-activity-modal { box-sizing: border-box; width: min(48rem, calc(100vw - 2rem)); max-height: calc(100dvh - 2rem); color: inherit; }
 .publishing-activity-modal::backdrop { background: rgb(23 23 23 / 22%); }

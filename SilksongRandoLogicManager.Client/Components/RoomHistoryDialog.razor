@@ -1,0 +1,208 @@
+@using SilksongRandoLogicManager.Contracts
+@using Microsoft.AspNetCore.Components.Web
+
+<div class="confirmation-backdrop v2-page-modal-backdrop" role="presentation" @onclick="Close">
+    <section id="v3-room-history-dialog" data-room-history-focus-key="@FocusKey" class="confirmation-modal v2-page-modal history-dialog" role="dialog" aria-modal="true"
+             aria-labelledby="v3-room-history-title" tabindex="-1" @onclick:stopPropagation="true" @onkeydown="KeyDownAsync">
+        <span class="history-sr-only" tabindex="0" @onfocus="FocusEnd"></span>
+        <div class="history-title">
+            <h2 id="v3-room-history-title" title="@Name">@Kind · @Name</h2>
+            <button id="v3-room-history-close" type="button" class="compact-control" aria-label="Close history" title="Close history" @onclick="Close"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+        </div>
+        @if (Unavailable)
+        {
+            <p role="status">History unavailable</p>
+        }
+        else if (Revisions is null)
+        {
+            <div role="status" aria-label="Loading history"><i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i></div>
+        }
+        else if (Revisions.Count == 0)
+        {
+            <p role="status">No recorded history</p>
+        }
+        else
+        {
+            <div class="history-controls">
+                <div class="history-view-options">
+                    @if (Family != EditorHistoryFamily.Room)
+                    {
+                        <label class="history-details-option"><input type="checkbox" checked="@showDetails" @onchange="ToggleDetails" />more details</label>
+                    }
+                    <div class="history-mode-options" role="radiogroup" aria-label="History text display">
+                        <label><input type="radio" name="v3-room-history-text-mode" value="diffs" checked="@showDiffs" @onchange="() => showDiffs = true" /><span class="history-mode-face"><span class="history-mode-text">Diffs</span></span></label>
+                        <label><input type="radio" name="v3-room-history-text-mode" value="full" checked="@(!showDiffs)" @onchange="() => showDiffs = false" /><span class="history-mode-face"><span class="history-mode-text">Full values</span></span></label>
+                    </div>
+                </div>
+                @if (groups.Any(g => g.Members.Count > 1))
+                {
+                    <button type="button" class="compact-control" @onclick="ToggleAll">@(AllExpanded ? "Collapse all" : "Expand all")</button>
+                }
+            </div>
+            <div id="v3-room-history-viewport" class="history-viewport" tabindex="0" role="region" aria-label="Recorded history">
+                <table class="@(Columns.Any(column => column.InlineDiff) ? "history-with-prose" : null)">
+                    <thead><tr>
+                        <th scope="col" class="history-compact history-gutter"><span class="history-track"><span class="history-sr-only">Revisions</span></span></th>
+                        @foreach (var column in Columns)
+                        {
+                            @if (column.HeadingGlyph is { } glyph)
+                            {
+                                <th scope="col" class="history-compact @column.Class" style="@column.TrackStyle" aria-label="@column.Label" title="@column.Label"><span class="history-track"><i class="fa-solid @glyph" aria-hidden="true"></i></span></th>
+                            }
+                            else if (column == GameId)
+                            {
+                                <th scope="col" class="history-compact" style="@column.TrackStyle"><span class="history-track"><span class="history-id-heading">In-game</span><br />ID</span></th>
+                            }
+                            else
+                            {
+                                <th scope="col" class="@(column.InlineDiff ? "history-prose" : column.CompactTrackClass) @column.Class" style="@column.TrackStyle"><span class="history-track">@column.Label</span></th>
+                            }
+                        }
+                        <th scope="col" class="history-time" aria-sort="descending">Time <span aria-hidden="true">↓</span></th>
+                        <th scope="col" class="history-compact history-author"><span class="history-track">Changed by</span></th>
+                    </tr></thead>
+                    <tbody>
+                        @foreach (var group in groups.AsEnumerable().Reverse())
+                        {
+                            var newest = group.Members[^1];
+                            var oldest = group.Members[0];
+                            var multiple = group.Members.Count > 1;
+                            var open = expanded.Contains(newest.RowId);
+                            var firstTime = Times[oldest.RowId];
+                            var lastTime = Times[newest.RowId];
+                            <tr @key="group" class="@(multiple ? "history-summary" : null)">
+                                <td class="history-compact history-gutter"><span class="history-track">
+                                    @if (multiple)
+                                    {
+                                        <button id="@DisclosureId(group)" type="button" class="history-disclosure" aria-expanded="@(open ? "true" : "false")"
+                                                aria-label="@($"{(open ? "Collapse" : "Expand")} {group.Members.Count} revisions")"
+                                                @onclick="() => Toggle(newest.RowId)"><i class="fa-solid @(open ? "fa-caret-down" : "fa-caret-right")" aria-hidden="true"></i><span>@group.Members.Count</span></button>
+                                    }
+                                </span></td>
+                                @ValueCells(newest, ResolveBaseline(oldest, multiple))
+                                <td class="history-time" title="@(multiple ? $"{firstTime.Full} – {lastTime.Full}" : firstTime.Full)">
+                                    @if (multiple)
+                                    {
+                                        var crossesDay = firstTime.DayKey != lastTime.DayKey;
+                                        var showFirstDate = crossesDay || !firstTime.IsToday;
+                                        <span class="history-time-range @(showFirstDate ? "history-time-range-dated" : null)">
+                                            <span class="history-range-date">@(showFirstDate ? firstTime.Date : null)</span>
+                                            <span class="history-range-clock">@firstTime.Time</span>
+                                            <span class="history-range-dash">–</span>
+                                            <span class="history-range-date">@(crossesDay ? lastTime.Date : null)</span>
+                                            <span class="history-range-clock">@lastTime.Time</span>
+                                        </span>
+                                    }
+                                    else
+                                    {
+                                        @GridTime(firstTime)
+                                    }
+                                </td>
+                                <td class="history-compact history-author"><span class="history-track">@newest.ChangedBy</span></td>
+                            </tr>
+                            @if (multiple && open)
+                            {
+                                @foreach (var revision in group.Members.AsEnumerable().Reverse())
+                                {
+                                    var stamp = Times[revision.RowId];
+                                    <tr @key="revision"><td></td>@ValueCells(revision, ResolveBaseline(revision))<td class="history-time" title="@stamp.Full">@GridTime(stamp)</td><td class="history-compact history-author"><span class="history-track">@revision.ChangedBy</span></td></tr>
+                                }
+                            }
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+        <span class="history-sr-only" tabindex="0" @onfocus="FocusStart"></span>
+    </section>
+</div>
+
+@code {
+    private RenderFragment ValueCells(EditorHistoryRevision revision, EditorHistoryRevision? baseline) => @<text>
+        @foreach (var column in Columns)
+        {
+            if (column == GameCoordinates)
+            {
+                var game = DescribeGameLine(revision.Values.InGamePosition, baseline?.Values.InGamePosition, baseline is not null);
+                var local = DescribeGameLine(revision.Values.LocalPosition, baseline?.Values.LocalPosition, baseline is not null);
+                <td class="history-coordinate">
+                    @if (game.Visible || local.Visible)
+                    {
+                        @GameCoordinateLine("In-game", game)
+                        @GameCoordinateLine("Local", local)
+                    }
+                </td>
+                continue;
+            }
+            var value = column.Read(revision.Values);
+            var before = baseline is null ? null : column.Read(baseline.Values);
+            var changed = baseline is not null && !Equals(value, before);
+            var status = column.Status?.Invoke(value);
+            var inline = showDiffs && changed && column.InlineDiff;
+            <td class="@column.Class @(column.InlineDiff ? "history-literal-cell" : column.CompactTrackClass) @(changed && !inline ? "history-change" : "history-muted")" style="@(column.InlineDiff ? null : column.TrackStyle)">
+                <span class="history-track">
+                @if (status is not null)
+                {
+                    var label = changed && column == State && value is EditorHistoryState.Active ? "State changed to Active" : status.Label;
+                    if (status.Glyph is { } glyph)
+                    {
+                        <span role="img" aria-label="@label" title="@label"><i class="fa-solid @glyph" aria-hidden="true"></i></span>
+                    }
+                    else
+                    {
+                        <span role="img" aria-label="@label" title="@label">@status.Text</span>
+                    }
+                }
+                else if (inline)
+                {
+                    var current = (string?)value ?? "";
+                    var prior = (string?)before ?? "";
+                    var diff = DescribeText(new(revision.RowId, baseline!.RowId, column), (string?)before, (string?)value);
+                    var cue = diff?.Cue ?? RoomHistoryTextDiff.ChangeCue.Unclassified;
+                    <span class="history-sr-only">@($"Changed {column.Label}: ")</span>
+                    <span class="history-literal history-inline-diff">@InlineText(prior, current, diff)</span>
+                    @if (string.IsNullOrWhiteSpace(current))
+                    {
+                        <span class="history-change">—</span>
+                    }
+                    @if (cue != RoomHistoryTextDiff.ChangeCue.None)
+                    {
+                        var whitespace = cue == RoomHistoryTextDiff.ChangeCue.Whitespace;
+                        var cueLabel = whitespace ? "Whitespace changed" : "Text changed";
+                        <span class="history-text-cue" role="img" aria-label="@cueLabel" title="@cueLabel">@(whitespace ? "␣" : "≠")</span>
+                    }
+                }
+                else if (column.InlineDiff)
+                {
+                    var current = (string?)value;
+                    <span class="history-literal">@current</span>
+                    @if (changed && string.IsNullOrWhiteSpace(current))
+                    {
+                        <span>—</span>
+                    }
+                }
+                else
+                {
+                    var display = column.Render(revision.Values);
+                    @if (changed && string.IsNullOrWhiteSpace(display))
+                    {
+                        @("—")
+                    }
+                    else if (column.ExactCoordinate is { } exact)
+                    {
+                        var title = changed && string.Equals(display, column.Format(before), StringComparison.Ordinal)
+                            ? CoordinateTitle(exact(before), exact(value)) : null;
+                        <span title="@title">@display</span>
+                    }
+                    else
+                    {
+                        @display
+                    }
+                }
+                </span>
+            </td>
+        }
+    </text>;
+
+    private static RenderFragment GameCoordinateLine(string label, GameLine line) => @<span class="history-track @(line.Changed ? "history-change" : "history-muted")">@(label + ": ")<span title="@line.Title">@(line.Display ?? "—")</span></span>;
+}

@@ -20,8 +20,8 @@
             </div>
             <p class="load-ui1-status" role="status" aria-live="polite" aria-atomic="true">@initialProgress.Stage</p>
             <div class="load-ui1-below">
-                @if (initialFailed && !Runtime.Retired)
-                { <p class="load-ui1-failure danger" role="alert">Unable to start. Try refreshing.</p> }
+                @if (startupFailure is not null && !Runtime.Retired)
+                { <p class="load-ui1-failure danger" role="alert">@StartupFailureCopy</p> }
                 <div class="load-ui1-build">
                 <span class="load-ui1-release">@LoadingRelease</span>
                 <small class="load-ui1-timestamp">@LoadingBuildTime</small>
@@ -139,7 +139,7 @@ else
                     <a class="tree-action scene-picker scene-review-trigger" href="/scene-import" aria-disabled="@((!CanAuthor || renderLocked || errorOpen).ToString().ToLowerInvariant())" @onclick="OpenScenePage" @onclick:preventDefault>@Icon(false, "fa-file-import") upload scene dump</a>
                     <a class="tree-action sidebar-requirements-control" href="/requirements/predicates" aria-disabled="@((renderLocked || errorOpen).ToString().ToLowerInvariant())" @onclick="Requirements" @onclick:preventDefault aria-label="Requirements" title="Requirements">@Icon(false, "fa-book") requirements</a>
                     <div class="sidebar-utility-row">
-                        <logic-theme-picker></logic-theme-picker>
+                        <AppearancePicker />
                         @if (renderLocked || errorOpen)
                         {
                             <button class="tree-action sidebar-tools-control" type="button" disabled aria-label="Tools (opens in a new tab)" title="Tools (opens in a new tab)">@Icon(false, "fa-screwdriver-wrench") tools</button>

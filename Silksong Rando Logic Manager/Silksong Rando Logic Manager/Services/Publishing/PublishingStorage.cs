@@ -72,9 +72,26 @@ internal sealed class PublishingStorage : IDisposable
     public static string Hash(byte[] bytes) => Convert.ToHexStringLower(SHA256.HashData(bytes));
     public static string FileHash(string path)
     {
-        CheckPath(path, Path.GetFileName(path));
-        using var stream = File.OpenRead(path);
+        using var stream = OpenFileForHash(path);
         return Convert.ToHexStringLower(SHA256.HashData(stream));
+    }
+    private static FileStream OpenFileForHash(string path)
+    {
+        CheckPath(path, Path.GetFileName(path));
+        return File.OpenRead(path);
+    }
+    private static (string Hash, long Length) FileHashWithLength(string path, Span<byte> buffer)
+    {
+        using var stream = OpenFileForHash(path);
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        long length = 0;
+        int count;
+        while ((count = stream.Read(buffer)) != 0)
+        {
+            hash.AppendData(buffer[..count]);
+            length += count;
+        }
+        return (Convert.ToHexStringLower(hash.GetHashAndReset()), length);
     }
     public static void CheckPath(string path, string logicalPath)
     {
@@ -213,7 +230,14 @@ internal sealed class PublishingStorage : IDisposable
         if (timing is not null) timing.Files = (timing.Files ?? 0) + 1;
         T Measured<T>(PublishingMetric metric, Func<T> work) => timing is null ? work() : timing.Measure(metric, work);
     }
-    public void Validate(PublishingJournal journal)
+    public void Validate(PublishingJournal journal) => Validate(journal, null);
+    public IReadOnlyDictionary<string, long> ValidateForReview(PublishingJournal journal)
+    {
+        var lengths = new Dictionary<string, long>(journal.Files.Count, StringComparer.Ordinal);
+        Validate(journal, lengths);
+        return lengths;
+    }
+    private void Validate(PublishingJournal journal, Dictionary<string, long>? lengths)
     {
         CheckTree(Staging);
         var unowned = journal.Files.Keys.Concat(journal.Removed).Where(x => !PublishingGit.Owned(x)).Order(StringComparer.Ordinal).ToArray();
@@ -223,10 +247,14 @@ internal sealed class PublishingStorage : IDisposable
             .Select(x => Path.GetRelativePath(Candidate, x).Replace('\\', '/')).Order(StringComparer.Ordinal).ToArray();
         if (!actual.SequenceEqual(journal.Files.Keys.Order(StringComparer.Ordinal)))
             throw new PublishingBlock($"Candidate file inventory differs from Staging/current.json in phase {journal.Phase}.\nMissing candidate paths:\n{string.Join("\n", journal.Files.Keys.Except(actual, StringComparer.Ordinal).Order(StringComparer.Ordinal))}\nUnexpected candidate paths:\n{string.Join("\n", actual.Except(journal.Files.Keys, StringComparer.Ordinal))}\nKeep Candidate, current.json and Rollback; compare these entries with the reviewed manifest before continuing. If replacement has begun, resolve rollback/commit evidence before any discard; otherwise discard the prepared changes and prepare/review again.");
+        // Review sizes must describe the bytes hashed here, not a later path stat.
+        Span<byte> buffer = lengths is null ? Span<byte>.Empty : stackalloc byte[4096];
         foreach (var (path, expected) in journal.Files)
         {
-            var observed = FileHash(Resolve(Candidate, path));
+            var file = Resolve(Candidate, path);
+            var (observed, length) = lengths is null ? (FileHash(file), 0L) : FileHashWithLength(file, buffer);
             if (observed != expected) throw new PublishingBlock($"Staging/Candidate/{path} differs from its manifest in phase {journal.Phase}.\nExpected raw SHA-256: {expected}\nObserved raw SHA-256: {observed}\nKeep this file, Staging/current.json and Rollback. If replacement has begun, compare the file with the intended Git blob and resolve rollback/commit evidence before discard; otherwise discard the prepared changes and prepare/review again. Do not edit the manifest to accept changed bytes.");
+            lengths?.Add(path, length);
         }
     }
     public void Clear()

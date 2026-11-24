@@ -12,6 +12,7 @@ public sealed class Account : IdentityUser<Guid>
     public bool PublishDocumentation { get; set; }
     public bool Enabled { get; set; }
     public bool MustReplacePassword { get; set; }
+    public string? CustomAppearanceColor { get; set; }
 }
 
 public sealed class AccountsDbContext(DbContextOptions<AccountsDbContext> options) : IdentityUserContext<Account, Guid>(options)
@@ -21,5 +22,6 @@ public sealed class AccountsDbContext(DbContextOptions<AccountsDbContext> option
         base.OnModelCreating(builder);
         builder.Entity<Account>().Property(x => x.UserName).HasMaxLength(64);
         builder.Entity<Account>().Property(x => x.NormalizedUserName).HasMaxLength(64);
+        builder.Entity<Account>().Property(x => x.CustomAppearanceColor).HasMaxLength(7);
     }
 }

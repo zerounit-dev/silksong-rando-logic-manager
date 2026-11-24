@@ -35,6 +35,7 @@
                 <td class="row-actions">@if (row.EntityId is { } id) {
                     <span class="action-slot">@if (!row.IsArchived) { <button type="button" id="v2-subroom-geometry-@id" title="edit scene rectangle" aria-label="edit scene rectangle" disabled="@(Blocked || row.Attention)" @onclick="() => Action(row, RoomOrderSection.Subrooms, RoomRowAction.Geometry)"><i class="fa-solid fa-pen-ruler"></i></button> }</span>
                     <span class="action-slot">@if (row.IsArchived) { <button type="button" title="restore" aria-label="restore" disabled="@(Blocked || row.Attention)" @onclick="() => Action(row, RoomOrderSection.Subrooms, RoomRowAction.Restore)"><i class="fa-solid fa-rotate-left"></i></button> } else { <button type="button" id="v2-subroom-@row.AnnotationAction-@id" title="@AnnotationTitle(row)" aria-label="@AnnotationTitle(row)" disabled="@(Blocked || row.Attention || !row.CanAnnotate || !SceneActionsAvailable)" @onclick="() => Action(row, RoomOrderSection.Subrooms, RoomRowAction.Annotation)"><span class="annotation-crosshairs @row.AnnotationClass" aria-hidden="true"><i class="fa-solid fa-crosshairs"></i></span></button> }</span>
+                    @HistorySlot(row, RoomOrderSection.Subrooms, id)
                     <span class="action-slot"><button type="button" id="v2-subroom-open-delete-@id" title="@(row.IsArchived ? "delete permanently" : "archive")" aria-label="@(row.IsArchived ? "delete permanently" : "archive")" disabled="@(Blocked || row.Attention)" @onclick="() => Action(row, RoomOrderSection.Subrooms, row.IsArchived ? RoomRowAction.Delete : RoomRowAction.Archive)"><i class="fa-solid @(row.IsArchived ? "fa-trash" : "fa-box-archive")"></i></button></span>
                 }</td>
             </tr>
@@ -60,7 +61,7 @@
                         else { <button type="button" class="reorder-handle" draggable="@(Blocked ? "false" : "true")" data-v2-transition-grip="true" disabled="@Blocked" title="Reorder transition" aria-label="Reorder transition"><i class="fa-solid fa-grip-vertical" aria-hidden="true"></i></button> }
                     }
                 </td>
-                <td class="@row.FieldClass("alias")"><input @attributes='FieldAttributes(row, "transition", "alias", "Transition alias")' class="alias-editor" autocomplete="off" value="@value.Alias" readonly="@(row.IsArchived || Blocked)" /></td>
+                <td class="@row.FieldClass("alias")"><input @attributes='FieldAttributes(row, "transition", "alias", "Transition alias")' class="alias-editor" autocomplete="off" value="@value.Alias" data-v3-room-alias-initial="@value.Alias" readonly="@(row.IsArchived || Blocked)" /></td>
                 <td class="@row.FieldClass("name")"><input @attributes='FieldAttributes(row, "transition", "name", "Transition friendly name")' class="text-editor focus-muted" autocomplete="off" value="@value.FriendlyName" readonly="@(row.IsArchived || Blocked)" /></td>
                 <td class="@row.FieldClass("source")"><input @attributes='FieldAttributes(row, "transition", "source", "Transition source subroom reference")' class="text-editor" autocomplete="off" list="v2-transition-subroom-references" value="@value.SourceSubroomReferenceText" readonly="@(row.IsArchived || Blocked)" /></td>
                 <td class="@row.FieldClass("destination-room")"><input @attributes='FieldAttributes(row, "transition", "destination-room", "Transition destination room")' class="text-editor focus-muted" autocomplete="off" list="v2-transition-room-references" value="@value.DestinationRoomReferenceText" readonly="@(row.IsArchived || Blocked)" /></td>
@@ -80,6 +81,7 @@
                 <td class="row-actions">@if (row.EntityId is { } id) {
                     <span class="action-slot">@if (!row.IsArchived) { <button type="button" id="v2-transition-metadata-@id" title="edit in-game data" aria-label="edit in-game data" disabled="@(Blocked || row.Attention)" @onclick="() => Action(row, RoomOrderSection.Transitions, RoomRowAction.Metadata)"><i class="fa-solid fa-pen"></i></button> }</span>
                     <span class="action-slot">@if (row.IsArchived) { <button type="button" title="restore" aria-label="restore" disabled="@(Blocked || row.Attention)" @onclick="() => Action(row, RoomOrderSection.Transitions, RoomRowAction.Restore)"><i class="fa-solid fa-rotate-left"></i></button> } else { <button type="button" id="v2-transition-@row.AnnotationAction-@id" title="@AnnotationTitle(row)" aria-label="@AnnotationTitle(row)" disabled="@(Blocked || row.Attention || !row.CanAnnotate || !SceneActionsAvailable)" @onclick="() => Action(row, RoomOrderSection.Transitions, RoomRowAction.Annotation)"><span class="annotation-crosshairs @row.AnnotationClass" aria-hidden="true"><i class="fa-solid fa-crosshairs"></i></span></button> }</span>
+                    @HistorySlot(row, RoomOrderSection.Transitions, id)
                     <span class="action-slot"><button type="button" id="v2-transition-open-delete-@id" title="@(row.IsArchived ? "delete permanently" : "archive")" aria-label="@(row.IsArchived ? "delete permanently" : "archive")" disabled="@(Blocked || row.Attention)" @onclick="() => Action(row, RoomOrderSection.Transitions, row.IsArchived ? RoomRowAction.Delete : RoomRowAction.Archive)"><i class="fa-solid @(row.IsArchived ? "fa-trash" : "fa-box-archive")"></i></button></span>
                 }</td>
             </tr>
@@ -105,7 +107,7 @@
                         else { <button type="button" class="reorder-handle" draggable="@(Blocked ? "false" : "true")" data-v2-connection-grip="true" disabled="@Blocked" title="Reorder connection" aria-label="Reorder connection"><i class="fa-solid fa-grip-vertical" aria-hidden="true"></i></button> }
                     }
                 </td><td class="connection-state @row.PathwayClass" title="@row.PathwayTitle">@if (row.LastConfirmed is not null && !row.IsArchived) { <i class="fa-solid @row.PathwayIcon" role="img" aria-label="@row.PathwayTitle"></i> }</td>
-                <td class="@row.FieldClass("alias")"><input @attributes='FieldAttributes(row, "connection", "alias", "Connection alias")' class="alias-editor" autocomplete="off" value="@value.Alias" readonly="@(row.IsArchived || Blocked)" /></td>
+                <td class="@row.FieldClass("alias")"><input @attributes='FieldAttributes(row, "connection", "alias", "Connection alias")' class="alias-editor" autocomplete="off" value="@value.Alias" data-v3-room-alias-initial="@value.Alias" readonly="@(row.IsArchived || Blocked)" /></td>
                 <td class="@row.FieldClass("name")"><input @attributes='FieldAttributes(row, "connection", "name", "Connection friendly name")' class="text-editor focus-muted" autocomplete="off" value="@value.FriendlyName" readonly="@(row.IsArchived || Blocked)" /></td>
                 <td class="@row.FieldClass("source")"><input @attributes='FieldAttributes(row, "connection", "source", "Connection source subroom")' class="text-editor" autocomplete="off" list="v2-connection-subroom-references" value="@value.SourceSubroomReferenceText" readonly="@(row.IsArchived || Blocked)" /></td>
                 <td class="@row.FieldClass("destination")"><input @attributes='FieldAttributes(row, "connection", "destination", "Connection destination subroom")' class="text-editor" autocomplete="off" list="v2-connection-subroom-references" value="@value.DestinationSubroomReferenceText" readonly="@(row.IsArchived || Blocked)" /></td>
@@ -119,6 +121,7 @@
                 <td class="row-actions">@if (row.EntityId is { } id) {
                     <span class="action-slot">@if (!row.IsArchived && row.CanScaffoldInverse) { <button type="button" id="v2-connection-inverse-@id" title="scaffold inverse connection" aria-label="scaffold inverse connection" disabled="@(Blocked || row.Attention)" @onclick="() => Action(row, RoomOrderSection.Connections, RoomRowAction.Inverse)"><i class="fa-solid fa-arrow-right-arrow-left"></i></button> }</span>
                     <span class="action-slot">@if (row.IsArchived) { <button type="button" title="restore" aria-label="restore" disabled="@(Blocked || row.Attention)" @onclick="() => Action(row, RoomOrderSection.Connections, RoomRowAction.Restore)"><i class="fa-solid fa-rotate-left"></i></button> } else { <button type="button" id="v2-connection-@row.AnnotationAction-@id" title="@AnnotationTitle(row)" aria-label="@AnnotationTitle(row)" disabled="@(Blocked || row.Attention || !row.CanAnnotate || !SceneActionsAvailable)" @onclick="() => Action(row, RoomOrderSection.Connections, RoomRowAction.Annotation)"><span class="annotation-crosshairs @row.AnnotationClass" aria-hidden="true"><i class="fa-solid fa-crosshairs"></i></span></button> }</span>
+                    @HistorySlot(row, RoomOrderSection.Connections, id)
                     <span class="action-slot"><button type="button" id="v2-connection-open-delete-@id" title="@(row.IsArchived ? "delete permanently" : "archive")" aria-label="@(row.IsArchived ? "delete permanently" : "archive")" disabled="@(Blocked || row.Attention)" @onclick="() => Action(row, RoomOrderSection.Connections, row.IsArchived ? RoomRowAction.Delete : RoomRowAction.Archive)"><i class="fa-solid @(row.IsArchived ? "fa-trash" : "fa-box-archive")"></i></button></span>
                 }</td>
             </tr>
@@ -166,7 +169,8 @@
                     <td class="row-actions">@if (row.EntityId is { } id) {
                         <span class="action-slot">@if (!row.IsArchived) { <button type="button" id="v2-check-metadata-@id" title="edit in-game data" aria-label="edit in-game data" disabled="@(Blocked || row.Attention)" @onclick="() => Action(row, section, RoomRowAction.Metadata)"><i class="fa-solid fa-pen"></i></button> }</span>
                         <span class="action-slot">@if (row.IsArchived) { <button type="button" title="restore" aria-label="restore" disabled="@(Blocked || row.Attention)" @onclick="() => Action(row, section, RoomRowAction.Restore)"><i class="fa-solid fa-rotate-left"></i></button> } else { <button type="button" id="v2-check-@row.AnnotationAction-@id" title="@AnnotationTitle(row)" aria-label="@AnnotationTitle(row)" disabled="@(Blocked || row.Attention || !row.CanAnnotate || !SceneActionsAvailable)" @onclick="() => Action(row, section, RoomRowAction.Annotation)"><span class="annotation-crosshairs @row.AnnotationClass" aria-hidden="true"><i class="fa-solid fa-crosshairs"></i></span></button> }</span>
-                        <span class="action-slot"><button type="button" id="v2-check-open-delete-@id" title="@(row.IsArchived ? "delete permanently" : "archive")" aria-label="@(row.IsArchived ? "delete permanently" : "archive")" disabled="@(Blocked || row.Attention)" @onclick="() => Action(row, section, row.IsArchived ? RoomRowAction.Delete : RoomRowAction.Archive)"><i class="fa-solid @(row.IsArchived ? "fa-trash" : "fa-box-archive")"></i></button></span>
+                    @HistorySlot(row, section, id)
+                    <span class="action-slot"><button type="button" id="v2-check-open-delete-@id" title="@(row.IsArchived ? "delete permanently" : "archive")" aria-label="@(row.IsArchived ? "delete permanently" : "archive")" disabled="@(Blocked || row.Attention)" @onclick="() => Action(row, section, row.IsArchived ? RoomRowAction.Delete : RoomRowAction.Archive)"><i class="fa-solid @(row.IsArchived ? "fa-trash" : "fa-box-archive")"></i></button></span>
                     }</td>
                 </tr>
             }</tbody>
@@ -192,6 +196,7 @@
     [Parameter] public bool ShowArchived { get; set; }
     [Parameter] public bool Blocked { get; set; }
     [Parameter] public bool InspectionBlocked { get; set; }
+    [Parameter] public bool HistoryBlocked { get; set; }
     [Parameter] public bool SceneActionsAvailable { get; set; }
     [Parameter] public string SceneUnavailableReason { get; set; } = "Scene context is not ready.";
     private string AnnotationTitle(RoomTableRow row) => SceneActionsAvailable ? row.AnnotationTitle : SceneUnavailableReason;
@@ -345,8 +350,14 @@
         }
         return attributes;
     }
+    private RenderFragment HistorySlot(RoomTableRow row, RoomOrderSection section, Guid id) => @<text>
+        @if (row.LastConfirmed?.EntityId == id)
+        {
+            <span class="action-slot"><button type="button" id="v3-row-history-@section-@id" title="View history" aria-label="View history"
+                disabled="@HistoryBlocked" @onclick="() => Action(row, section, RoomRowAction.History)"><i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i></button></span>
+        }
+    </text>;
     private Task Action(RoomTableRow row, RoomOrderSection section, RoomRowAction action) =>
-        disposed || (action == RoomRowAction.FollowInverse
-            ? InspectionBlocked
-            : Blocked) ? Task.CompletedTask : ActionRequested.InvokeAsync(new(section, row.ClientId, action));
+        disposed || (action switch { RoomRowAction.History => HistoryBlocked, RoomRowAction.FollowInverse => InspectionBlocked, _ => Blocked })
+            ? Task.CompletedTask : ActionRequested.InvokeAsync(new(section, row.ClientId, action));
 }

@@ -65,7 +65,15 @@ public sealed class SessionHttpHandler(SessionAccess access, ClientRuntime runti
             request.Headers.TryAddWithoutValidation("X-CSRF-TOKEN", csrf);
         }
         runtime.RequireActive();
-        var response = await base.SendAsync(request, token);
+        request.Options.TryGetValue(StartupHttpEvidence.Option, out var startup);
+        HttpResponseMessage response;
+        try { response = await base.SendAsync(request, token); }
+        catch (HttpRequestException error) when (startup is not null)
+        {
+            startup.ObserveTransportFailure(error, token);
+            throw;
+        }
+        if (startup is not null) startup.Status = (int)response.StatusCode;
         try { if (versioned) await runtime.CheckResponseAsync(response, token); }
         catch { response.Dispose(); throw; }
         if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)

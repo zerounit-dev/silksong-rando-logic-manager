@@ -9,8 +9,8 @@ way to begin a room is by importing information collected by the Scene Dumper.
 
 To run Logic Manager on your own machine, follow the [Docker setup guide](https://github.com/zerounit-dev/silksong-rando-logic-manager/blob/main/readme/CONTAINERS.md).
 For a new installation, get your starting database from the
-[logic documentation repository](https://github.com/zerounit-dev/silksong-rando-ap-logic).
-Use the compatible snapshot listed for your app release. Already running Logic
+[public logic database page](https://github.com/zerounit-dev/silksong-rando-ap-logic/blob/main/silksong-rando-logic.db).
+Already running Logic
 Manager? Back up and reuse your existing database and settings instead.
 If you use an older standalone release, its launch instructions are below.
 
@@ -35,7 +35,7 @@ URLs are unchanged.
 
 These launch instructions apply to the original downloads from older releases.
 If you built a standalone package yourself from newer source, it contains no
-database: put the verified snapshot for that version in the inner application's
+database: download the public database linked above and put it in the inner application's
 `Storage` folder before launching a fresh install. Keep any existing database.
 
 1. Extract the release archive into a folder. On Windows, extract the

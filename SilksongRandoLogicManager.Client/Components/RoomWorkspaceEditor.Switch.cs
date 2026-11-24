@@ -21,6 +21,7 @@ public partial class RoomWorkspaceEditor
         if (presentationRetirement is not null) return presentationRetirement;
         outgoingSwitch ??= pending;
         presentationRetired = true;
+        RetireHistory();
         RetireEntryRequests();
         // Invalidate native queued composition continuations before any await.
         try { nativeOwner?.InvokeVoid("retireRoomComposition"); }
