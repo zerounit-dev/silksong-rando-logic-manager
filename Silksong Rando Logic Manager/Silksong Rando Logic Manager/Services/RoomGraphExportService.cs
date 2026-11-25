@@ -16,11 +16,17 @@ public sealed class RoomGraphExportService(IDbContextFactory<LogicDbContext> con
 
     // Only the publishing copy already acquired under live admission can use this
     // entry. Rendering an immutable prepared database must not block live writes.
-    internal static Task<RoomGraphExportResult> GeneratePreparedAsync(Publishing.PublishingSnapshotFactory contexts,
-        CancellationToken cancellationToken = default) => GenerateAsync(contexts, null, cancellationToken);
+    internal static async Task<PreparedRoomGraph> GeneratePreparedAsync(Publishing.PublishingSnapshotFactory contexts,
+        Action<IReadOnlyList<RoomGraphExportFailure>> reportGlobalFailures,
+        CancellationToken cancellationToken = default)
+    {
+        var evidence = new PreparedGraphEvidence();
+        return new(await GenerateAsync(contexts, null, cancellationToken, evidence, reportGlobalFailures), evidence);
+    }
 
     private static async Task<RoomGraphExportResult> GenerateAsync(IDbContextFactory<LogicDbContext> contexts,
-        SharedPublicationCoordinator.Admission? publication, CancellationToken cancellationToken)
+        SharedPublicationCoordinator.Admission? publication, CancellationToken cancellationToken, PreparedGraphEvidence? evidence = null,
+        Action<IReadOnlyList<RoomGraphExportFailure>>? reportGlobalFailures = null)
     {
         await using var db = await contexts.CreateDbContextAsync(cancellationToken);
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
@@ -43,41 +49,59 @@ public sealed class RoomGraphExportService(IDbContextFactory<LogicDbContext> con
         var globalFailures = new List<RoomGraphExportFailure>();
         var typeLegend = RoomExportStructure.BuildTypeLegend(globalFailures);
         var catalogue = BuildCatalogue(predicates, items, countables, souls, crests, methods, globalFailures);
-        var structure = RoomExportStructure.Project(snapshot, globalFailures);
+        if (globalFailures.Count != 0) reportGlobalFailures?.Invoke(globalFailures);
+        var structure = RoomExportStructure.Project(snapshot, globalFailures, evidence);
         var context = catalogue is null ? null : new RoomGraphTranslationContext(catalogue.Predicates, catalogue.Items,
             structure.Rooms.Select(x => new RoomGraphRequirementRoom(x.Row.Id, x.Row.ReferenceId)).ToArray(),
             structure.Rooms.SelectMany(room => room.Locations.OrderBy(x => x.Row.SortOrder)
                 .ThenBy(x => CanonicalValue(x.Row.Name), StringComparer.Ordinal).ThenBy(x => x.Row.Id))
                 .Select(x => new RoomGraphRequirementCheck(x.Row.Id, x.Row.RoomId, x.Row.Name, string.IsNullOrEmpty(x.Id) ? null : x.Id)).ToArray(),
             catalogue.Countables, catalogue.Souls, catalogue.Crests, catalogue.Methods);
+        if (evidence is not null) evidence.TranslationAvailable = context is not null;
+        var groupsById = structure.Groups.ToDictionary(x => x.Row.Id);
+        var preparedRooms = evidence is null ? null : new List<PreparedGraphRoom>();
         var rooms = structure.Rooms.Select(room =>
         {
+            RoomGraphRequirement Rule(string raw, string kind, string name, Guid id)
+            {
+                if (evidence is null || context is null) return Translate(raw, room.Row.Id, context);
+                var rule = new PreparedRuleEvidence();
+                var result = RoomGraphRequirementTranslator.Translate(raw, room.Row.Id, context, rule);
+                if (rule.MissingChecks.Count != 0 || rule.ResolvedIds.Count != 0 || rule.UnreadableReasons.Count != 0)
+                    evidence.Rules.Add(new(room.Row.Name, kind, name, id, rule, room.Row.Id));
+                return result;
+            }
             var transitions = room.Transitions.Select(x =>
             {
-                var requirement = Translate(x.Row.Requirements, room.Row.Id, context);
+                var requirement = Rule(x.Row.Requirements, "transition", x.Row.Name, x.Row.Id);
                 var reasons = WithRequirementReason(x.Reasons, requirement);
                 return new RoomGraphTransition(x.Id, x.Row.Alias, x.Row.Name, x.Row.InGameId, x.Row.IsUnsafeArrival,
                     x.SourceNodeId, x.Target, requirement, x.Row.Notes, x.Row.IsTodo, x.Row.IsVerified, reasons.Count == 0 ? "active" : "unresolved", reasons);
             }).ToArray();
             var connections = room.Connections.Select(x =>
             {
-                var requirement = Translate(x.Row.Requirements, room.Row.Id, context);
+                var requirement = Rule(x.Row.Requirements, "connection", x.Row.Name, x.Row.Id);
                 var reasons = WithRequirementReason([], requirement);
                 return new RoomGraphConnection(x.Id, x.Row.Alias, x.Row.Name, x.SourceNodeId, x.TargetNodeId, requirement,
                     x.Row.Notes, x.Row.IsTodo, x.Row.IsVerified, reasons.Count == 0 ? "active" : "unresolved", reasons);
             }).ToArray();
             var locations = room.Locations.Select(x =>
             {
-                var requirement = Translate(x.Row.Requirements, room.Row.Id, context);
+                var requirement = Rule(x.Row.Requirements, "location", x.Row.Name, x.Row.Id);
                 var reasons = WithRequirementReason(x.Reasons, requirement);
                 return new RoomGraphLocation(x.Id, x.Row.Name, x.Row.InGameId, x.Type, x.HasPersistedState, x.NodeId, requirement,
                     x.Row.Notes, x.Row.IsTodo, x.Row.IsVerified, reasons.Count == 0 ? "active" : "unresolved", reasons);
             }).ToArray();
-            var group = structure.Groups.SingleOrDefault(x => x.Row.Id == room.Row.GroupId);
-            return new RoomGraphRoom(room.Id, room.Row.Id.ToString("D", CultureInfo.InvariantCulture).ToLowerInvariant(), group?.Id ?? "",
+            var group = room.Row.GroupId is { } groupId ? groupsById.GetValueOrDefault(groupId) : null;
+            var projected = new RoomGraphRoom(room.Id, room.Row.Id.ToString("D", CultureInfo.InvariantCulture).ToLowerInvariant(), group?.Id ?? "",
                 room.Row.Name, room.Row.InGameId, room.Row.Contributors ?? "", room.Row.Comments ?? "",
                 room.Nodes.Select(x => new RoomGraphNode(x.Id, x.Name, x.Row?.Notes ?? "")).ToArray(), transitions, connections, locations);
+            preparedRooms?.Add(new(projected, group is null ? null : !group.Row.IsVirtual,
+                room.Nodes.Where(x => x.Row is not null || x.Name == "room").Select(x => x.Id).ToHashSet(StringComparer.Ordinal),
+                room.Locations.Select(x => x.Row.Id).ToArray(), room.Row.Id));
+            return projected;
         }).ToArray();
+        if (evidence is not null) evidence.Rooms = preparedRooms!;
         if (structure.Failures.Count != 0) return RoomGraphExportResult.Failed(structure.Failures, structure.Warnings);
         var document = new RoomGraphDocument(3, new("silksong-logic-manager-export", rooms.Length),
             structure.Groups.Select(x => x.Id!).ToArray(),
@@ -85,7 +109,9 @@ public sealed class RoomGraphExportService(IDbContextFactory<LogicDbContext> con
             structure.Groups.Where(x => x.Row.IsVirtual).Select(x => x.Id!).ToArray(),
             predicates.Select(x => new RoomGraphTranslationPredicate(x.Name, x.Category, x.InputSyntax, x.OutputSyntax, RequirementCatalogueLanguage.ParseAliases(x.Aliases), x.Notes)).ToArray(),
             items.Select(x => new RoomGraphTranslationItem(x.Name, x.Category, RequirementCatalogueLanguage.ParseAliases(x.Aliases), x.OutputValue, x.Notes)).ToArray(), typeLegend, rooms);
-        return RoomGraphExportResult.Success(RoomExportStructure.Serialize(document), structure.Warnings);
+        var content = RoomExportStructure.Serialize(document);
+        if (evidence is not null) evidence.Document = document;
+        return RoomGraphExportResult.Success(content, structure.Warnings);
     }
 
     internal static string? CanonicalValue(string? value) => RoomExportStructure.CanonicalValue(value);

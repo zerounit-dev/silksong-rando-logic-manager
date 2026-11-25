@@ -1,0 +1,90 @@
+@using Silksong_Rando_Logic_Manager.Services.Publishing
+
+@foreach (var zone in Report.Zones)
+{
+    <details @key="zone.Key" open="@(zone.Count < 10)" class="@(zone.Key.Kind == MapFindingZoneKind.Multiple ? "publishing-map-zone publishing-map-zone-multiple" : "publishing-map-zone")">
+        <summary><span class="publishing-map-heading">@zone.Label <span class="publishing-map-count">(@zone.Count)</span></span></summary>
+        @foreach (var room in zone.Rooms)
+        {
+            var state = roomDisclosures[room];
+            <div @key="state" class="publishing-map-room">
+                <div class="publishing-map-room-heading">
+                    <button type="button" class="publishing-map-room-toggle" aria-expanded="@(state.Open ? "true" : "false")"
+                            aria-controls="@state.PanelId" @onclick="() => ToggleRoom(state)"><span class="publishing-map-room-marker" aria-hidden="true"></span>@room.Label <span class="publishing-map-count">(@room.Count)</span></button>
+                    @if (room.RoomId is { } roomId)
+                    {
+                        var linkLabel = $"Open room: {room.FullRoomLabel} (new tab)";
+                        <a class="publishing-map-open-room" href="@($"/rooms/{roomId}")" target="_blank" rel="noopener noreferrer"
+                           aria-label="@linkLabel" title="@linkLabel"><i class="fa-solid fa-up-right-from-square" aria-hidden="true"></i></a>
+                    }
+                </div>
+                <ul id="@state.PanelId" hidden="@(!state.Open)" class="publishing-map-finding-list" role="list">
+                    @foreach (var record in room.Records)
+                    {
+                        <li>
+                            <strong class="publishing-map-finding-title">@record.Title</strong>
+                            <ul class="publishing-map-reasons" role="list">
+                                @foreach (var reason in record.Reasons)
+                                {
+                                    <li>
+                                        <div class="publishing-map-finding-reason">@reason.Detail</div>
+                                        @if (room.RoomId is null && reason.Rooms.Count != 0)
+                                        {
+                                            <div class="publishing-map-room-links">Rooms: @for (var i = 0; i < reason.Rooms.Count; i++)
+                                            {
+                                                var link = reason.Rooms[i];
+                                                if (i > 0) { <text>; </text> }
+                                                <a href="@($"/rooms/{link.Id}")" target="_blank" rel="noopener noreferrer">@link.Label</a>
+                                            }</div>
+                                        }
+                                    </li>
+                                }
+                            </ul>
+                        </li>
+                    }
+                </ul>
+            </div>
+        }
+    </details>
+}
+
+@code {
+    [Parameter, EditorRequired] public MapFindingReport Report { get; set; } = default!;
+    private sealed class RoomDisclosure(string panelId, bool open)
+    {
+        public string PanelId { get; } = panelId;
+        public bool Open { get; set; } = open;
+    }
+
+    private readonly Dictionary<MapFindingRoomSection, RoomDisclosure> roomDisclosures = new(ReferenceEqualityComparer.Instance);
+    private MapFindingReport? lastParameters;
+    private bool renderNeeded;
+
+    protected override void OnParametersSet()
+    {
+        if (ReferenceEquals(Report, lastParameters)) return;
+        // ComponentBase always renders the first report.
+        renderNeeded = lastParameters is not null;
+        lastParameters = Report;
+        roomDisclosures.Clear();
+        var prefix = $"map-findings-{Guid.NewGuid():N}";
+        foreach (var zone in Report.Zones)
+            foreach (var room in zone.Rooms)
+                roomDisclosures.Add(room, new($"{prefix}-{roomDisclosures.Count}", room.Count < 10));
+    }
+
+    private void ToggleRoom(RoomDisclosure state)
+    {
+        state.Open = !state.Open;
+        renderNeeded = true;
+    }
+
+    // Progress notifications reuse the immutable report; local toggles update
+    // only its mounted disclosure state. Zone open attributes stay unchanged.
+    protected override bool ShouldRender()
+    {
+        var result = renderNeeded;
+        renderNeeded = false;
+        return result;
+    }
+}

@@ -36,8 +36,10 @@ internal static class RoomExportStructure
         return new(groups, rooms, subrooms, transitions, connections, checks);
     }
 
-    internal static Projection Project(Snapshot snapshot, List<RoomGraphExportFailure> globalFailures)
+    internal static Projection Project(Snapshot snapshot, List<RoomGraphExportFailure> globalFailures,
+        PreparedGraphEvidence? prepared = null)
     {
+        var evidence = prepared?.References;
         var roomFailures = new List<RoomGraphExportFailure>();
         var warnings = new List<RoomGraphExportWarning>();
         var identityOwners = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -118,6 +120,9 @@ internal static class RoomExportStructure
         }
 
         var projectedRooms = new List<ProjectedRoom>();
+        var selectedNodes = evidence is null ? null : new List<SelectedNode>();
+        var selectedPorts = evidence is null ? null : new List<SelectedPort>();
+        var exactDestinationRooms = evidence is null ? null : new Dictionary<Guid, Guid>();
         foreach (var room in roomStates)
         {
             var roomSubrooms = Get(subroomsByRoom, room.Row.Id).Select(x => subroomStates[x.Id]).ToArray();
@@ -130,30 +135,52 @@ internal static class RoomExportStructure
             var projectedTransitions = new List<ProjectedTransition>();
             foreach (var transition in Get(transitionsByRoom, room.Row.Id).Select(x => transitionStates[x.Id]).OrderBy(x => x.Row.SortOrder).ThenBy(x => x.Id, StringComparer.Ordinal))
             {
-                var sourceNode = roomSubrooms.Length == 0 ? room.Id is null ? "#room" : $"{room.Id}#room" : ResolveSubroomNode(roomFailures, room, transition.Row.SourceText, transition.Row.ResolvedSourceId, roomSubrooms, "transition", Display(transition.Row.Name, transition.Row.Alias), "source subroom");
+                var child = Display(transition.Row.Name, transition.Row.Alias);
+                var requested = $"{transition.Row.DestinationRoomText ?? "(blank)"} / {transition.Row.DestinationAliasText ?? "(blank)"}";
+                SubroomState? sourceState = null;
+                var sourceNode = roomSubrooms.Length == 0 ? nodes[0].Id : ResolveSubroomNode(roomFailures, room, transition.Row.SourceText, transition.Row.ResolvedSourceId, roomSubrooms, "transition", child, transition.Row.Id, "source subroom", evidence, out sourceState);
+                if (roomSubrooms.Length == 0 || sourceState?.Row.Id == transition.Row.ResolvedSourceId)
+                    ObserveNode(sourceNode, "transition", child, transition.Row.Id, "source subroom", transition.Row.SourceText);
                 string? target = null;
+                Guid? exactTargetRoom = null;
                 var rowReasons = new List<string>();
                 var roomBlank = string.IsNullOrWhiteSpace(transition.Row.DestinationRoomText);
                 var aliasBlank = string.IsNullOrWhiteSpace(transition.Row.DestinationAliasText);
+                // The room can be exact even if there is no valid entrance. Match once;
+                // only the existing complete-pair branch reports room-resolution failures.
+                var roomMatches = !roomBlank && (!aliasBlank || evidence is not null)
+                    ? MatchReference(transition.Row.DestinationRoomText, roomStates, x => x.Row.ReferenceId) : [];
+                if (roomMatches.Length == 1 && roomMatches[0].Row.Id == transition.Row.ResolvedDestinationRoomId)
+                {
+                    exactTargetRoom = roomMatches[0].Row.Id;
+                    exactDestinationRooms?.Add(transition.Row.Id, exactTargetRoom.Value);
+                }
                 if (roomBlank && aliasBlank) rowReasons.Add("destination has not been mapped");
-                else if (roomBlank != aliasBlank) Fail(room, "transition destination room and alias must either both be blank or both be present", "transition", Display(transition.Row.Name, transition.Row.Alias));
+                else if (roomBlank != aliasBlank) PortFailure("transition destination room and alias must either both be blank or both be present", PreparedReferenceProblem.Incomplete);
                 else
                 {
-                    var targetRoom = Resolve(roomFailures, transition.Row.DestinationRoomText, transition.Row.ResolvedDestinationRoomId, roomStates,
-                        x => x.Row.ReferenceId, x => x.Row.Id, room, "transition", Display(transition.Row.Name, transition.Row.Alias), "destination room");
+                    var targetRoom = Resolve(roomFailures, transition.Row.DestinationRoomText, transition.Row.ResolvedDestinationRoomId, roomMatches,
+                        x => x.Row.Id, room, "transition", child, transition.Row.Id, "destination room", evidence, PreparedReferenceKind.Port, requested);
                     if (targetRoom is not null)
                     {
                         var targets = Get(transitionsByRoom, targetRoom.Row.Id).Select(x => transitionStates[x.Id]).ToArray();
-                        var targetTransition = Resolve(roomFailures, transition.Row.DestinationAliasText, transition.Row.ResolvedDestinationTransitionId, targets,
-                            x => x.Row.Alias, x => x.Row.Id, room, "transition", Display(transition.Row.Name, transition.Row.Alias), "destination transition");
+                        var targetMatches = MatchReference(transition.Row.DestinationAliasText, targets, x => x.Row.Alias);
+                        var targetTransition = Resolve(roomFailures, transition.Row.DestinationAliasText, transition.Row.ResolvedDestinationTransitionId, targetMatches,
+                            x => x.Row.Id, room, "transition", child, transition.Row.Id, "destination transition", evidence, PreparedReferenceKind.Port, requested, exactTargetRoom);
                         target = targetTransition?.Id;
-                        if (targetTransition is not null && target is null) Fail(room, "resolved destination transition has no valid export identity", "transition", Display(transition.Row.Name, transition.Row.Alias));
+                        if (target is not null && targetRoom.Row.Id == transition.Row.ResolvedDestinationRoomId &&
+                            targetTransition!.Row.Id == transition.Row.ResolvedDestinationTransitionId)
+                            selectedPorts?.Add(new(room.Row, child, transition.Row.Id, requested, targetTransition.Row.Id, targetRoom.Row.Id));
+                        if (targetTransition is not null && target is null) PortFailure("resolved destination transition has no valid export identity", PreparedReferenceProblem.InvalidIdentity);
                         if (targetTransition is not null && !IsExactReciprocalTarget(transition, targetTransition, roomStates,
                             Get(transitionsByRoom, transition.Room.Row.Id).Select(x => transitionStates[x.Id]).ToArray()))
-                            Fail(room, $"selected destination transition '{Display(targetTransition.Row.Name, targetTransition.Row.Alias)}' does not resolve back to this exact source transition", "transition", Display(transition.Row.Name, transition.Row.Alias));
+                            PortFailure($"selected destination transition '{Display(targetTransition.Row.Name, targetTransition.Row.Alias)}' does not resolve back to this exact source transition", PreparedReferenceProblem.NonReciprocal);
                     }
                 }
                 projectedTransitions.Add(new(transition.Id ?? "", transition.Row, sourceNode ?? "", target, rowReasons));
+
+                void PortFailure(string cause, PreparedReferenceProblem problem) =>
+                    ReferenceFailure(roomFailures, room, cause, "transition", child, transition.Row.Id, "destination entrance", requested, PreparedReferenceKind.Port, problem, evidence, exactTargetRoom);
             }
 
             var roomConnectionStates = new List<ConnectionState>();
@@ -161,18 +188,21 @@ internal static class RoomExportStructure
                 .ThenBy(x => CanonicalValue(x.SourceText), StringComparer.Ordinal).ThenBy(x => CanonicalValue(x.DestinationText), StringComparer.Ordinal)
                 .ThenBy(x => CanonicalValue(x.Alias), StringComparer.Ordinal).ThenBy(x => x.Id))
             {
-                var source = ResolveSubroom(roomFailures, room, row.SourceText, row.ResolvedSourceId, roomSubrooms, "connection", Display(row.Name, row.Alias), "source subroom");
-                var target = ResolveSubroom(roomFailures, room, row.DestinationText, row.ResolvedDestinationId, roomSubrooms, "connection", Display(row.Name, row.Alias), "destination subroom");
+                var child = Display(row.Name, row.Alias);
+                var source = ResolveSubroomNode(roomFailures, room, row.SourceText, row.ResolvedSourceId, roomSubrooms, "connection", child, row.Id, "source subroom", evidence, out var sourceState);
+                var target = ResolveSubroomNode(roomFailures, room, row.DestinationText, row.ResolvedDestinationId, roomSubrooms, "connection", child, row.Id, "destination subroom", evidence, out var targetState);
+                if (sourceState?.Row.Id == row.ResolvedSourceId) ObserveNode(source, "connection", child, row.Id, "source subroom", row.SourceText);
+                if (targetState?.Row.Id == row.ResolvedDestinationId) ObserveNode(target, "connection", child, row.Id, "destination subroom", row.DestinationText);
                 if (roomSubrooms.Length == 0) Fail(room, "an active connection cannot exist in a room without active subrooms", "connection", Display(row.Name, row.Alias));
-                if (source is not null && target is not null && source.Row.Id == target.Row.Id) Fail(room, "connection source and destination form a self-loop", "connection", Display(row.Name, row.Alias));
+                if (sourceState is not null && targetState is not null && sourceState.Row.Id == targetState.Row.Id) Fail(room, "connection source and destination form a self-loop", "connection", Display(row.Name, row.Alias));
             var aliasFailure = AliasFailure(row.Alias);
             var alias = aliasFailure is null ? CanonicalValue(row.Alias) : null;
             if (aliasFailure is not null) Fail(room, $"connection alias {aliasFailure}", "connection", Display(row.Name, row.Alias));
                 else if (alias is null) Fail(room, "connection alias does not produce a nonempty canonical export segment", "connection", Display(row.Name, row.Alias));
                 if (string.IsNullOrWhiteSpace(row.Name)) Fail(room, "connection name is blank", "connection", Display(row.Name, row.Alias));
-                var id = room.Id is not null && source?.Id is not null && target?.Id is not null && alias is not null
-                    ? $"{room.Id}#{CanonicalValue(source.Row.ReferenceId)}>{CanonicalValue(target.Row.ReferenceId)}@{alias}" : null;
-                var state = new ConnectionState(row, room, id, source, target);
+                var id = room.Id is not null && source is not null && target is not null && alias is not null
+                    ? $"{room.Id}#{CanonicalValue(sourceState!.Row.ReferenceId)}>{CanonicalValue(targetState!.Row.ReferenceId)}@{alias}" : null;
+                var state = new ConnectionState(row, room, id, sourceState, targetState);
                 roomConnectionStates.Add(state);
                 if (id is not null) Register(id, $"connection '{Display(row.Name, row.Alias)}'", identityOwners, roomFailures, room, "connection", Display(row.Name, row.Alias));
             }
@@ -204,11 +234,19 @@ internal static class RoomExportStructure
                         node = room.Id is null ? "#unassigned" : $"{room.Id}#unassigned";
                         reasons.Add(cause);
                         warnings.Add(new(cause, room.Id, room.Row.Name, "location", Display(location.Row.Name, location.Row.InGameId), room.Row.Id));
+                        evidence?.Add(new(PreparedReferenceKind.Node, matches.Length switch
+                        {
+                            0 when string.IsNullOrWhiteSpace(text) => PreparedReferenceProblem.Blank,
+                            0 => PreparedReferenceProblem.Missing,
+                            > 1 => PreparedReferenceProblem.Ambiguous,
+                            _ => PreparedReferenceProblem.Stale
+                        }, room.Row.Name, "location", Display(location.Row.Name, location.Row.InGameId), location.Row.Id, "subroom", text, cause, room.Row.Id));
                     }
                     else
                     {
                         node = matches[0].Id;
-                        if (node is null) Fail(room, "resolved subroom has no valid export node identity", "location", Display(location.Row.Name, location.Row.InGameId));
+                        if (node is null) ReferenceFailure(roomFailures, room, "resolved subroom has no valid export node identity", "location", Display(location.Row.Name, location.Row.InGameId), location.Row.Id, "subroom", text, PreparedReferenceKind.Node, PreparedReferenceProblem.InvalidIdentity, evidence);
+                        else ObserveNode(node, "location", Display(location.Row.Name, location.Row.InGameId), location.Row.Id, "subroom", text);
                     }
                 }
                 return new ProjectedLocation(location.Id ?? "", location.Row, location.Type ?? "unknown", location.HasPersistedState, node ?? "", reasons);
@@ -222,6 +260,70 @@ internal static class RoomExportStructure
             }
 
             projectedRooms.Add(new(room.Id ?? "", room.Row, room.Group?.Row.IsVirtual ?? false, nodes, projectedTransitions, projectedConnections, projectedLocations));
+
+            void ObserveNode(string? id, string kind, string child, Guid recordId, string field, string? requested)
+            {
+                if (id is not null) selectedNodes?.Add(new(room.Row, kind, child, recordId, field, requested, id));
+            }
+        }
+
+        if (prepared is not null)
+        {
+            var roomLabels = AssignEvidenceLabels(projectedRooms.Select(room =>
+                (room.Row.Id, QualifiedLabel(room.Row.Name, room.Row.ReferenceId))), id => id);
+            // Keep authored group identity even when its canonical ID (or the full export) fails.
+            var authoredGroups = groupStates.ToDictionary(group => group.Row.Id,
+                group => new PreparedGraphRoomGroup(group.Row.Id, group.Row.Name));
+            prepared.RoomIdentities = roomStates.ToDictionary(room => room.Row.Id, room =>
+                new PreparedGraphRoomIdentity(room.Row.Name, roomLabels[room.Row.Id],
+                    room.Group is { } group ? authoredGroups[group.Row.Id] : null));
+            var labels = prepared.RecordLabels = PreparedRecordLabels(projectedRooms, roomLabels, prepared);
+            var portCollisions = projectedRooms.SelectMany(room => room.Transitions)
+                .Where(x => x.Id.Length != 0).GroupBy(x => x.Id, StringComparer.Ordinal).Where(g => g.Skip(1).Any())
+                .ToDictionary(g => g.Key, g => (
+                    Labels: string.Join(", ", g.OrderBy(x => x.Row.SortOrder).ThenBy(x => x.Row.Id).Select(x => labels[("transition", x.Row.Id)])),
+                    Rooms: g.Select(x => x.Row.RoomId).Distinct().ToArray()), StringComparer.Ordinal);
+            // The resolver can choose one authored alias exactly, but its canonical
+            // destination ID can still denote more than one projected entrance.
+            // Do not ascribe an unrelated collision to an unaffected exit.
+            var exactPortSources = selectedPorts!.Select(port => port.RecordId).ToHashSet();
+            foreach (var room in projectedRooms)
+                foreach (var source in room.Transitions)
+                    if (source.Target is { } target && portCollisions.TryGetValue(target, out var owners))
+                        prepared.References.Add(new(PreparedReferenceKind.Port, PreparedReferenceProblem.Ambiguous, room.Row.Name,
+                            "transition", $"{Display(source.Row.Name, source.Row.Alias)} [{source.Row.Alias}]", source.Row.Id,
+                            "destination entrance", $"{source.Row.DestinationRoomText} / {source.Row.DestinationAliasText}",
+                            $"Exact target '{target}' is shared by {owners.Labels}", room.Row.Id,
+                            RelatedRooms: exactPortSources.Contains(source.Row.Id) ? owners.Rooms
+                                : exactDestinationRooms!.TryGetValue(source.Row.Id, out var exactRoom) ? [exactRoom] : null));
+
+            // These are the actual canonical node IDs (including synthetic nodes),
+            // scoped by the resolved room record, not by a possibly colliding room ID.
+            var collisions = new Dictionary<(Guid RoomId, string NodeId), string>();
+            foreach (var room in projectedRooms)
+            {
+                var groups = room.Nodes.GroupBy(node => node.Id, StringComparer.Ordinal).Where(group => group.Skip(1).Any()).ToArray();
+                if (groups.Length == 0) continue;
+                var nodeLabels = AssignEvidenceLabels(room.Nodes.Select(node => (node, node.Row is { } row
+                    ? QualifiedLabel(row.Name, row.ReferenceId) : $"synthetic {node.Name}")), node => node.Row?.Id);
+                foreach (var group in groups)
+                    collisions.Add((room.Row.Id, group.Key), string.Join(", ", group.OrderBy(node => node.Row?.SortOrder)
+                        .ThenBy(node => node.Row?.Id).Select(node => nodeLabels[node])));
+            }
+            var ambiguousPortNodes = new Dictionary<Guid, string>();
+            foreach (var field in selectedNodes!)
+                if (collisions.TryGetValue((field.Room.Id, field.NodeId), out var owners))
+                {
+                    var cause = $"Exact node '{field.NodeId}' in room '{roomLabels[field.Room.Id]}' is shared by {owners}";
+                    prepared.References.Add(new(PreparedReferenceKind.Node, PreparedReferenceProblem.Ambiguous, field.Room.Name,
+                        field.Kind, field.Record, field.RecordId, field.Field, field.Requested, cause, field.Room.Id));
+                    if (field.Kind == "transition") ambiguousPortNodes.Add(field.RecordId, cause);
+                }
+            foreach (var port in selectedPorts!)
+                if (ambiguousPortNodes.TryGetValue(port.TargetRecordId, out var cause))
+                    prepared.References.Add(new(PreparedReferenceKind.Node, PreparedReferenceProblem.Ambiguous, port.Room.Name,
+                        "transition", port.Record, port.RecordId, "destination entrance's node", port.Requested, cause,
+                        port.Room.Id, RelatedRooms: [port.TargetRoomId]));
         }
 
         var roomOrder = roomStates.Select((room, index) => (room.Row.Id, index)).ToDictionary(x => x.Id, x => x.index);
@@ -229,6 +331,76 @@ internal static class RoomExportStructure
         return new(groupStates, projectedRooms, failures, warnings);
 
         void Fail(RoomState room, string cause, string? kind = null, string? child = null) => roomFailures.Add(new(cause, room.Id, room.Row.Name, kind, child, room.Row.Id));
+    }
+
+    private static IReadOnlyDictionary<(string Kind, Guid Id), string> PreparedRecordLabels(IReadOnlyList<ProjectedRoom> rooms,
+        IReadOnlyDictionary<Guid, string> roomLabels, PreparedGraphEvidence prepared)
+    {
+        var records = new List<((string Kind, Guid Id) Key, string Label)>();
+        var titles = new Dictionary<(string Kind, Guid Id), string>();
+        foreach (var room in rooms)
+        {
+            var roomLabel = roomLabels[room.Row.Id];
+            foreach (var port in room.Transitions)
+                Add("transition", port.Row.Id, QualifiedLabel(port.Row.Name, port.Row.Alias));
+            foreach (var route in room.Connections)
+            {
+                var row = route.Row;
+                var direction = $"{EvidenceEndpoint(row.SourceText)} → {EvidenceEndpoint(row.DestinationText)}";
+                Add("connection", row.Id, $"{QualifiedLabel(row.Name, row.Alias)} [{direction}]");
+            }
+            foreach (var location in room.Locations)
+            {
+                var row = location.Row;
+                var title = QualifiedLabel(row.Name, row.LocationType);
+                // Keep the exact frozen evidence label; the checklist's title
+                // is authored name/type only, even when it needs a fallback.
+                Add("location", row.Id, QualifiedLabel(title, row.InGameId),
+                    string.IsNullOrWhiteSpace(title) ? "Check location" : title);
+            }
+
+            void Add(string kind, Guid id, string title, string? checklistTitle = null)
+            {
+                var label = $"{roomLabel} / {kind} {title}";
+                records.Add(((kind, id), label));
+                titles.Add((kind, id), checklistTitle ?? title);
+            }
+        }
+
+        prepared.RecordTitles = titles;
+        return AssignEvidenceLabels(records, key => key.Id);
+    }
+
+    private static string EvidenceEndpoint(string? authored) => string.IsNullOrWhiteSpace(authored) ? "(blank)" : authored;
+
+    private static string QualifiedLabel(string name, string? qualifier) =>
+        string.IsNullOrWhiteSpace(qualifier) || string.Equals(name, qualifier, StringComparison.Ordinal) || string.IsNullOrWhiteSpace(name)
+            ? Display(name, qualifier) : $"{name} [{qualifier}]";
+
+    private static Dictionary<TKey, string> AssignEvidenceLabels<TKey>(IEnumerable<(TKey Key, string Label)> labels,
+        Func<TKey, Guid?> stableId) where TKey : notnull
+    {
+        var byBase = labels.ToLookup(x => x.Label, x => x.Key, StringComparer.Ordinal);
+        // Reserve every rendered base (even duplicate ones) before issuing any ordinals.
+        var used = byBase.Select(group => group.Key).ToHashSet(StringComparer.Ordinal);
+        var result = new Dictionary<TKey, string>();
+        foreach (var group in byBase)
+        {
+            if (!group.Skip(1).Any())
+                result.Add(group.First(), group.Key);
+            else
+            {
+                var ordinal = 0;
+                foreach (var key in group.OrderBy(stableId))
+                {
+                    string candidate;
+                    do candidate = $"{group.Key} (#{++ordinal})";
+                    while (!used.Add(candidate));
+                    result.Add(key, candidate);
+                }
+            }
+        }
+        return result;
     }
 
     internal static Dictionary<string, RoomGraphLocationType> BuildTypeLegend(List<RoomGraphExportFailure> failures)
@@ -250,26 +422,48 @@ internal static class RoomExportStructure
         return result;
     }
 
-    private static TState? Resolve<TState>(List<RoomGraphExportFailure> failures, string? text, Guid? resolvedId, IReadOnlyList<TState> candidates, Func<TState, string> reference,
-        Func<TState, Guid> id, RoomState room, string kind, string child, string role) where TState : class
+    private static TState[] MatchReference<TState>(string? text, IReadOnlyList<TState> candidates, Func<TState, string> reference) =>
+        string.IsNullOrWhiteSpace(text) ? [] : candidates.Where(x => string.Equals(text.Trim(), reference(x).Trim(), StringComparison.OrdinalIgnoreCase)).ToArray();
+
+    private static TState? Resolve<TState>(List<RoomGraphExportFailure> failures, string? text, Guid? resolvedId, TState[] matches,
+        Func<TState, Guid> id, RoomState room, string kind, string child, Guid recordId, string role,
+        List<PreparedGraphReference>? evidence, PreparedReferenceKind referenceKind, string? requested, Guid? relatedRoom = null) where TState : class
     {
-        TState[] matches = string.IsNullOrWhiteSpace(text) ? [] : candidates.Where(x => string.Equals(text.Trim(), reference(x).Trim(), StringComparison.OrdinalIgnoreCase)).ToArray();
         if (matches.Length != 1 || resolvedId != id(matches[0]))
         {
             var cause = string.IsNullOrWhiteSpace(text) ? $"{role} reference is blank" : matches.Length == 0 ? $"{role} reference does not resolve to an active exported record: {text}" : matches.Length > 1 ? $"{role} reference is ambiguous: {text}" : $"{role} resolver state is stale or mismatched: {text}";
-            AddRoomFailure(failures, room, cause, kind, child);
+            ReferenceFailure(failures, room, cause, kind, child, recordId, role, requested, referenceKind, matches.Length switch
+            {
+                0 when string.IsNullOrWhiteSpace(text) => PreparedReferenceProblem.Blank,
+                0 => PreparedReferenceProblem.Missing,
+                > 1 => PreparedReferenceProblem.Ambiguous,
+                _ => PreparedReferenceProblem.Stale
+            }, evidence, relatedRoom);
             return matches.Length == 1 ? matches[0] : null;
         }
         return matches[0];
     }
 
-    private static SubroomState? ResolveSubroom(List<RoomGraphExportFailure> failures, RoomState room, string? text, Guid? resolvedId, IReadOnlyList<SubroomState> subrooms, string kind, string child, string role) =>
-        Resolve(failures, text, resolvedId, subrooms, x => x.Row.ReferenceId, x => x.Row.Id, room, kind, child, role);
-    private static string? ResolveSubroomNode(List<RoomGraphExportFailure> failures, RoomState room, string? text, Guid? resolvedId, IReadOnlyList<SubroomState> subrooms, string kind, string child, string role)
+    private static string? ResolveSubroomNode(List<RoomGraphExportFailure> failures, RoomState room, string? text, Guid? resolvedId, IReadOnlyList<SubroomState> subrooms, string kind, string child, Guid recordId, string role, List<PreparedGraphReference>? evidence, out SubroomState? state)
     {
-        var state = ResolveSubroom(failures, room, text, resolvedId, subrooms, kind, child, role);
-        if (state is not null && state.Id is null) AddRoomFailure(failures, room, $"resolved {role} has no valid export node identity", kind, child);
+        var matches = MatchReference(text, subrooms, x => x.Row.ReferenceId);
+        state = Resolve(failures, text, resolvedId, matches, x => x.Row.Id, room, kind, child, recordId, role, evidence, PreparedReferenceKind.Node, text);
+        if (state is not null && state.Id is null && (kind == "transition" || evidence is not null))
+        {
+            var cause = $"resolved {role} has no valid export node identity";
+            if (kind == "transition") ReferenceFailure(failures, room, cause, kind, child, recordId, role, text, PreparedReferenceKind.Node, PreparedReferenceProblem.InvalidIdentity, evidence);
+            else evidence?.Add(new(PreparedReferenceKind.Node, PreparedReferenceProblem.InvalidIdentity, room.Row.Name, kind, child, recordId, role, text, cause, room.Row.Id));
+        }
         return state?.Id;
+    }
+
+    private static void ReferenceFailure(List<RoomGraphExportFailure> failures, RoomState room, string cause, string kind, string child, Guid recordId, string field,
+        string? requested, PreparedReferenceKind referenceKind, PreparedReferenceProblem problem, List<PreparedGraphReference>? evidence, Guid? relatedRoom = null)
+    {
+        var failure = new RoomGraphExportFailure(cause, room.Id, room.Row.Name, kind, child, room.Row.Id);
+        failures.Add(failure);
+        evidence?.Add(new(referenceKind, problem, room.Row.Name, kind, child, recordId, field, requested, cause, room.Row.Id, failure,
+            relatedRoom is { } id ? [id] : null));
     }
 
     private static void ValidatePathways(List<RoomGraphExportFailure> failures, RoomState room, IReadOnlyList<ConnectionState> connections)
@@ -351,4 +545,6 @@ internal static class RoomExportStructure
     private sealed record TransitionState(TransitionRow Row, RoomState Room, string? Id);
     private sealed record LocationState(CheckRow Row, RoomState Room, string? Id, string? Type, bool? HasPersistedState);
     private sealed record ConnectionState(ConnectionRow Row, RoomState Room, string? Id, SubroomState? Source, SubroomState? Target);
+    private sealed record SelectedNode(RoomRow Room, string Kind, string Record, Guid RecordId, string Field, string? Requested, string NodeId);
+    private sealed record SelectedPort(RoomRow Room, string Record, Guid RecordId, string Requested, Guid TargetRecordId, Guid TargetRoomId);
 }

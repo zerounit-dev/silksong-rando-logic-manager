@@ -73,6 +73,31 @@ public sealed class LiveAccess(AuthenticationMode mode, IHttpContextAccessor htt
             return captured.Clone();
         }
     }
+
+    internal sealed record CircuitPrincipalObservation(long Revision, ClaimsPrincipal Principal, string Owner);
+
+    internal CircuitPrincipalObservation? CaptureCircuitPrincipalObservation(string policy)
+    {
+        lock (circuitBoundary)
+        {
+            if (!circuit || pendingObservation is not null || observationFailure is not null) return null;
+            var revision = observation;
+            var actor = RequireIdentity(Project(captured), policy);
+            return revision == observation ? new(revision, captured.Clone(), actor.Owner) : null;
+        }
+    }
+
+    // A consumer may publish a local result under this guard; no service calls or
+    // asynchronous work belong in the acceptance callback.
+    internal bool TryUseCircuitObservation(long revision, Action? accept = null)
+    {
+        lock (circuitBoundary)
+        {
+            if (!circuit || revision != observation || pendingObservation is not null || observationFailure is not null) return false;
+            accept?.Invoke();
+            return true;
+        }
+    }
     internal static ClaimsPrincipal BypassPrincipal(string owner) => new(new ClaimsIdentity(new[]
     {
         new Claim(ClaimTypes.NameIdentifier, "bypass"), new Claim(ClaimTypes.Name, "Standalone administrator"),

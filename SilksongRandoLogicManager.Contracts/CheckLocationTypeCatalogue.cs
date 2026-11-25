@@ -19,7 +19,8 @@ public static class CheckLocationTypeCatalogue
         new("travel", "Travel", "environment", "A travel-network access point or the persistent availability of a travel facility. It remains Travel even when payment or another prerequisite is required.", "Bellway access point, Ventrica access point", 10, true),
         new("lore", "Lore", "environment", "A readable or inspectable world spot whose interaction conveys lore or knowledge rather than awarding a collectible.", "Lore tablet, plaque, inscription, readable record", 11, false),
         new("event", "Event", "other", "A persistent progression or world-state milestone that has no more specific category.", "Wish start, wish progress, wish completion, rewardless turn-in", 12, true),
-        new("logic-point", "Logic Point", "other", "A virtual, geographically anchored reference used by logic. Reaching or using it does not inherently imply persistent state, an acquisition, combat completion, or a farmable resource.", "Temporary spawn position, location-only prerequisite, virtual room reference marker", 13, false)
+        new("spawn", "Spawn", "other", "An unconditional player starting position, not a persisted completion. Use the assigned node and a free requirement; do not use Spawn for arrivals gated by progress.", "Opening ledge", 13, false),
+        new("logic-point", "Logic Point", "other", "A virtual, geographically anchored reference used by logic. Reaching or using it does not inherently imply persistent state, an acquisition, combat completion, or a farmable resource.", "Temporary position used only as a logic reference, location-only prerequisite, virtual room reference marker", 14, false)
     });
 
     public static IReadOnlyList<CheckLocationTypeDefinition> Definitions => definitions;

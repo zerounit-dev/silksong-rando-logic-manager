@@ -2,6 +2,7 @@
 @layout ToolsLayout
 @rendermode @(new InteractiveServerRenderMode(prerender: false))
 @using Silksong_Rando_Logic_Manager.Services.Publishing
+@using Silksong_Rando_Logic_Manager.Authentication
 @implements IAsyncDisposable
 @inject DocumentationPublishingService Publishing
 @inject PublishingActivityService Activity
@@ -19,6 +20,7 @@
     }
     @if (view is not null)
     {
+        var awaitingMapDecision = view.MapPreflight?.AwaitingDecision == true;
         <p class="publishing-context tool-metadata">@view.Repository · @view.Branch</p>
         <div class="publishing-activity">
             <span>Last recorded room edit: @(latestActivity is null ? "Loading…" : !latestActivity.Available ? "History unavailable." : latestActivity.RecordedUtc is { } last ? (latestLocalTime ?? ActivityUtcTime(last)) : "No recorded room edits.")</span>
@@ -27,13 +29,17 @@
         <section class="publishing-card" aria-label="Preparation">
             <h2 class="tool-section-title">prepare</h2>
             <div class="publishing-actions" aria-busy="@EffectiveBusy.ToString().ToLowerInvariant()">
-                <button class="tool-action" type="button" disabled="@(!view.Enabled || EffectiveBusy || view.CandidateId is not null)" @onclick="Prepare"><i class="@CommandIcon(PublishingCommand.Prepare, "fa-file-export")" aria-hidden="true"></i> prepare</button>
+                <button class="tool-action" type="button" disabled="@(!view.Enabled || EffectiveBusy || view.CandidateId is not null)" @onclick="Prepare"><i class="@(awaitingMapDecision ? "fa-solid fa-hourglass-half" : CommandIcon(PublishingCommand.Prepare, "fa-file-export"))" aria-hidden="true"></i> prepare</button>
                 <button class="tool-action" type="button" disabled="@(EffectiveBusy || view.Phase is not ("Prepared" or "Interrupted" or "Failed"))" @onclick="Discard"><i class="@CommandIcon(PublishingCommand.Discard, "fa-trash")" aria-hidden="true"></i> discard prepared changes</button>
             </div>
             <p class="tool-progress" role="status" aria-live="polite">
-                @if (EffectiveBusy)
+                @if (awaitingMapDecision)
                 {
-                    <span><i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i> @(view.Phase == "Restoring" ? "Restoring publishing review." : view.Busy ? "Publishing operation in progress." : AdmissionStatus)</span><br />
+                    <span>Waiting for the initiating account’s decision.</span><br />
+                }
+                else if (EffectiveBusy)
+                {
+                    <span><span class="publishing-progress-dots" aria-hidden="true"><span></span><span></span><span></span></span> @(view.Phase == "Restoring" ? "Restoring publishing review." : view.Busy ? "Publishing operation in progress." : AdmissionStatus)</span><br />
                 }
                 @if (view.Progress is { } progress)
                 {
@@ -48,6 +54,60 @@
                 }
                 else { @view.Stage }
             </p>
+            @if (view.MapPreflight is { } map)
+            {
+                <section @key="view.MapPreparation" class="publishing-map" aria-label="Validate map data">
+                    <h3>Validate map data</h3>
+                    @if (map.Finished && map.Checks.Any(row => row.Status == MapCheckStatus.Fail))
+                    {
+                        <h4>Map findings</h4>
+                        <p class="publishing-map-summary">@MapSummary(map)</p>
+                    }
+                    @if (map.Outcome is { } outcome) { <p role="status">@outcome</p> }
+                    @if (map.AwaitingDecision)
+                    {
+                        <p>Generation has not started.</p>
+                        @if (view.MapDecision is { } decision)
+                        {
+                            <p>Proceed with generation anyway?</p>
+                            <div class="publishing-actions publishing-map-actions">
+                                <button class="tool-action" type="button" disabled="@(sendingMapDecision == decision)" @onclick="() => DecideMap(decision, true)">Proceed anyway</button>
+                                <button class="tool-action" type="button" disabled="@(sendingMapDecision == decision)" @onclick="() => DecideMap(decision, false)">Cancel preparation</button>
+                            </div>
+                        }
+                    }
+                    @if (mapDecisionError is { } decisionError && decisionError.Decision == view.MapDecision)
+                    {
+                        <p class="publishing-error" role="alert">@decisionError.Message</p>
+                    }
+                    @foreach (var group in map.Checks.GroupBy(row => row.Group))
+                    {
+                        <h4 class="publishing-map-category">@group.Key</h4>
+                        <ul class="publishing-map-rows">
+                            @foreach (var row in group)
+                            {
+                                <li @key="row.Name">
+                                    <div class="publishing-map-status" role="status">
+                                        <span><i class="@MapCheckIcon(row.Status) @MapCheckTone(row.Status)" aria-hidden="true"></i> @row.Name</span>
+                                        <strong class="@MapCheckTone(row.Status)">@row.Status.ToString().ToUpperInvariant()</strong>
+                                    </div>
+                                    <p class="publishing-map-description">@row.Description</p>
+                                    @if (row.Status == MapCheckStatus.Fail)
+                                    {
+                                        <div class="publishing-map-evidence">
+                                            @if (row.NotRun is { } reason) { <p>Could not run: @reason</p> }
+                                            @if (row.Report is { } report)
+                                            {
+                                                <PublishingMapFindings Report="report" />
+                                            }
+                                        </div>
+                                    }
+                                </li>
+                            }
+                        </ul>
+                    }
+                </section>
+            }
             @if (view.Phase == "Prepared")
             {
                 @if (view.Changes.Count == 0) { <p>No changes to publish.</p> }
@@ -528,8 +588,23 @@
                 {
                     var next = await Publishing.ReadAsync(Access, page, deliveredOperation, deliveredSequence);
                     if (disposed) return;
+                    var filtered = await FilterMapAccess(next);
+                    if (disposed) return;
+                    next = filtered.View;
+                    observedMapPreparation = next.MapPreparation;
                     if (!ReferenceEquals(next.Review, view?.Review) || next.ReviewEpoch != view?.ReviewEpoch) RetireReview();
-                    view = next;
+                    if (filtered.Proof is { } proof)
+                    {
+                        if (next.MapPreparation != proof.Preparation || !ReferenceEquals(mapAccessDenial, proof.Denial) ||
+                            !Access.TryUseCircuitObservation(proof.Revision, () =>
+                            {
+                                mapAccessDenial = null;
+                                view = next;
+                            }))
+                            view = WithoutMapEvidence(next);
+                    }
+                    else view = next;
+                    if (mapDecisionError is { } prior && prior.Decision != view?.MapDecision) mapDecisionError = null;
                     // Identity comes from actual running service work, not a local
                     // click that another page's admission may have beaten.
                     serviceCommand = !next.Busy ? null : next.Progress?.Operation switch
@@ -559,6 +634,9 @@
                     if (disposed) return;
                     RetireReview();
                     if (view is not null) view = view with { Review = null, ReviewError = null };
+                    observedMapPreparation = null;
+                    if (exception is AccessDeniedException)
+                        RetireMapAccess(mapAccessDenial is { } denial ? denial.Preparation : view?.MapPreparation);
                     Logger.LogError(exception, "Refreshing documentation publishing failed.");
                     Diagnostics.Show($"Refreshing documentation publishing failed.\n{exception}");
                     StateHasChanged();
@@ -586,7 +664,130 @@
             }
         }
     }
-    private Task Prepare() => RunCommand(PublishingCommand.Prepare, () => Publishing.PrepareAsync(Access, new(page)), "Preparing documentation");
+    private Guid? sendingMapDecision;
+    private (Guid Decision, string Message)? mapDecisionError;
+    private sealed class MapAccessDenial(Guid? preparation)
+    {
+        internal Guid? Preparation { get; } = preparation;
+        internal (Guid Preparation, long Revision)? Probed { get; set; }
+    }
+    private sealed record MapAccessProof(MapAccessDenial Denial, Guid Preparation, long Revision);
+    private MapAccessDenial? mapAccessDenial;
+    private Guid? observedMapPreparation;
+
+    private MapAccessDenial RetireMapAccess(Guid? preparation, bool decisionReply = false)
+    {
+        var retiresCurrentControls = !decisionReply || view?.MapPreparation == preparation;
+        if (view is not null) view = WithoutMapEvidence(view);
+        if (retiresCurrentControls)
+        {
+            mapDecisionError = null;
+            sendingMapDecision = null;
+        }
+        return mapAccessDenial = new(preparation);
+    }
+
+    private static PublishingView WithoutMapEvidence(PublishingView status) => status with { MapPreflight = null, MapDecision = null };
+
+    private async Task<(PublishingView View, MapAccessProof? Proof)> FilterMapAccess(PublishingView status)
+    {
+        if (mapAccessDenial is not { } denial || status.MapPreflight is null) return (status, null);
+        var masked = (WithoutMapEvidence(status), (MapAccessProof?)null);
+        if (status.MapPreparation is not { } later || later == denial.Preparation) return masked;
+
+        // A later job's authorized status is necessary but not sufficient: a
+        // circuit read does not prove the credential/stamp rejected by a command.
+        LiveAccess.CircuitPrincipalObservation proofInput;
+        try
+        {
+            if (Access.CaptureCircuitPrincipalObservation(AccessPolicies.PublishDocumentation) is not { } observed ||
+                denial.Probed == (later, observed.Revision)) return masked;
+            proofInput = observed;
+            denial.Probed = (later, observed.Revision);
+            await Publishing.ConfirmMapAccessAsync(observed);
+        }
+        catch (AccessDeniedException) { return masked; }
+        catch (Exception exception)
+        {
+            Logger.LogError(exception, "Verifying access to a later map preparation failed.");
+            return masked;
+        }
+        if (disposed || !ReferenceEquals(mapAccessDenial, denial) || !Access.TryUseCircuitObservation(proofInput.Revision)) return masked;
+
+        // Re-read after the proof, then carry it to the guarded view assignment.
+        // An auth/job change does not schedule a retry; the next ordinary refresh
+        // can try again for a different preparation or observation.
+        var confirmed = await Publishing.ReadAsync(Access, page, deliveredOperation, deliveredSequence);
+        return confirmed.MapPreparation == later
+            ? (confirmed, new(denial, later, proofInput.Revision))
+            : (WithoutMapEvidence(confirmed), null);
+    }
+    private static string MapSummary(MapPreflightView map)
+    {
+        var total = 0;
+        var incomplete = 0;
+        foreach (var row in map.Checks)
+        {
+            if (row.Status != MapCheckStatus.Fail) continue;
+            if (row.NotRun is not null) incomplete++;
+            total += row.Report?.Count ?? 0;
+        }
+        var counts = new List<string>(2);
+        if (total > 0) counts.Add(total == 1 ? "1 finding" : $"{total} findings");
+        if (incomplete > 0) counts.Add(incomplete == 1 ? "1 check not fully run" : $"{incomplete} checks not fully run");
+        return string.Join(", ", counts) + ".";
+    }
+
+    private static string MapCheckTone(MapCheckStatus status) => status switch
+    {
+        MapCheckStatus.Pass => "publishing-map-pass", MapCheckStatus.Fail => "publishing-error", _ => ""
+    };
+    private static string MapCheckIcon(MapCheckStatus status) => status switch
+    {
+        MapCheckStatus.Checking => "fa-solid fa-spinner fa-spin", MapCheckStatus.Pass => "fa-solid fa-check",
+        MapCheckStatus.Fail => "fa-solid fa-xmark", _ => "fa-regular fa-square"
+    };
+    private async Task DecideMap(Guid decision, bool proceed)
+    {
+        if (disposed || sendingMapDecision == decision || view?.MapDecision != decision || view.MapPreparation is not { } preparation) return;
+        sendingMapDecision = decision;
+        mapDecisionError = null;
+        try { await Publishing.DecideMapAsync(Access, new(decision, proceed)); await Refresh(); }
+        catch (PublishingBlock exception)
+        {
+            if (disposed || view?.MapDecision != decision) return;
+            await Refresh();
+            if (!disposed && view?.MapDecision == decision) mapDecisionError = (decision, exception.Message);
+        }
+        catch (AccessDeniedException exception)
+        {
+            if (disposed) return;
+            Logger.LogError(exception, "Submitting map preflight decision failed.");
+            var denial = RetireMapAccess(preparation, decisionReply: true);
+            StateHasChanged();
+            await Refresh();
+            // Both the running prompt and its terminal result have the same job
+            // identity. Do not replay an old command error over a later job (or
+            // after discard); a current status denial uses Refresh's own error.
+            if (!disposed && ReferenceEquals(mapAccessDenial, denial) && observedMapPreparation == preparation)
+                Diagnostics.Show($"Submitting map preflight decision failed.\n{exception}");
+        }
+        catch (Exception exception)
+        {
+            if (!disposed)
+            {
+                Logger.LogError(exception, "Submitting map preflight decision failed.");
+                if (view?.MapDecision == decision)
+                    Diagnostics.Show($"Submitting map preflight decision failed.\n{exception}");
+            }
+        }
+        finally { if (sendingMapDecision == decision) sendingMapDecision = null; }
+    }
+    private Task Prepare()
+    {
+        mapDecisionError = null;
+        return RunCommand(PublishingCommand.Prepare, () => Publishing.PrepareAsync(Access, new(page)), "Preparing documentation");
+    }
     private Task Discard() => RunCommand(PublishingCommand.Discard, () => Publishing.DiscardAsync(Access, new(page, view?.CandidateId)), "Discarding prepared changes");
     private Task Commit() => view?.CandidateId is { } id
         ? RunCommand(PublishingCommand.Commit, () => Publishing.CommitAndPushAsync(Access, new(page, id, message)), "Committing documentation") : Task.CompletedTask;

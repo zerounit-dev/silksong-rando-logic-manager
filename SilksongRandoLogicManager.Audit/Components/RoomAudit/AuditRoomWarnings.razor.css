@@ -1,0 +1,30 @@
+.audit-room-warnings {
+    margin-block: 0 .5rem;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+/* Match Room points and outrank the workspace's generic scoped h2 rule. */
+section.audit-room-warnings > h2 {
+    font-size: .78rem;
+    font-weight: 700;
+    text-transform: lowercase;
+    letter-spacing: .03em;
+    text-align: left;
+    margin: 0 0 .2rem;
+}
+
+.audit-room-warnings > ul { margin: 0; padding: 0; }
+.audit-room-warnings li > ul { margin: .2rem 0 0; padding-inline-start: .65em; }
+/* Hide markers without changing the native list style or display. */
+.audit-room-warnings li::marker { content: ""; font-size: 0; }
+.audit-room-warnings li + li { margin-block-start: .15rem; }
+.audit-island-warning, .audit-island-danger { padding: .15rem .35rem; border-inline-start: 2px solid currentColor; }
+.audit-island-warning {
+    color: var(--appearance-warning-on-fill, var(--appearance-warning));
+    background: var(--appearance-warning-bg);
+}
+.audit-island-danger {
+    color: var(--appearance-danger-on-fill, var(--appearance-danger));
+    background: var(--appearance-danger-bg);
+}

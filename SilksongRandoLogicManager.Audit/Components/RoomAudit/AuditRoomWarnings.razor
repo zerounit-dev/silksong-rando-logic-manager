@@ -1,0 +1,63 @@
+@if (Result is { Findings.Length: > 0 } result)
+{
+    <section class="audit-room-warnings" aria-labelledby="audit-room-warnings-title">
+        <h2 id="audit-room-warnings-title"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i> Room warnings</h2>
+        <ul>
+            @foreach (var finding in result.Findings)
+            {
+                var point = finding.Points[0];
+                var origin = result.Origin;
+                var islandClass = finding.Kind switch
+                {
+                    AuditWarningKind.IslandWithExit => "audit-island-warning",
+                    AuditWarningKind.IslandWithoutExit => "audit-island-danger",
+                    _ => null
+                };
+                <li class="@islandClass">
+                    @switch (finding.Kind)
+                    {
+                        case AuditWarningKind.IslandWithExit:
+                            <strong>Warning — Disconnected island: @(string.Join("; ", finding.Points)).</strong>
+                            <span>Separate from @origin within this room; review whether the separation is intentional.</span>
+                            break;
+                        case AuditWarningKind.IslandWithoutExit:
+                            <strong>Danger — Disconnected island: @(string.Join("; ", finding.Points)).</strong>
+                            <span>Separate from @origin within this room, with no assigned exit or connection to the origin's area.</span>
+                            break;
+                        case AuditWarningKind.NoDirectedPath:
+                            <strong>No directed path from @origin — @(string.Join("; ", finding.Points)).</strong>
+                            <span>This area is connected, but no in-room route goes that way, even with locks ignored.</span>
+                            break;
+                        case AuditWarningKind.DirectSelfLock:
+                            <strong>Self-Lock — @point.</strong>
+                            <span>Every possible activation rule for this check requires the check itself.</span>
+                            break;
+                        case AuditWarningKind.ApproachSelfLock:
+                            <strong>Self-Lock — @point.</strong>
+                            <span>Every possible approach from @origin requires this check first.</span>
+                            break;
+                        case AuditWarningKind.LocalDeadlock:
+                            <strong>Local Deadlock.</strong>
+                            <span>@(string.Join(" → ", finding.Points.Append(point))) (each point needs the next); none can be acquired first from @origin.</span>
+                            break;
+                        case AuditWarningKind.AlternativeDeadlock:
+                            <strong>Local Deadlock.</strong>
+                            <span>None of these points can be acquired first from @origin:</span>
+                            <ul>
+                                @foreach (var clause in finding.Clauses)
+                                {
+                                    <li>@clause.Point needs @(clause.NeedsOneOf.Length == 1 ? clause.NeedsOneOf[0]
+                                        : $"at least one of: {string.Join("; ", clause.NeedsOneOf)}").</li>
+                                }
+                            </ul>
+                            break;
+                    }
+                </li>
+            }
+        </ul>
+    </section>
+}
+
+@code {
+    [Parameter] public AuditRoomWarningResult? Result { get; set; }
+}

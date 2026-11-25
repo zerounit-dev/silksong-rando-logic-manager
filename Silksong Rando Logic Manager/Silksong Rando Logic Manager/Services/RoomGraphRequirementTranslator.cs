@@ -34,10 +34,15 @@ internal static class RoomGraphRequirementTranslator
         OrNode or => new AuditBoolean(false, Project(or.Left), Project(or.Right)),
         _ => throw new InvalidOperationException("Successful recognition has no audit evidence.")
     };
-    internal static RoomGraphRequirement Translate(string source, Guid owningRoomId, RoomGraphTranslationContext context)
+    internal static RoomGraphRequirement Translate(string source, Guid owningRoomId, RoomGraphTranslationContext context, PreparedRuleEvidence? evidence = null)
     {
-        if (string.IsNullOrWhiteSpace(source)) return Unresolved(source, "requirement is blank");
-        var parser = new Parser(source, owningRoomId, context);
+        if (string.IsNullOrWhiteSpace(source))
+        {
+            const string blank = "requirement is blank";
+            evidence?.UnreadableReasons.Add(new(blank));
+            return Unresolved(source, blank);
+        }
+        var parser = new Parser(source, owningRoomId, context, evidence);
         var parsed = parser.Parse();
         if (parsed.Node is null) return new(source, "unresolved", [], parsed.Reasons);
 
@@ -61,10 +66,11 @@ internal static class RoomGraphRequirementTranslator
     private sealed record AtomNode(string Value, AuditAtom? Evidence = null) : Node;
     private sealed record AndNode(Node Left, Node Right) : Node;
     private sealed record OrNode(Node Left, Node Right) : Node;
+    private sealed record InvalidAtom : Node;
     private sealed record ParseResult(Node? Node, IReadOnlyList<string> Reasons);
-    private sealed record AtomCandidate(Node? Output, string? Failure);
+    private sealed record AtomCandidate(Node? Output, string? Failure, PreparedDependencyFailure? DependencyFailure = null);
 
-    private sealed class Parser(string source, Guid owningRoomId, RoomGraphTranslationContext context)
+    private sealed class Parser(string source, Guid owningRoomId, RoomGraphTranslationContext context, PreparedRuleEvidence? evidence = null)
     {
         private static readonly HashSet<string> Difficulties = new(StringComparer.Ordinal) { "easy", "medium", "hard", "cbt", "intended" };
         private static readonly HashSet<string> Directions = new(StringComparer.Ordinal) { "left", "right", "up", "down", "both", "either", "any", "all" };
@@ -72,6 +78,16 @@ internal static class RoomGraphRequirementTranslator
         private int atomStart;
         private int atomLength;
         private readonly List<string> reasons = [];
+        private string[]? firstRecoverableFailure;
+        private enum AnnotationResult { Valid, Blank, Unsafe }
+
+        private void AddReason(string reason, PreparedDependencyFailure? dependencyFailure = null)
+        {
+            reasons.Add(reason);
+            if (evidence is null) return;
+            if (dependencyFailure is { Problem: PreparedDependencyProblem.MissingCheck }) evidence.MissingChecks.Add(dependencyFailure);
+            else evidence.UnreadableReasons.Add(new(reason, dependencyFailure?.Operand, dependencyFailure?.RelatedRoom));
+        }
 
         internal ParseResult Parse()
         {
@@ -80,10 +96,12 @@ internal static class RoomGraphRequirementTranslator
             SkipWhitespace();
             if (node is not null && position != source.Length)
             {
-                reasons.Add(source[position] == ')' ? "unmatched closing parenthesis" : $"unexpected text near: {source[position..].Trim()}");
+                AddReason(source[position] == ')' ? "unmatched closing parenthesis" : $"unexpected text near: {source[position..].Trim()}");
                 node = null;
             }
-            return new(node, reasons.Count == 0 ? [] : reasons);
+            if (evidence is not null && node is null && position < source.Length)
+                evidence.UninspectedSyntax ??= reasons.LastOrDefault();
+            return firstRecoverableFailure is not null ? new(null, firstRecoverableFailure) : new(node, reasons.Count == 0 ? [] : reasons);
         }
 
         private Node? ParseExpression(bool grouped)
@@ -96,7 +114,7 @@ internal static class RoomGraphRequirementTranslator
                 SkipWhitespace();
                 if (position >= source.Length)
                 {
-                    if (grouped) reasons.Add("mismatched parentheses");
+                    if (grouped) AddReason("mismatched parentheses");
                     return grouped ? null : left;
                 }
                 if (source[position] == ')')
@@ -109,12 +127,12 @@ internal static class RoomGraphRequirementTranslator
                 var next = WordAt("AND") ? "AND" : WordAt("OR") ? "OR" : null;
                 if (next is null)
                 {
-                    reasons.Add($"missing Boolean operator near: {source[position..].Trim()}");
+                    AddReason($"missing Boolean operator near: {source[position..].Trim()}");
                     return null;
                 }
                 if (operatorKind is not null && operatorKind != next)
                 {
-                    reasons.Add("mixed AND and OR require parentheses");
+                    AddReason("mixed AND and OR require parentheses");
                     return null;
                 }
                 operatorKind = next;
@@ -122,7 +140,7 @@ internal static class RoomGraphRequirementTranslator
                 SkipWhitespace();
                 if (position >= source.Length || source[position] == ')')
                 {
-                    reasons.Add($"Boolean operator {next} is missing its right operand");
+                    AddReason($"Boolean operator {next} is missing its right operand");
                     return null;
                 }
                 var right = ParseOperand();
@@ -136,12 +154,12 @@ internal static class RoomGraphRequirementTranslator
             SkipWhitespace();
             if (position >= source.Length)
             {
-                reasons.Add("requirement expression is incomplete");
+                AddReason("requirement expression is incomplete");
                 return null;
             }
             if (source[position] == ')')
             {
-                reasons.Add("empty Boolean group or missing operand");
+                AddReason("empty Boolean group or missing operand");
                 return null;
             }
             if (source[position] == '(')
@@ -158,22 +176,62 @@ internal static class RoomGraphRequirementTranslator
                 if (bracketDepth == 0 && (character is '(' or ')' || WordAt("AND") || WordAt("OR"))) break;
                 if (character == '[') bracketDepth++;
                 if (character == ']') bracketDepth--;
-                if (bracketDepth < 0) { reasons.Add("unmatched list delimiter"); return null; }
+                if (bracketDepth < 0) { UntrustedBoundary("unmatched list delimiter"); return null; }
                 position++;
             }
-            if (bracketDepth != 0) { reasons.Add("unmatched list delimiter"); return null; }
+            if (bracketDepth != 0) { UntrustedBoundary("unmatched list delimiter"); return null; }
             var raw = source[start..position].Trim();
             atomStart = start;
             atomLength = raw.Length;
             var atom = TranslateAtom(raw);
-            if (atom is null) return null;
+            if (atom is null)
+            {
+                // Keep the canonical first failure. For prepared evidence only,
+                // continue along the same grammar from this delimited operand.
+                if (evidence is null || raw.Length == 0) return null;
+                firstRecoverableFailure ??= reasons.ToArray();
+                atom = new InvalidAtom();
+            }
+            else if (evidence is not null) ObserveDependencies(atom, evidence);
 
             SkipWhitespace();
-            if (position < source.Length && source[position] == '(' && !ParseAnnotation()) return null;
+            if (position < source.Length && source[position] == '(')
+            {
+                var annotation = ParseAnnotation();
+                if (annotation == AnnotationResult.Unsafe) return null;
+                if (annotation == AnnotationResult.Blank)
+                {
+                    if (evidence is null) return null;
+                    // The closing delimiter was consumed. Continue only to
+                    // observe evidence; this operand still rejects the rule.
+                    firstRecoverableFailure ??= reasons.ToArray();
+                    return new InvalidAtom();
+                }
+            }
             return atom;
         }
 
-        private bool ParseAnnotation()
+        private void UntrustedBoundary(string reason)
+        {
+            AddReason(reason);
+            if (evidence is not null) evidence.UninspectedSyntax ??= reason;
+        }
+
+        private static void ObserveDependencies(Node atom, PreparedRuleEvidence evidence)
+        {
+            switch (atom)
+            {
+                case AtomNode { Value: var value } when value.StartsWith("dependency:", StringComparison.Ordinal):
+                    evidence.ResolvedIds.Add(value["dependency:".Length..]);
+                    break;
+                case OrNode alternative:
+                    ObserveDependencies(alternative.Left, evidence);
+                    ObserveDependencies(alternative.Right, evidence);
+                    break;
+            }
+        }
+
+        private AnnotationResult ParseAnnotation()
         {
             position++;
             var start = position;
@@ -181,30 +239,31 @@ internal static class RoomGraphRequirementTranslator
             {
                 if (source[position] is '(' or '\\')
                 {
-                    reasons.Add("annotation must be plain, nonnested text without backslash escaping");
-                    return false;
+                    UntrustedBoundary("annotation must be plain, nonnested text without backslash escaping");
+                    return AnnotationResult.Unsafe;
                 }
                 position++;
             }
             if (position >= source.Length)
             {
-                reasons.Add("mismatched annotation parenthesis");
-                return false;
+                UntrustedBoundary("mismatched annotation parenthesis");
+                return AnnotationResult.Unsafe;
             }
-            if (string.IsNullOrWhiteSpace(source[start..position]))
-            {
-                reasons.Add("annotation is blank");
-                return false;
-            }
+            var blank = source.AsSpan(start, position - start).IsWhiteSpace();
             position++;
-            return true;
+            if (blank)
+            {
+                AddReason("annotation is blank");
+                return AnnotationResult.Blank;
+            }
+            return AnnotationResult.Valid;
         }
 
         private Node? TranslateAtom(string raw)
         {
             if (raw.Length == 0)
             {
-                reasons.Add("requirement atom is blank");
+                AddReason("requirement atom is blank");
                 return null;
             }
             var normalized = RequirementCatalogueLanguage.NormalizeIdentification(raw);
@@ -217,18 +276,19 @@ internal static class RoomGraphRequirementTranslator
             if (successful.Length == 1) return successful[0].Output!;
             if (successful.Length > 1)
             {
-                reasons.Add($"ambiguous requirement atom: {raw}");
+                AddReason($"ambiguous requirement atom: {raw}");
                 return null;
             }
             if (candidates.Count == 0)
             {
-                reasons.Add(raw.IndexOfAny(['[', ']', ',']) >= 0
+                AddReason(raw.IndexOfAny(['[', ']', ',']) >= 0
                     ? $"invalid or unrecognized operand-list application (check selected list markers and operand order): {raw}"
                     : $"unrecognized predicate: {raw}");
                 return null;
             }
             foreach (var candidate in candidates)
-                if (candidate.Failure is { } failure) reasons.Add(failure);
+                if (candidate.Failure is { } failure)
+                    AddReason(failure, candidate.DependencyFailure);
             return null;
         }
 
@@ -244,6 +304,7 @@ internal static class RoomGraphRequirementTranslator
             RequirementAtomFormatArguments arguments = new();
             var operands = new List<AuditOperand>();
             Guid? dependencyId = null;
+            PreparedDependencyFailure? dependencyFailure = null;
             string? failure = null;
             var matched = false;
             switch (predicate.Syntax)
@@ -298,7 +359,8 @@ internal static class RoomGraphRequirementTranslator
                         var dependency = ResolveDependency(raw[prefix..]);
                         arguments = arguments with { CheckGraphId = dependency.LocationId };
                         dependencyId = dependency.CheckId;
-                        failure = dependency.Failure;
+                        dependencyFailure = dependency.Failure;
+                        failure = dependencyFailure?.Cause;
                     }
                     break;
                 case RequirementInputSyntax.PredicateThenQuantityThenCountable:
@@ -337,7 +399,7 @@ internal static class RoomGraphRequirementTranslator
                     throw new ArgumentOutOfRangeException();
             }
             if (!matched) return;
-            if (failure is not null) { candidates.Add(new(null, failure)); return; }
+            if (failure is not null) { candidates.Add(new(null, failure, dependencyFailure)); return; }
             try { candidates.Add(new(MakeAtom(predicate, arguments, operands, dependencyId), null)); }
             catch (Exception exception) { candidates.Add(new(null, $"predicate '{predicate.Name}' could not format its output: {exception.Message}")); }
         }
@@ -427,12 +489,14 @@ internal static class RoomGraphRequirementTranslator
             new AtomNode(RequirementAtomFormatter.Format(predicate.Syntax, predicate.OutputSyntax, arguments),
                 new(predicate.Id, predicate.OutputSyntax, arguments, operands, dependencyId, atomStart, atomLength));
 
-        private (string? LocationId, string? Failure, Guid? CheckId) ResolveDependency(string value)
+        private (string? LocationId, PreparedDependencyFailure? Failure, Guid? CheckId) ResolveDependency(string value)
         {
             var operand = value.TrimStart();
-            if (operand.Length == 0) return (null, "required check name is missing", null);
+            (string?, PreparedDependencyFailure?, Guid?) Fail(PreparedDependencyProblem problem, string cause, Guid? relatedRoom = null) =>
+                (null, new(problem, operand, cause, relatedRoom), null);
+            if (operand.Length == 0) return Fail(PreparedDependencyProblem.MissingOperand, "required check name is missing");
             var qualifiers = FindQualifiers(operand);
-            if (qualifiers.Any(value => value.Word == "GLOBAL")) return (null, "GLOBAL is not supported; use THE for full-catalogue scope", null);
+            if (qualifiers.Any(value => value.Word == "GLOBAL")) return Fail(PreparedDependencyProblem.InvalidScope, "GLOBAL is not supported; use THE for full-catalogue scope");
             Guid? targetRoom = owningRoomId;
             string checkName;
             if (qualifiers.Count == 0) checkName = operand;
@@ -445,20 +509,20 @@ internal static class RoomGraphRequirementTranslator
             {
                 checkName = operand[..qualifiers[0].Index].TrimEnd();
                 var roomText = operand[(qualifiers[0].Index + 2)..].TrimStart();
-                if (checkName.Length == 0 || roomText.Length == 0) return (null, "check dependency has an incomplete IN scope", null);
+                if (checkName.Length == 0 || roomText.Length == 0) return Fail(PreparedDependencyProblem.InvalidScope, "check dependency has an incomplete IN scope");
                 var roomIdentity = RequirementCatalogueLanguage.NormalizeIdentification(roomText);
                 var rooms = context.Rooms.Where(room => RequirementCatalogueLanguage.NormalizeIdentification(room.ReferenceId) == roomIdentity).ToArray();
-                if (rooms.Length != 1) return (null, rooms.Length == 0 ? $"dependency room was not found: {roomText}" : $"dependency room is ambiguous: {roomText}", null);
+                if (rooms.Length != 1) return rooms.Length == 0 ? Fail(PreparedDependencyProblem.MissingRoom, $"dependency room was not found: {roomText}") : Fail(PreparedDependencyProblem.AmbiguousRoom, $"dependency room is ambiguous: {roomText}");
                 targetRoom = rooms[0].Id;
             }
-            else return (null, "check dependency has invalid or conflicting scope syntax", null);
+            else return Fail(PreparedDependencyProblem.InvalidScope, "check dependency has invalid or conflicting scope syntax");
 
-            if (string.IsNullOrWhiteSpace(checkName)) return (null, "required check name is missing", null);
+            if (string.IsNullOrWhiteSpace(checkName)) return Fail(PreparedDependencyProblem.MissingOperand, "required check name is missing");
             var identity = RequirementCatalogueLanguage.NormalizeIdentification(checkName);
             var checks = context.Checks.Where(check => (targetRoom is null || check.RoomId == targetRoom) &&
                 RequirementCatalogueLanguage.NormalizeIdentification(check.FriendlyName) == identity).ToArray();
-            if (checks.Length != 1) return (null, checks.Length == 0 ? $"dependency check was not found: {checkName}" : $"dependency check is ambiguous: {checkName}", null);
-            return checks[0].LocationId is { } id ? (id, null, checks[0].Id) : (null, $"dependency check has no valid export location identity: {checkName}", null);
+            if (checks.Length != 1) return checks.Length == 0 ? Fail(PreparedDependencyProblem.MissingCheck, $"dependency check was not found: {checkName}", targetRoom) : Fail(PreparedDependencyProblem.AmbiguousCheck, $"dependency check is ambiguous: {checkName}", targetRoom);
+            return checks[0].LocationId is { } id ? (id, null, checks[0].Id) : Fail(PreparedDependencyProblem.InvalidIdentity, $"dependency check has no valid export location identity: {checkName}", checks[0].RoomId);
         }
 
         private static List<(string Word, int Index)> FindQualifiers(string text)

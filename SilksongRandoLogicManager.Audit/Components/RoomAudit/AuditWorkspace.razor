@@ -214,6 +214,7 @@
                 <div class="audit-inspection-scroll" aria-label="Room points and route details">
                 <AuditTargetInspector @key="@(("inspector", generation))" Target="selectedTarget" Selection="targetSelection" Scenario="scenario" Evaluator="evaluator" Access="access" EndpointMode="endpointMode" Reverse="reverseAccess" HighlightChanged="@(highlight => SetHighlight(scenarioOwner, highlight))" SceneStep="sceneStep" SceneStepSelection="sceneStepSelection">
                 <Workspace>
+                <AuditRoomWarnings Result="roomWarnings" />
                 <section class="audit-room-state" aria-label="Room points">
                     <h2 id="audit-room-points-title" tabindex="-1">Room points</h2>
                     <div class="audit-point-tabs" role="tablist" aria-label="Point categories">
@@ -306,6 +307,9 @@
     private AuditEvaluation SceneEvaluation => access!.ForOrigin(endpointMode == AuditEndpointMode.Routes
         ? routeHighlight.OriginKey ?? scenario.Start : scenario.Start);
     private CancellationTokenSource? loadCancellation;
+    private CancellationTokenSource? warningCancellation;
+    private AuditRoomWarningResult? roomWarnings;
+    private string? warningOrigin;
     private IJSObjectReference? storage;
     private Task<StorageRead>? modeRead;
     private bool modeRestored;
@@ -367,6 +371,7 @@
         using var timing = SilksongRandoLogicManager.Contracts.Diagnostics.OperationTiming.Start("audit.reload", Host.PerformanceLogging);
         var owner = ++generation;
         requirements = null;
+        RetireWarnings();
         loadCancellation?.Cancel(); loadCancellation?.Dispose();
         loadCancellation = new(); var token = loadCancellation.Token;
         snapshot = null; evaluator = null; access = null; reverseAccess = null; endpointMode = AuditEndpointMode.Neutral; failure = null; notice = null;
@@ -466,6 +471,7 @@
         if (disposed || owner != generation) return;
         UpdateAccess();
         restoring = false; restoreInFlight = false;
+        await RefreshWarningsAsync();
         await InvokeAsync(StateHasChanged);
     }
     private async Task ReconcileDialogsAsync()
@@ -536,6 +542,30 @@
     }
     private Task SelectOriginAsync(string start)
     { scenario.Start = evaluator!.Starts.Any(x => x.Valid && x.Key == start) ? start : ""; return ChangedAsync(); }
+    private void RetireWarnings()
+    {
+        roomWarnings = null; warningOrigin = null;
+        warningCancellation?.Cancel(); warningCancellation?.Dispose(); warningCancellation = null;
+    }
+    private async Task RefreshWarningsAsync()
+    {
+        var current = evaluator;
+        var origin = scenario.Start;
+        if (disposed || current is null || warningOrigin == origin) return;
+        RetireWarnings();
+        warningOrigin = origin;
+        var owner = generation;
+        var request = warningCancellation = new();
+        var token = request.Token;
+        try
+        {
+            var result = await Host.ExecuteAsync(() => AuditRoomWarningAnalysis.Analyze(current.Room, origin, token), token);
+            if (!disposed && generation == owner && ReferenceEquals(current, evaluator) &&
+                ReferenceEquals(request, warningCancellation) && origin == scenario.Start && !token.IsCancellationRequested)
+                roomWarnings = result;
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+    }
     private void SelectTarget(long owner, AuditTarget? target)
     {
         if (Host.Blocked || disposed || owner != generation || loading || evaluator is null || access is null || target is not null && !Targets().Any(x => x.Target == target)) return;
@@ -720,21 +750,28 @@
     private async Task ChangedAsync()
     {
         if (disposed || evaluator is null) return;
+        if (warningOrigin != scenario.Start) RetireWarnings();
         using var timing = SilksongRandoLogicManager.Contracts.Diagnostics.OperationTiming.Start("audit.scenario-change", Host.PerformanceLogging);
         UpdateAccess();
         timing.End();
-        var owner = generation;
-        if (storage is null) { notice = "Scenario storage is unavailable; inputs last only while this page stays open."; return; }
+        var warnings = RefreshWarningsAsync();
         try
         {
-            var saved = await storage.InvokeAsync<bool>("write", StorageKey, JsonSerializer.Serialize(scenario));
-            if (!saved && owner == generation && !disposed) notice = "Scenario storage is unavailable; inputs last only while this page stays open.";
+            var owner = generation;
+            if (storage is null) { notice = "Scenario storage is unavailable; inputs last only while this page stays open."; return; }
+            try
+            {
+                var saved = await storage.InvokeAsync<bool>("write", StorageKey, JsonSerializer.Serialize(scenario));
+                if (!saved && owner == generation && !disposed) notice = "Scenario storage is unavailable; inputs last only while this page stays open.";
+            }
+            catch (JSException) { if (owner == generation && !disposed) notice = "Scenario storage is unavailable; inputs last only while this page stays open."; }
         }
-        catch (JSException) { if (owner == generation && !disposed) notice = "Scenario storage is unavailable; inputs last only while this page stays open."; }
+        finally { await warnings; }
     }
     public async ValueTask DisposeAsync()
     {
         disposed = true; generation++; requirements = null; loadCancellation?.Cancel(); loadCancellation?.Dispose();
+        RetireWarnings();
         await DisposeDialogHandlesAsync(); dialogCallback?.Dispose();
         if (dialogModule is not null) try { await dialogModule.DisposeAsync(); } catch (JSDisconnectedException) { }
         if (storage is not null) try { await storage.DisposeAsync(); } catch (JSDisconnectedException) { }

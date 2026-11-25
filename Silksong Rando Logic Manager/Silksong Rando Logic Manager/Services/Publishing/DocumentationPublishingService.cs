@@ -19,6 +19,9 @@ public sealed record PublishingView(bool Enabled, string Repository, string Bran
     internal PublishingRoomReview? Review { get; init; }
     internal string? ReviewError { get; init; }
     internal long ReviewEpoch { get; init; }
+    internal MapPreflightView? MapPreflight { get; init; }
+    internal Guid? MapPreparation { get; init; }
+    internal Guid? MapDecision { get; init; }
 }
 public sealed record PrepareDocumentation(PublishingPage Page);
 public sealed record CommitDocumentation(PublishingPage Page, string CandidateId, string Message);
@@ -50,6 +53,7 @@ public sealed partial class DocumentationPublishingService : IDisposable, IAsync
     private Task? activeJob;
     private string stage = "Not prepared", phase = "Idle";
     private PublishingProgress? progress;
+    private readonly CancellationToken applicationStopping;
     private static readonly string[] PreparationTasks =
     [
         "Check the publishing repository and download remote changes if needed.",
@@ -58,6 +62,7 @@ public sealed partial class DocumentationPublishingService : IDisposable, IAsync
         "Export the requirement catalogue used by the published logic.",
         "Export the complete room catalogue.",
         "Export the connections and logic linking rooms.",
+        "Validate map data.",
         "Export room-map coordinates and boundaries.",
         "Write room pages, annotated images and documentation indexes.",
         "Verify generated files and compare them with the current publication.",
@@ -142,11 +147,13 @@ public sealed partial class DocumentationPublishingService : IDisposable, IAsync
         builder.Services.AddSingleton(provider => new DocumentationPublishingService(settings,
             provider.GetRequiredService<IWebHostEnvironment>(), provider.GetRequiredService<ApplicationStoragePaths>(),
             provider.GetRequiredService<SceneImageFileService>(), provider.GetRequiredService<ILogger<DocumentationPublishingService>>(),
-            provider.GetRequiredService<IServiceScopeFactory>(), provider.GetRequiredService<SharedPublicationCoordinator>()));
+            provider.GetRequiredService<IServiceScopeFactory>(), provider.GetRequiredService<SharedPublicationCoordinator>(),
+            provider.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping));
     }
 
     internal DocumentationPublishingService(PublishingSettings settings, IWebHostEnvironment environment, ApplicationStoragePaths paths, SceneImageFileService images,
-        ILogger<DocumentationPublishingService> logger, IServiceScopeFactory scopes, SharedPublicationCoordinator publications)
+        ILogger<DocumentationPublishingService> logger, IServiceScopeFactory scopes, SharedPublicationCoordinator publications,
+        CancellationToken applicationStopping)
     {
         this.settings = settings;
         storage = new(paths.DataRoot); git = new(storage, settings); this.images = images;
@@ -155,6 +162,7 @@ public sealed partial class DocumentationPublishingService : IDisposable, IAsync
         this.logger = logger;
         this.scopes = scopes;
         this.publications = publications;
+        this.applicationStopping = applicationStopping;
     }
     public async Task<PublishingView> ReadAsync(LiveAccess access, PublishingPage page, Guid? timingOperation = null, long timingSequence = 0)
     {
@@ -176,7 +184,9 @@ public sealed partial class DocumentationPublishingService : IDisposable, IAsync
                 CandidateId(), pendingCommit, publishedUrl, error, validation, changes,
                 failureOwner == actor.Owner && failurePage == page ? failure : null,
                 timingOwner == actor.Owner && timingPage == page ? timings?.Read(timingOperation, timingSequence) ?? [] : [])
-            { Review = !busy && phase == "Prepared" ? roomReview : null, ReviewError = phase == "Prepared" ? reviewError : null, ReviewEpoch = reviewAdmissionVersion };
+            { Review = !busy && phase == "Prepared" ? roomReview : null, ReviewError = phase == "Prepared" ? reviewError : null, ReviewEpoch = reviewAdmissionVersion,
+                MapPreflight = mapPreflight, MapPreparation = mapPreparation,
+                MapDecision = pendingMapDecision?.Owner == actor.Owner ? pendingMapDecision.Id : null };
         }
     }
     private Task EnsureInitializedAsync(LiveAccess access, string owner, PublishingPage page)
@@ -257,7 +267,7 @@ public sealed partial class DocumentationPublishingService : IDisposable, IAsync
         { journal.Configuration, journal.BaseCommit, journal.Renderer, Files = journal.Files.OrderBy(x => x.Key, StringComparer.Ordinal), journal.Removed }));
         pendingCommit = journal?.Phase == "PendingPush" ? journal.Commit : null;
     }
-    public Task<bool> PrepareAsync(LiveAccess access, PrepareDocumentation command) => StartAuthorizedAsync(access, command.Page, PreparationStep(1), execution => PrepareAsync(execution), () =>
+    public Task<bool> PrepareAsync(LiveAccess access, PrepareDocumentation command) => StartAuthorizedAsync(access, command.Page, PreparationStep(1), PrepareAsync, () =>
     {
         if (journal is not null) throw new PublishingBlock($"A retained operation already exists in phase {journal.Phase}{(journal.Commit is null ? "" : $", commit {journal.Commit}")}. " +
             (journal.Phase is "Prepared" or "Interrupted" or "Failed"
@@ -289,7 +299,7 @@ public sealed partial class DocumentationPublishingService : IDisposable, IAsync
         storage.Timing = discard;
         try
         {
-        discard.Measure(PublishingMetric.Cleanup, storage.Clear); lock (gate) { journal = null; changes = []; validation = []; phase = "Idle"; stage = "Discarded"; progress = null; PublishIdentity(); }
+        discard.Measure(PublishingMetric.Cleanup, storage.Clear); lock (gate) { journal = null; changes = []; validation = []; mapPreflight = null; mapPreparation = null; phase = "Idle"; stage = "Discarded"; progress = null; PublishIdentity(); }
         NotifyChanged();
         discard.Complete();
         return Task.CompletedTask;
@@ -362,6 +372,7 @@ public sealed partial class DocumentationPublishingService : IDisposable, IAsync
             catch (Exception ex) { RetainFailure(ex, actor.Owner, page); changed = true; return false; }
             busy = true; reviewAdmissionVersion++; error = null; publishedUrl = null;
             progress = initialProgress; stage = initialProgress is null ? "Discarding prepared changes" : "Operation in progress";
+            if (initialProgress?.Operation == "Preparation") { mapPreflight = null; mapPreparation = Guid.NewGuid(); }
             changed = true;
             failure = null; failureOwner = null; failurePage = default;
             timings = new(logger, NotifyChanged); timingOwner = actor.Owner; timingPage = page;
@@ -434,6 +445,8 @@ public sealed partial class DocumentationPublishingService : IDisposable, IAsync
                         }
                         finally
                         {
+                            if (initialProgress?.Operation == "Preparation")
+                                SettleStoppedMapPreflight(operationFailure is not null);
                             if (operationFailure is not null)
                             {
                                 // Retain this process's known stopped task, never live item counts.
@@ -486,8 +499,7 @@ public sealed partial class DocumentationPublishingService : IDisposable, IAsync
         storage.Save(journal);
         using var repo = git.PrepareRepository(journal);
         journal.BaseCommit = repo.Head.Tip.Sha; storage.Save(journal);
-        Directory.CreateDirectory(storage.Candidate);
-        var database = Path.Combine(storage.Candidate, "silksong-rando-logic.db");
+        var database = Path.Combine(storage.Staging, "Frozen.db");
         var captures = Path.Combine(storage.Staging, "Captures");
         BeginTask(PreparationStep(2));
         var factory = await PublishingSnapshot.AcquireAsync(liveDatabase, database, captures, images, publications, execution, CancellationToken.None, taskTiming!);
@@ -497,36 +509,46 @@ public sealed partial class DocumentationPublishingService : IDisposable, IAsync
         var issues = taskTiming.Measure(PublishingMetric.Validation, documents.Validate);
         lock (gate) validation = issues.ToArray();
         NotifyChanged();
-        if (issues.Count != 0) throw new PublishingBlock("Publication validation failed. Correct the listed records and prepare a fresh candidate; no authored data was repaired.");
         BeginTask(PreparationStep(4));
         var catalogue = await RequirementCatalogueExportService.ExportPreparedAsync(factory, TimeProvider.System);
-        storage.Atomic(Path.Combine(storage.Candidate, "silksong-requirement-catalogue.json"), catalogue.JsonUtf8);
         BeginTask(PreparationStep(5));
         var complete = await DistributedExportService.ExportPreparedAsync(factory, TimeProvider.System, true);
+        var hardReasons = new List<string>();
         if (complete is CompleteExportInvalidLocationType invalid)
-            throw new PublishingBlock($"The frozen complete room catalogue has an unsupported check location type.\nRoom: {invalid.Failure.RoomName} ({invalid.Failure.RoomId:D})\nCheck: {invalid.Failure.CheckName} ({invalid.Failure.CheckId:D})\nChoose a supported Location Type for this check in the editor, then discard the failed preparation and prepare again.");
-        if (complete is not CompleteExported exported) throw new InvalidOperationException($"Unexpected complete room catalogue export outcome: {complete?.GetType().Name ?? "null"}.");
-        storage.Atomic(Path.Combine(storage.Candidate, "silksong-room-catalogue.json"), exported.Export.JsonUtf8);
+        {
+            hardReasons.Add($"The frozen complete room catalogue has an unsupported check location type. Room: {invalid.Failure.RoomName} ({invalid.Failure.RoomId:D}); Check: {invalid.Failure.CheckName} ({invalid.Failure.CheckId:D}). Choose a supported Location Type in the editor.");
+            PublishValidation([.. issues, .. hardReasons]);
+        }
+        else if (complete is not CompleteExported) throw new InvalidOperationException($"Unexpected complete room catalogue export outcome: {complete?.GetType().Name ?? "null"}.");
         BeginTask(PreparationStep(6));
-        var graph = await RoomGraphExportService.GeneratePreparedAsync(factory);
-        if (graph.Content is null) { lock (gate) validation = graph.Failures.Select(x => $"{x.RoomName}: {x.ChildName}: {x.Cause}").ToArray(); NotifyChanged(); throw new PublishingBlock("Room graph export failed. Correct the listed records and prepare again."); }
-        storage.Atomic(Path.Combine(storage.Candidate, "room_graph_data.json"), graph.Content);
+        var preparedGraph = await RoomGraphExportService.GeneratePreparedAsync(factory, failures =>
+            PublishValidation([.. issues, .. hardReasons, .. failures.Select(DescribeGraphFailure)]));
+        if (!preparedGraph.Export.Succeeded)
+            PublishValidation([.. issues, .. hardReasons, .. preparedGraph.Export.Failures.Select(DescribeGraphFailure)]);
         BeginTask(PreparationStep(7));
-        var geometry = await RoomGeometryExportService.GeneratePreparedAsync(factory);
-        if (geometry.Content is null) { lock (gate) validation = geometry.Failures.Select(x => $"{x.RoomName}: {x.ChildName}: {x.Cause}").ToArray(); NotifyChanged(); throw new PublishingBlock("Room geometry export failed. Correct the listed records and prepare again."); }
-        storage.Atomic(Path.Combine(storage.Candidate, "room_geometry_data.json"), geometry.Content);
+        await ValidateMapAsync(execution, preparedGraph, issues, hardReasons);
         BeginTask(PreparationStep(8));
-        documents.Write(storage, storage.Candidate, captures, font, (room, count, maximum) =>
-            Progress(PreparationStep(8) with { RoomsCompleted = count, RoomsTotal = maximum, CurrentRoom = room,
-                Detail = room is null ? "Write README, MASTER and documentation indexes." : null }), timings);
+        var geometry = await RoomGeometryExportService.GeneratePreparedAsync(factory);
+        if (geometry.Content is null) { lock (gate) validation = [.. validation, .. geometry.Failures.Select(x => $"{x.RoomName}: {x.ChildName}: {x.Cause}")]; NotifyChanged(); throw new PublishingBlock("Room geometry export failed. Correct the listed records and prepare again."); }
+        PublishingStorage.CheckTree(storage.Staging);
+        Directory.CreateDirectory(storage.Candidate);
+        File.Move(database, Path.Combine(storage.Candidate, "silksong-rando-logic.db"));
+        storage.Atomic(Path.Combine(storage.Candidate, "silksong-requirement-catalogue.json"), catalogue.JsonUtf8);
+        storage.Atomic(Path.Combine(storage.Candidate, "silksong-room-catalogue.json"), ((CompleteExported)complete).Export.JsonUtf8);
+        storage.Atomic(Path.Combine(storage.Candidate, "room_graph_data.json"), preparedGraph.Export.Content!);
+        storage.Atomic(Path.Combine(storage.Candidate, "room_geometry_data.json"), geometry.Content);
         BeginTask(PreparationStep(9));
+        documents.Write(storage, storage.Candidate, captures, font, (room, count, maximum) =>
+            Progress(PreparationStep(9) with { RoomsCompleted = count, RoomsTotal = maximum, CurrentRoom = room,
+                Detail = room is null ? "Write README, MASTER and documentation indexes." : null }), timings);
+        BeginTask(PreparationStep(10));
         journal.Files = taskTiming!.Measure(PublishingMetric.Hashing, () => Directory.EnumerateFiles(storage.Candidate, "*", SearchOption.AllDirectories)
             .Order(StringComparer.Ordinal).ToDictionary(x => Path.GetRelativePath(storage.Candidate, x).Replace('\\', '/'), PublishingStorage.FileHash, StringComparer.Ordinal));
         taskTiming.Measure(PublishingMetric.Inventory, () => git.Inventory(repo, journal));
         var lengths = taskTiming.Measure(PublishingMetric.Validation, () => storage.ValidateForReview(journal));
         var review = taskTiming.Measure(PublishingMetric.Review, () => Review(repo, journal, lengths));
         var (projection, projectionError) = BuildReview(repo, journal, review, taskTiming);
-        BeginTask(PreparationStep(10));
+        BeginTask(PreparationStep(11));
         journal.Phase = "Prepared"; storage.Save(journal);
         taskTiming!.Measure(PublishingMetric.Cleanup, () => { PublishingStorage.CheckTree(captures); Directory.Delete(captures, true); });
         lock (gate) { changes = review; roomReview = projection; reviewError = projectionError; phase = "Prepared"; stage = changes.Count == 0 ? "No changes; nothing to publish" : "Ready for review; not yet published"; PublishIdentity(); progress = null; }
@@ -568,7 +590,7 @@ public sealed partial class DocumentationPublishingService : IDisposable, IAsync
     public async ValueTask DisposeAsync()
     {
         Task? active;
-        lock (gate) { stopping = true; active = activeJob ?? initialization; }
+        lock (gate) { stopping = true; pendingMapDecision?.Completion.TrySetResult(MapDecisionChoice.Shutdown); active = activeJob ?? initialization; }
         // Do not release the process writer lease while admitted work can still
         // touch the checkout. Abrupt process exit instead uses durable recovery.
         if (active is not null) await active.ConfigureAwait(false);
