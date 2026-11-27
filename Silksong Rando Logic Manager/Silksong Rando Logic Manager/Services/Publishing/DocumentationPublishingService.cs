@@ -11,6 +11,7 @@ public readonly record struct PublishingPage(Guid Id);
 public sealed record PublishingFailure(Guid Id, string Details);
 public sealed record PublishingProgress(string Operation, int Step, int Steps, string Task,
     int? RoomsCompleted = null, int? RoomsTotal = null, string? CurrentRoom = null, string? Detail = null);
+internal sealed record PublishingLatestPreparation(DateTime RecordedUtc, string User, bool IsOtherAccount);
 public sealed record PublishingView(bool Enabled, string Repository, string Branch, bool CredentialsReady,
     bool Busy, string Phase, string Stage, PublishingProgress? Progress, string? CandidateId,
     string? Commit, string? PublishedUrl, string? Error, IReadOnlyList<string> Validation, IReadOnlyList<PublishingChange> Changes,
@@ -22,8 +23,9 @@ public sealed record PublishingView(bool Enabled, string Repository, string Bran
     internal MapPreflightView? MapPreflight { get; init; }
     internal Guid? MapPreparation { get; init; }
     internal Guid? MapDecision { get; init; }
+    internal PublishingLatestPreparation? LatestPreparation { get; init; }
 }
-public sealed record PrepareDocumentation(PublishingPage Page);
+public sealed record PrepareDocumentation(PublishingPage Page, string? ExpectedCandidateId, long ExpectedEpoch);
 public sealed record CommitDocumentation(PublishingPage Page, string CandidateId, string Message);
 public sealed record RetryDocumentationPush(PublishingPage Page, string Commit);
 public sealed record DiscardDocumentation(PublishingPage Page, string? CandidateId);
@@ -53,6 +55,9 @@ public sealed partial class DocumentationPublishingService : IDisposable, IAsync
     private Task? activeJob;
     private string stage = "Not prepared", phase = "Idle";
     private PublishingProgress? progress;
+    // Advisory only: one admitted start for this service lifetime, not restored from the journal.
+    private sealed record PreparationStart(DateTime RecordedUtc, string Account, string User);
+    private PreparationStart? latestPreparation;
     private readonly CancellationToken applicationStopping;
     private static readonly string[] PreparationTasks =
     [
@@ -186,7 +191,10 @@ public sealed partial class DocumentationPublishingService : IDisposable, IAsync
                 timingOwner == actor.Owner && timingPage == page ? timings?.Read(timingOperation, timingSequence) ?? [] : [])
             { Review = !busy && phase == "Prepared" ? roomReview : null, ReviewError = phase == "Prepared" ? reviewError : null, ReviewEpoch = reviewAdmissionVersion,
                 MapPreflight = mapPreflight, MapPreparation = mapPreparation,
-                MapDecision = pendingMapDecision?.Owner == actor.Owner ? pendingMapDecision.Id : null };
+                MapDecision = pendingMapDecision?.Id,
+                LatestPreparation = latestPreparation is { } latest
+                    ? new(latest.RecordedUtc, latest.User, !string.Equals(latest.Account, actor.Account, StringComparison.Ordinal))
+                    : null };
         }
     }
     private Task EnsureInitializedAsync(LiveAccess access, string owner, PublishingPage page)
@@ -246,6 +254,7 @@ public sealed partial class DocumentationPublishingService : IDisposable, IAsync
                 delta.Complete();
             }
             (roomReview, reviewError) = BuildReview(repo, journal, changes, restored);
+            RestorePreparationReport(journal);
             if (roomReview is not null) restored.Complete();
         }
         phase = journal.Phase;
@@ -259,20 +268,81 @@ public sealed partial class DocumentationPublishingService : IDisposable, IAsync
         };
     }
     private string? CandidateId() => phase == "Blocked" ? null : candidateId;
+    private void RestorePreparationReport(PublishingJournal retainedJournal)
+    {
+        // Optional display metadata is not a new candidate-admission gate.
+        // Old, malformed or mismatched reports are truthfully unavailable.
+        if (retainedJournal.PreparationReport is not { } json) return;
+        try
+        {
+            var retained = json.Deserialize<PublishingPreparationReport>();
+            if (retained is not { Report: { Finished: true, AwaitingDecision: false, Checks: not null } report }
+                || retained.CandidateId != PublishingStorage.CandidateIdentity(retainedJournal)
+                || retained.Preparation == Guid.Empty
+                || !UsableDisplayReport(report)) return;
+            mapPreflight = report;
+            mapPreparation = retained.Preparation;
+        }
+        catch (JsonException) { logger.LogWarning("The retained candidate's preparation display report is unavailable."); }
+    }
+    private static bool UsableDisplayReport(MapPreflightView report)
+    {
+        if (report.Checks.Count == 0) return false;
+        foreach (var row in report.Checks)
+        {
+            if (row is null || string.IsNullOrWhiteSpace(row.Group) || string.IsNullOrWhiteSpace(row.Name)
+                || string.IsNullOrWhiteSpace(row.Description) || row.Status is not (MapCheckStatus.Pass or MapCheckStatus.Fail)) return false;
+            if (row.Status == MapCheckStatus.Pass && (row.Report is not null || row.NotRun is not null)) return false;
+            if (row.Status == MapCheckStatus.Fail && row.Report is null && string.IsNullOrWhiteSpace(row.NotRun)) return false;
+            if (row.Report is not { } findings) continue;
+            if (findings.Zones is null || findings.Count <= 0) return false;
+            var total = 0;
+            foreach (var zone in findings.Zones)
+            {
+                if (zone is null || zone.Label is null || zone.Rooms is null) return false;
+                var zoneTotal = 0;
+                foreach (var room in zone.Rooms)
+                {
+                    if (room is null || room.Label is null || room.Records is null) return false;
+                    var count = 0;
+                    foreach (var record in room.Records)
+                    {
+                        if (record is null || record.Title is null || record.Reasons is null) return false;
+                        foreach (var reason in record.Reasons)
+                        {
+                            if (reason is null || reason.Detail is null || reason.Rooms is null
+                                || reason.Rooms.Any(x => x is null || x.Label is null)) return false;
+                            count++;
+                        }
+                    }
+                    if (count != room.Count) return false;
+                    zoneTotal += count;
+                }
+                if (zoneTotal != zone.Count) return false;
+                total += zoneTotal;
+            }
+            if (total != findings.Count) return false;
+        }
+        return true;
+    }
     // Called during exclusive initialization or under gate at a quiescent operation boundary,
     // never from ordinary status/progress reads. No manifest/list reference escapes.
     private void PublishIdentity()
     {
-        candidateId = journal is null || phase == "Blocked" ? null : PublishingStorage.Hash(JsonSerializer.SerializeToUtf8Bytes(new
-        { journal.Configuration, journal.BaseCommit, journal.Renderer, Files = journal.Files.OrderBy(x => x.Key, StringComparer.Ordinal), journal.Removed }));
+        candidateId = journal is null || phase == "Blocked" ? null : PublishingStorage.CandidateIdentity(journal);
         pendingCommit = journal?.Phase == "PendingPush" ? journal.Commit : null;
     }
-    public Task<bool> PrepareAsync(LiveAccess access, PrepareDocumentation command) => StartAuthorizedAsync(access, command.Page, PreparationStep(1), PrepareAsync, () =>
+    public Task<bool> PrepareAsync(LiveAccess access, PrepareDocumentation command) => StartAuthorizedAsync(access, command.Page, PreparationStep(1), async execution =>
     {
-        if (journal is not null) throw new PublishingBlock($"A retained operation already exists in phase {journal.Phase}{(journal.Commit is null ? "" : $", commit {journal.Commit}")}. " +
-            (journal.Phase is "Prepared" or "Interrupted" or "Failed"
-                ? "Review the existing result or use Discard prepared changes before preparing again; discard remains subject to the current evidence checks."
-                : "Keep Staging/current.json, Candidate and Rollback; compare the retained commit and checkout/remote history before resolving this operation. A new preparation cannot replace unresolved commit evidence."));
+        // Busy remains owned throughout cleanup and fresh acquisition. No separately
+        // admitted discard/prepare gap permits another publisher to intervene.
+        if (journal is not null) storage.Clear();
+        await PrepareAsync(execution);
+    }, () =>
+    {
+        if (command.ExpectedCandidateId != CandidateId() || command.ExpectedEpoch != reviewAdmissionVersion)
+            throw new PublishingBlock("The preparation request refers to a different result. Read the current result before preparing again.");
+        if (journal is not null) ValidateDiscard(command.ExpectedCandidateId);
     });
     public Task<bool> CommitAndPushAsync(LiveAccess access, CommitDocumentation command) => StartAuthorizedAsync(access, command.Page, CommitStep(1), async _ =>
     {
@@ -307,11 +377,15 @@ public sealed partial class DocumentationPublishingService : IDisposable, IAsync
         finally { storage.Timing = null; }
     }, () =>
     {
+        ValidateDiscard(command.CandidateId);
+    });
+    private void ValidateDiscard(string? expectedCandidate)
+    {
         if (journal?.Phase is not ("Prepared" or "Interrupted" or "Failed"))
             throw new PublishingBlock($"Discard is not allowed in retained phase {journal?.Phase ?? "none"}{(journal?.Commit is null ? "" : $", commit {journal.Commit}")}. Keep Staging/current.json, Candidate and Rollback; establish whether the retained commit/ref advanced and compare the checkout with the recorded before/after files before cleanup.");
-        if (command.CandidateId != CandidateId()) throw new PublishingBlock("The discard request refers to a different preparation than the current view. Reopen the current result and review which prepared changes would be removed before requesting discard again.");
+        if (expectedCandidate != CandidateId()) throw new PublishingBlock("The discard request refers to a different preparation than the current view. Reopen the current result and review which prepared changes would be removed before requesting discard again.");
         if (phase == "Blocked") throw new PublishingBlock($"Discard is blocked by the current recovery failure in retained phase {journal.Phase}. Keep Staging/current.json, Candidate and Rollback; resolve the specific file/commit comparison in the preceding failure before cleanup.");
-    });
+    }
     private async Task<bool> StartAuthorizedAsync(LiveAccess access, PublishingPage page, PublishingProgress? initialProgress, Func<LiveAccess, Task> action, Action validate)
     {
         var actor = await access.RequireAsync(AccessPolicies.PublishDocumentation);
@@ -372,7 +446,13 @@ public sealed partial class DocumentationPublishingService : IDisposable, IAsync
             catch (Exception ex) { RetainFailure(ex, actor.Owner, page); changed = true; return false; }
             busy = true; reviewAdmissionVersion++; error = null; publishedUrl = null;
             progress = initialProgress; stage = initialProgress is null ? "Discarding prepared changes" : "Operation in progress";
-            if (initialProgress?.Operation == "Preparation") { mapPreflight = null; mapPreparation = Guid.NewGuid(); }
+            if (initialProgress?.Operation == "Preparation")
+            {
+                latestPreparation = new(DateTime.UtcNow, actor.Account,
+                    actor.Bypass ? PublishingActivityService.LocalAdminLabel :
+                    string.IsNullOrWhiteSpace(actor.Username) ? "Unknown account" : actor.Username);
+                mapPreflight = null; mapPreparation = Guid.NewGuid();
+            }
             changed = true;
             failure = null; failureOwner = null; failurePage = default;
             timings = new(logger, NotifyChanged); timingOwner = actor.Owner; timingPage = page;
@@ -434,6 +514,13 @@ public sealed partial class DocumentationPublishingService : IDisposable, IAsync
                         if (journal?.Phase is "Replacing" or "Advancing") phase = "Blocked";
                         else if (phase != "Blocked") phase = journal?.Phase ?? "Idle";
                         if (phase != "Prepared") { roomReview = null; reviewError = null; }
+                        else if (operationFailure is not null && initialProgress?.Operation == "Preparation")
+                        {
+                            // Cleanup failed before a fresh journal took ownership.
+                            // Never label that new attempt's report as the old candidate's.
+                            mapPreflight = null; mapPreparation = null;
+                            RestorePreparationReport(journal!);
+                        }
                         try { finalization.Measure(PublishingMetric.Projection, PublishIdentity); }
                         catch (Exception ex)
                         {
@@ -445,7 +532,7 @@ public sealed partial class DocumentationPublishingService : IDisposable, IAsync
                         }
                         finally
                         {
-                            if (initialProgress?.Operation == "Preparation")
+                            if (initialProgress?.Operation == "Preparation" && phase != "Prepared")
                                 SettleStoppedMapPreflight(operationFailure is not null);
                             if (operationFailure is not null)
                             {
@@ -506,27 +593,18 @@ public sealed partial class DocumentationPublishingService : IDisposable, IAsync
         BeginTask(PreparationStep(3));
         var documents = await taskTiming!.MeasureAsync(PublishingMetric.Load, () => PublishingDocuments.LoadAsync(factory));
         timings!.Rooms(documents.Rooms.Count);
-        var issues = taskTiming.Measure(PublishingMetric.Validation, documents.Validate);
-        lock (gate) validation = issues.ToArray();
-        NotifyChanged();
         BeginTask(PreparationStep(4));
         var catalogue = await RequirementCatalogueExportService.ExportPreparedAsync(factory, TimeProvider.System);
         BeginTask(PreparationStep(5));
-        var complete = await DistributedExportService.ExportPreparedAsync(factory, TimeProvider.System, true);
-        var hardReasons = new List<string>();
-        if (complete is CompleteExportInvalidLocationType invalid)
-        {
-            hardReasons.Add($"The frozen complete room catalogue has an unsupported check location type. Room: {invalid.Failure.RoomName} ({invalid.Failure.RoomId:D}); Check: {invalid.Failure.CheckName} ({invalid.Failure.CheckId:D}). Choose a supported Location Type in the editor.");
-            PublishValidation([.. issues, .. hardReasons]);
-        }
-        else if (complete is not CompleteExported) throw new InvalidOperationException($"Unexpected complete room catalogue export outcome: {complete?.GetType().Name ?? "null"}.");
+        var complete = await DistributedExportService.ExportPreparedAsync(factory, TimeProvider.System, true, taskTiming!);
+        if (complete is not (CompleteExported or CompleteExportInvalidLocationType))
+            throw new InvalidOperationException($"Unexpected complete room catalogue export outcome: {complete?.GetType().Name ?? "null"}.");
         BeginTask(PreparationStep(6));
-        var preparedGraph = await RoomGraphExportService.GeneratePreparedAsync(factory, failures =>
-            PublishValidation([.. issues, .. hardReasons, .. failures.Select(DescribeGraphFailure)]));
-        if (!preparedGraph.Export.Succeeded)
-            PublishValidation([.. issues, .. hardReasons, .. preparedGraph.Export.Failures.Select(DescribeGraphFailure)]);
+        var preparedGraph = await RoomGraphExportService.GeneratePreparedAsync(factory);
         BeginTask(PreparationStep(7));
-        await ValidateMapAsync(execution, preparedGraph, issues, hardReasons);
+        await ValidateMapAsync(execution, preparedGraph, documents);
+        if (complete is not CompleteExported)
+            throw new InvalidOperationException("Complete catalogue rejected a location type not rejected by canonical graph integrity.");
         BeginTask(PreparationStep(8));
         var geometry = await RoomGeometryExportService.GeneratePreparedAsync(factory);
         if (geometry.Content is null) { lock (gate) validation = [.. validation, .. geometry.Failures.Select(x => $"{x.RoomName}: {x.ChildName}: {x.Cause}")]; NotifyChanged(); throw new PublishingBlock("Room geometry export failed. Correct the listed records and prepare again."); }
@@ -549,6 +627,8 @@ public sealed partial class DocumentationPublishingService : IDisposable, IAsync
         var review = taskTiming.Measure(PublishingMetric.Review, () => Review(repo, journal, lengths));
         var (projection, projectionError) = BuildReview(repo, journal, review, taskTiming);
         BeginTask(PreparationStep(11));
+        journal.PreparationReport = JsonSerializer.SerializeToElement(new PublishingPreparationReport(
+            PublishingStorage.CandidateIdentity(journal), mapPreparation!.Value, mapPreflight!));
         journal.Phase = "Prepared"; storage.Save(journal);
         taskTiming!.Measure(PublishingMetric.Cleanup, () => { PublishingStorage.CheckTree(captures); Directory.Delete(captures, true); });
         lock (gate) { changes = review; roomReview = projection; reviewError = projectionError; phase = "Prepared"; stage = changes.Count == 0 ? "No changes; nothing to publish" : "Ready for review; not yet published"; PublishIdentity(); progress = null; }
@@ -562,7 +642,7 @@ public sealed partial class DocumentationPublishingService : IDisposable, IAsync
         // A durable confirmed outcome is written before cleanup. Startup never pushes.
         var url = settings.RepositoryUrl.EndsWith(".git", StringComparison.Ordinal) ? settings.RepositoryUrl[..^4] : settings.RepositoryUrl;
         taskTiming!.Measure(PublishingMetric.Cleanup, storage.Clear);
-        lock (gate) { publishedUrl = url + "/commit/" + commit; stage = "Publication confirmed"; phase = "Idle"; journal = null; changes = []; PublishIdentity(); progress = null; }
+        lock (gate) { publishedUrl = url + "/commit/" + commit; stage = "Publication confirmed"; phase = "Idle"; journal = null; changes = []; mapPreflight = null; mapPreparation = null; PublishIdentity(); progress = null; }
         NotifyChanged();
         return Task.CompletedTask;
     }

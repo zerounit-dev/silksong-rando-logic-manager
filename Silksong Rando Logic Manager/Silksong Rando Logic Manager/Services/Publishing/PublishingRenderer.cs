@@ -160,16 +160,48 @@ internal static class PublishingRenderer
         // aspect ratios differ. The width/height overload only fits inside this box.
         timing.Measure(PublishingMetric.Resize, () => source.Resize(new MagickGeometry((uint)Math.Max(1, Math.Round(width * scale)), (uint)Math.Max(1, Math.Round(height * scale)))
         { IgnoreAspectRatio = true }));
-        foreach (var kind in new[] { "scene", "connections", "checks" })
+        using (var backgroundTime = timing.Segment(PublishingMetric.SharedBackgroundDraw))
+        using (var canvas = new MagickImage(new MagickColor(22, 25, 31), (uint)canvasWidth, (uint)canvasHeight))
         {
-            using var drawTime = timing.Segment(kind switch { "scene" => PublishingMetric.SceneDraw, "connections" => PublishingMetric.ConnectionsDraw, _ => PublishingMetric.ChecksDraw });
-            using var canvas = new MagickImage(new MagickColor(22, 25, 31), (uint)canvasWidth, (uint)canvasHeight);
             var background = Point(room.SceneMinX, room.SceneMaxY.Value);
             canvas.Composite(source, (int)Math.Round(background.X), (int)Math.Round(background.Y), CompositeOperator.Over);
+            backgroundTime.Complete();
+            source.Dispose(); // No native source image is needed after composition; the using also covers earlier failures.
+
+            WriteVariant(canvas, "scene", PublishingMetric.SceneDraw, PublishingMetric.SceneEncode, clone: true);
+            if (frames.Count != 0)
+            {
+                using var frameTime = timing.Segment(PublishingMetric.SharedFrameDraw);
+                var outlines = BeginAnnotationDraw();
+                foreach (var f in frames.Values) { var a = Point(f.L, f.T); var c = Point(f.R, f.B); outlines.Rectangle(a.X, a.Y, c.X, c.Y); }
+                outlines.Draw(canvas);
+                frameTime.Complete();
+            }
+            WriteVariant(canvas, "connections", PublishingMetric.ConnectionsDraw, PublishingMetric.ConnectionsEncode, clone: true);
+            // Connections is disposed. Checks starts at the same framed pixels
+            // and is the last consumer, so it can take the base in place.
+            WriteVariant(canvas, "checks", PublishingMetric.ChecksDraw, PublishingMetric.ChecksEncode, clone: false);
+        }
+        foreach (var id in frames.Keys.Concat(markers.SelectMany(x => x.Ids))) result.Annotated.Add(id);
+        // Machine-facing geometry never passes through the decoder/encoder.
+        var rawDestination = PublishingStorage.Resolve(destination, $"01-geometry/{room.Id:D}.webp");
+        var raw = timing.Measure(PublishingMetric.RawRead, () => File.ReadAllBytes(capture));
+        storage.AtomicGeneratedCandidate(rawDestination, raw);
+        return result;
+
+        static IDrawables<byte> BeginAnnotationDraw() =>
+            new Drawables().StrokeWidth(2).FillColor(MagickColors.Transparent).StrokeColor(new MagickColor(73, 214, 225));
+
+        void WriteVariant(MagickImage basis, string kind, PublishingMetric drawMetric, PublishingMetric encodeMetric, bool clone)
+        {
+            using var drawTime = timing.Segment(drawMetric);
+            using var branch = clone ? basis.Clone() : null;
+            var canvas = branch ?? basis;
             if (kind != "scene")
             {
-                var draw = new Drawables().StrokeWidth(2).FillColor(MagickColors.Transparent).StrokeColor(new MagickColor(73, 214, 225));
-                foreach (var f in frames.Values) { var a = Point(f.L, f.T); var c = Point(f.R, f.B); draw.Rectangle(a.X, a.Y, c.X, c.Y); }
+                // A fresh native draw must restore the frame state, including the
+                // transparent fill and 2px width inherited by connector lines.
+                var draw = BeginAnnotationDraw();
                 foreach (var label in labels[kind].Where(x => x.Marker.Kind != "frame"))
                 {
                     var m = label.Marker; var p = Point(m.X, m.Y);
@@ -204,15 +236,9 @@ internal static class PublishingRenderer
             drawTime.Complete();
             // Preserve left-to-right evaluation: destination resolution precedes encoding.
             var destinationPath = PublishingStorage.Resolve(destination, path);
-            var png = timing.Measure(kind switch { "scene" => PublishingMetric.SceneEncode, "connections" => PublishingMetric.ConnectionsEncode, _ => PublishingMetric.ChecksEncode }, () => canvas.ToByteArray());
-            storage.Atomic(destinationPath, png);
+            var png = timing.Measure(encodeMetric, () => canvas.ToByteArray());
+            storage.AtomicGeneratedCandidate(destinationPath, png);
             result.Paths[kind] = path;
         }
-        foreach (var id in frames.Keys.Concat(markers.SelectMany(x => x.Ids))) result.Annotated.Add(id);
-        // Machine-facing geometry never passes through the decoder/encoder.
-        var rawDestination = PublishingStorage.Resolve(destination, $"01-geometry/{room.Id:D}.webp");
-        var raw = timing.Measure(PublishingMetric.RawRead, () => File.ReadAllBytes(capture));
-        storage.Atomic(rawDestination, raw);
-        return result;
     }
 }

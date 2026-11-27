@@ -4,7 +4,7 @@ using Silksong_Rando_Logic_Manager.Data;
 
 namespace Silksong_Rando_Logic_Manager.Services.Publishing;
 
-public sealed record PublishingLatestActivity(bool Available, DateTime? RecordedUtc);
+public sealed record PublishingLatestActivity(bool Available, DateTime? RecordedUtc, string? User);
 public sealed record PublishingActivityRow(string User, string RoomName, DateTime RecordedUtc, bool WithinLastHour);
 public sealed record PublishingRecentActivity(bool Available, IReadOnlyList<PublishingActivityRow> Rows);
 
@@ -38,10 +38,12 @@ public sealed class PublishingActivityService
             using var admission = await publications.AcquireAsync(token);
             await access.RequireAsync(AccessPolicies.PublishDocumentation, token);
             var read = await history.ReadActivityAsync(null, token);
-            return new(read.Available, read.LatestUtc);
+            if (read.LatestActorId is not Guid actorId) return new(read.Available, read.LatestUtc, null);
+            var usernames = await accounts.ReadPublishingActivityNamesAsync([actorId], token);
+            return new(read.Available, read.LatestUtc, ActivityUsername(actorId, usernames));
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
-        catch (Exception exception) { LogFailure(exception); return new(false, null); }
+        catch (Exception exception) { LogFailure(exception); return new(false, null, null); }
     }
 
     public async Task<PublishingRecentActivity> ReadRecentAsync(CancellationToken token = default)
@@ -65,9 +67,7 @@ public sealed class PublishingActivityService
             var rows = read.Edits.OrderByDescending(x => x.RecordedUtc)
                 .ThenBy(x => x.ActorId.ToString("D"), StringComparer.Ordinal).Select(edit =>
                 {
-                    var user = edit.ActorId == Guid.Empty ? "Bypass"
-                        : usernames.TryGetValue(edit.ActorId, out var name) ? name : "Unknown account";
-                    return new PublishingActivityRow(user, edit.RoomName, edit.RecordedUtc,
+                    return new PublishingActivityRow(ActivityUsername(edit.ActorId, usernames), edit.RoomName, edit.RecordedUtc,
                         edit.RecordedUtc >= now.AddHours(-1) && edit.RecordedUtc <= now);
                 }).ToArray();
             return new(true, rows);
@@ -75,6 +75,11 @@ public sealed class PublishingActivityService
         catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
         catch (Exception exception) { LogFailure(exception); return new(false, []); }
     }
+
+    internal const string LocalAdminLabel = "Local admin";
+
+    private static string ActivityUsername(Guid actorId, IReadOnlyDictionary<Guid, string> usernames) =>
+        actorId == Guid.Empty ? LocalAdminLabel : usernames.TryGetValue(actorId, out var name) ? name : "Unknown account";
 
     private void LogFailure(Exception exception)
     {

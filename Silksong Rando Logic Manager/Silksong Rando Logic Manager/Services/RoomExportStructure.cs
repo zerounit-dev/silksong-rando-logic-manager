@@ -49,8 +49,13 @@ internal static class RoomExportStructure
             .OrderBy(x => x.Row.SortOrder).ThenBy(x => x.Id, StringComparer.Ordinal).ThenBy(x => x.Row.Id).ToArray();
         foreach (var state in groupStates)
         {
-            if (state.Id is null) globalFailures.Add(new($"room group '{state.Row.Name}' does not produce a nonempty canonical export ID"));
-            else Register(state.Id, $"room group '{state.Row.Name}'", identityOwners, globalFailures);
+            if (state.Id is null)
+            {
+                var failure = new RoomGraphExportFailure($"room group '{state.Row.Name}' does not produce a nonempty canonical export ID");
+                globalFailures.Add(failure);
+                prepared?.Integrity.Add(new(PreparedIntegrityFamily.Identifiers, failure, $"Room group: {state.Row.Name}", "group", state.Row.Id));
+            }
+            else Register(state.Id, $"room group '{state.Row.Name}'", identityOwners, globalFailures, prepared: prepared, recordId: state.Row.Id);
         }
         var groupById = groupStates.ToDictionary(x => x.Row.Id);
 
@@ -65,10 +70,10 @@ internal static class RoomExportStructure
           .ThenBy(x => x.Row.SortOrder).ThenBy(x => x.Id, StringComparer.Ordinal).ThenBy(x => x.Row.Id).ToArray();
         foreach (var state in roomStates)
         {
-            if (state.Group is null) Fail(state, "active room is not assigned to a room group");
+            if (state.Group is null) Fail(state, "active room is not assigned to a room group", family: PreparedIntegrityFamily.RoomGroup);
             if (string.IsNullOrWhiteSpace(state.Row.Name)) Fail(state, "room name is blank");
             if (CanonicalValue(state.Row.ReferenceId) is null) Fail(state, "room reference ID does not produce a nonempty export segment");
-            if (state.Id is not null) Register(state.Id, $"room '{state.Row.Name}'", identityOwners, roomFailures, state);
+            if (state.Id is not null) Register(state.Id, $"room '{state.Row.Name}'", identityOwners, roomFailures, state, prepared: prepared, recordId: state.Row.Id);
         }
 
         var subroomsByRoom = snapshot.Subrooms.GroupBy(x => x.RoomId).ToDictionary(x => x.Key, x => x.ToArray());
@@ -88,9 +93,9 @@ internal static class RoomExportStructure
                 var id = room.Id is not null && segment is not null ? $"{room.Id}#{segment}" : null;
                 var state = new SubroomState(row, room, id);
                 subroomStates.Add(row.Id, state);
-                if (string.IsNullOrWhiteSpace(row.Name)) Fail(room, "subroom name is blank", "subroom", Display(row.Name, row.ReferenceId));
-                if (segment is null) Fail(room, "subroom reference ID does not produce a nonempty export segment", "subroom", Display(row.Name, row.ReferenceId));
-                if (id is not null) Register(id, $"subroom '{Display(row.Name, row.ReferenceId)}'", identityOwners, roomFailures, room, "subroom", Display(row.Name, row.ReferenceId));
+                if (string.IsNullOrWhiteSpace(row.Name)) Fail(room, "subroom name is blank", "subroom", Display(row.Name, row.ReferenceId), row.Id);
+                if (segment is null) Fail(room, "subroom reference ID does not produce a nonempty export segment", "subroom", Display(row.Name, row.ReferenceId), row.Id);
+                if (id is not null) Register(id, $"subroom '{Display(row.Name, row.ReferenceId)}'", identityOwners, roomFailures, room, "subroom", Display(row.Name, row.ReferenceId), prepared, row.Id);
             }
             foreach (var row in Get(transitionsByRoom, room.Row.Id).OrderBy(x => x.SortOrder).ThenBy(x => CanonicalValue(x.Alias), StringComparer.Ordinal).ThenBy(x => x.Id))
             {
@@ -99,10 +104,10 @@ internal static class RoomExportStructure
                 var id = room.Id is not null && segment is not null ? $"{room.Id}@{segment}" : null;
                 var state = new TransitionState(row, room, id);
                 transitionStates.Add(row.Id, state);
-            if (aliasFailure is not null) Fail(room, $"transition alias {aliasFailure}", "transition", Display(row.Name, row.Alias));
-                else if (segment is null) Fail(room, "transition alias does not produce a nonempty canonical export segment", "transition", Display(row.Name, row.Alias));
-                if (string.IsNullOrWhiteSpace(row.Name)) Fail(room, "transition name is blank", "transition", Display(row.Name, row.Alias));
-                if (id is not null) Register(id, $"transition '{Display(row.Name, row.Alias)}'", identityOwners, roomFailures, room, "transition", Display(row.Name, row.Alias));
+            if (aliasFailure is not null) Fail(room, $"transition alias {aliasFailure}", "transition", Display(row.Name, row.Alias), row.Id);
+                else if (segment is null) Fail(room, "transition alias does not produce a nonempty canonical export segment", "transition", Display(row.Name, row.Alias), row.Id);
+                if (string.IsNullOrWhiteSpace(row.Name)) Fail(room, "transition name is blank", "transition", Display(row.Name, row.Alias), row.Id);
+                if (id is not null) Register(id, $"transition '{Display(row.Name, row.Alias)}'", identityOwners, roomFailures, room, "transition", Display(row.Name, row.Alias), prepared, row.Id);
             }
             foreach (var row in Get(checksByRoom, room.Row.Id).OrderBy(x => x.SortOrder).ThenBy(x => CanonicalValue(x.Name), StringComparer.Ordinal).ThenBy(x => x.Id))
             {
@@ -112,10 +117,10 @@ internal static class RoomExportStructure
                 var id = room.Id is not null && type is not null && name is not null ? $"location:{room.Id}::{type}/{name}" : null;
                 var state = new LocationState(row, room, id, type, definition?.HasPersistedState);
                 locationStates.Add(row.Id, state);
-                if (string.IsNullOrWhiteSpace(row.Name)) Fail(room, "location name is blank", "location", Display(row.Name, row.InGameId));
-                if (name is null) Fail(room, "location name does not produce a nonempty export segment", "location", Display(row.Name, row.InGameId));
-                if (row.LocationType is not null && definition is null) Fail(room, $"location type '{row.LocationType}' is not recognized", "location", Display(row.Name, row.InGameId));
-                if (id is not null) Register(id, $"location '{Display(row.Name, row.InGameId)}'", identityOwners, roomFailures, room, "location", Display(row.Name, row.InGameId));
+                if (string.IsNullOrWhiteSpace(row.Name)) Fail(room, "location name is blank", "location", Display(row.Name, row.InGameId), row.Id);
+                if (name is null) Fail(room, "location name does not produce a nonempty export segment", "location", Display(row.Name, row.InGameId), row.Id);
+                if (row.LocationType is not null && definition is null) Fail(room, $"location type '{row.LocationType}' is not recognized", "location", Display(row.Name, row.InGameId), row.Id);
+                if (id is not null) Register(id, $"location '{Display(row.Name, row.InGameId)}'", identityOwners, roomFailures, room, "location", Display(row.Name, row.InGameId), prepared, row.Id);
             }
         }
 
@@ -130,7 +135,7 @@ internal static class RoomExportStructure
                 ? new[] { new ProjectedNode(room.Id is null ? "#room" : $"{room.Id}#room", "room", null) }
                 : roomSubrooms.Where(x => x.Id is not null).OrderBy(x => x.Row.SortOrder).ThenBy(x => x.Id, StringComparer.Ordinal)
                     .Select(x => new ProjectedNode(x.Id!, x.Row.Name, x.Row)).ToArray();
-            if (roomSubrooms.Length == 0 && room.Id is not null) Register($"{room.Id}#room", $"synthetic node for room '{room.Row.Name}'", identityOwners, roomFailures, room);
+            if (roomSubrooms.Length == 0 && room.Id is not null) Register($"{room.Id}#room", $"synthetic node for room '{room.Row.Name}'", identityOwners, roomFailures, room, prepared: prepared, recordId: room.Row.Id);
 
             var projectedTransitions = new List<ProjectedTransition>();
             foreach (var transition in Get(transitionsByRoom, room.Row.Id).Select(x => transitionStates[x.Id]).OrderBy(x => x.Row.SortOrder).ThenBy(x => x.Id, StringComparer.Ordinal))
@@ -193,20 +198,20 @@ internal static class RoomExportStructure
                 var target = ResolveSubroomNode(roomFailures, room, row.DestinationText, row.ResolvedDestinationId, roomSubrooms, "connection", child, row.Id, "destination subroom", evidence, out var targetState);
                 if (sourceState?.Row.Id == row.ResolvedSourceId) ObserveNode(source, "connection", child, row.Id, "source subroom", row.SourceText);
                 if (targetState?.Row.Id == row.ResolvedDestinationId) ObserveNode(target, "connection", child, row.Id, "destination subroom", row.DestinationText);
-                if (roomSubrooms.Length == 0) Fail(room, "an active connection cannot exist in a room without active subrooms", "connection", Display(row.Name, row.Alias));
-                if (sourceState is not null && targetState is not null && sourceState.Row.Id == targetState.Row.Id) Fail(room, "connection source and destination form a self-loop", "connection", Display(row.Name, row.Alias));
+                if (roomSubrooms.Length == 0) Fail(room, "an active connection cannot exist in a room without active subrooms", "connection", Display(row.Name, row.Alias), row.Id, PreparedIntegrityFamily.Subroom);
+                if (sourceState is not null && targetState is not null && sourceState.Row.Id == targetState.Row.Id) Fail(room, "connection source and destination form a self-loop", "connection", Display(row.Name, row.Alias), row.Id, PreparedIntegrityFamily.Connection);
             var aliasFailure = AliasFailure(row.Alias);
             var alias = aliasFailure is null ? CanonicalValue(row.Alias) : null;
-            if (aliasFailure is not null) Fail(room, $"connection alias {aliasFailure}", "connection", Display(row.Name, row.Alias));
-                else if (alias is null) Fail(room, "connection alias does not produce a nonempty canonical export segment", "connection", Display(row.Name, row.Alias));
-                if (string.IsNullOrWhiteSpace(row.Name)) Fail(room, "connection name is blank", "connection", Display(row.Name, row.Alias));
+            if (aliasFailure is not null) Fail(room, $"connection alias {aliasFailure}", "connection", Display(row.Name, row.Alias), row.Id);
+                else if (alias is null) Fail(room, "connection alias does not produce a nonempty canonical export segment", "connection", Display(row.Name, row.Alias), row.Id);
+                if (string.IsNullOrWhiteSpace(row.Name)) Fail(room, "connection name is blank", "connection", Display(row.Name, row.Alias), row.Id);
                 var id = room.Id is not null && source is not null && target is not null && alias is not null
                     ? $"{room.Id}#{CanonicalValue(sourceState!.Row.ReferenceId)}>{CanonicalValue(targetState!.Row.ReferenceId)}@{alias}" : null;
                 var state = new ConnectionState(row, room, id, sourceState, targetState);
                 roomConnectionStates.Add(state);
-                if (id is not null) Register(id, $"connection '{Display(row.Name, row.Alias)}'", identityOwners, roomFailures, room, "connection", Display(row.Name, row.Alias));
+                if (id is not null) Register(id, $"connection '{Display(row.Name, row.Alias)}'", identityOwners, roomFailures, room, "connection", Display(row.Name, row.Alias), prepared, row.Id);
             }
-            ValidatePathways(roomFailures, room, roomConnectionStates);
+            ValidatePathways(roomFailures, room, roomConnectionStates, prepared);
             var projectedConnections = roomConnectionStates.OrderBy(x => x.Row.SortOrder).ThenBy(x => x.Id, StringComparer.Ordinal).Select(connection =>
             {
                 return new ProjectedConnection(connection.Id ?? "", connection.Row, connection.Source?.Id ?? "", connection.Target?.Id ?? "");
@@ -255,7 +260,7 @@ internal static class RoomExportStructure
             if (needsUnassignedNode)
             {
                 var unassignedId = room.Id is null ? "#unassigned" : $"{room.Id}#unassigned";
-                if (room.Id is not null) Register(unassignedId, $"synthetic unassigned node for room '{room.Row.Name}'", identityOwners, roomFailures, room);
+                if (room.Id is not null) Register(unassignedId, $"synthetic unassigned node for room '{room.Row.Name}'", identityOwners, roomFailures, room, prepared: prepared, recordId: room.Row.Id);
                 nodes = [.. nodes, new ProjectedNode(unassignedId, "unassigned", null)];
             }
 
@@ -330,7 +335,13 @@ internal static class RoomExportStructure
         var failures = globalFailures.Concat(roomFailures.OrderBy(x => x.RoomRecordId is { } id && roomOrder.TryGetValue(id, out var index) ? index : int.MaxValue)).ToArray();
         return new(groupStates, projectedRooms, failures, warnings);
 
-        void Fail(RoomState room, string cause, string? kind = null, string? child = null) => roomFailures.Add(new(cause, room.Id, room.Row.Name, kind, child, room.Row.Id));
+        void Fail(RoomState room, string cause, string? kind = null, string? child = null, Guid? recordId = null,
+            PreparedIntegrityFamily family = PreparedIntegrityFamily.Identifiers)
+        {
+            var failure = new RoomGraphExportFailure(cause, room.Id, room.Row.Name, kind, child, room.Row.Id);
+            roomFailures.Add(failure);
+            prepared?.Integrity.Add(new(family, failure, child ?? room.Row.Name, kind ?? "room", recordId ?? room.Row.Id, room.Row.Id));
+        }
     }
 
     private static IReadOnlyDictionary<(string Kind, Guid Id), string> PreparedRecordLabels(IReadOnlyList<ProjectedRoom> rooms,
@@ -403,7 +414,7 @@ internal static class RoomExportStructure
         return result;
     }
 
-    internal static Dictionary<string, RoomGraphLocationType> BuildTypeLegend(List<RoomGraphExportFailure> failures)
+    internal static Dictionary<string, RoomGraphLocationType> BuildTypeLegend(List<RoomGraphExportFailure> failures, PreparedGraphEvidence? prepared = null)
     {
         var result = new Dictionary<string, RoomGraphLocationType>(StringComparer.Ordinal)
         {
@@ -415,9 +426,15 @@ internal static class RoomExportStructure
             .ThenBy(x => x.Name, StringComparer.Ordinal))
         {
             var key = CanonicalValue(definition.OutputValue);
-            if (key is null) { failures.Add(new($"location type '{definition.Name}' has an empty canonical output key")); continue; }
-            if (string.IsNullOrWhiteSpace(definition.Description)) failures.Add(new($"location type '{definition.Name}' has a blank description"));
-            if (!result.TryAdd(key, new(definition.HasPersistedState, definition.Description))) failures.Add(new($"location type '{definition.Name}' collides with the reserved or existing key '{key}'"));
+            if (key is null) { Fail($"location type '{definition.Name}' has an empty canonical output key"); continue; }
+            if (string.IsNullOrWhiteSpace(definition.Description)) Fail($"location type '{definition.Name}' has a blank description");
+            if (!result.TryAdd(key, new(definition.HasPersistedState, definition.Description))) Fail($"location type '{definition.Name}' collides with the reserved or existing key '{key}'");
+            void Fail(string cause)
+            {
+                var failure = new RoomGraphExportFailure(cause);
+                failures.Add(failure);
+                prepared?.Integrity.Add(new(PreparedIntegrityFamily.Identifiers, failure, $"Application location type: {definition.Name}", "application location type"));
+            }
         }
         return result;
     }
@@ -466,7 +483,7 @@ internal static class RoomExportStructure
             relatedRoom is { } id ? [id] : null));
     }
 
-    private static void ValidatePathways(List<RoomGraphExportFailure> failures, RoomState room, IReadOnlyList<ConnectionState> connections)
+    private static void ValidatePathways(List<RoomGraphExportFailure> failures, RoomState room, IReadOnlyList<ConnectionState> connections, PreparedGraphEvidence? prepared)
     {
         foreach (var group in connections.GroupBy(x => x.Row.Alias.Trim(), StringComparer.OrdinalIgnoreCase))
         {
@@ -475,11 +492,17 @@ internal static class RoomExportStructure
             var names = rows.Select(x => x.Row.Name.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).Count();
             var pairs = rows.Where(x => x.Source is not null && x.Target is not null).Select(x => OrderedPair(x.Source!.Row.Id, x.Target!.Row.Id)).Distinct().Count();
             var invalid = names != 1 || pairs > 1 || rows.Length > 2 || rows.Length == 2 && rows[0].Source?.Row.Id == rows[1].Source?.Row.Id && rows[0].Target?.Row.Id == rows[1].Target?.Row.Id;
-            if (invalid) AddRoomFailure(failures, room, "connection pathway has conflicting names/endpoints, excess rows, or duplicate direction", "connection pathway", group.Key);
+            if (invalid) Add("connection pathway has conflicting names/endpoints, excess rows, or duplicate direction", group.Key);
         }
         foreach (var group in connections.Where(x => !string.IsNullOrWhiteSpace(x.Row.Name)).GroupBy(x => x.Row.Name.Trim(), StringComparer.OrdinalIgnoreCase))
             if (group.Select(x => x.Row.Alias.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1)
-                AddRoomFailure(failures, room, "connection pathway name maps to multiple aliases", "connection pathway", group.Key);
+                Add("connection pathway name maps to multiple aliases", group.Key);
+        void Add(string cause, string child)
+        {
+            var failure = new RoomGraphExportFailure(cause, room.Id, room.Row.Name, "connection pathway", child, room.Row.Id);
+            failures.Add(failure);
+            prepared?.Integrity.Add(new(PreparedIntegrityFamily.Connection, failure, $"Connection pathway: {child}", "connection pathway", RoomId: room.Row.Id));
+        }
     }
 
     private static (Guid, Guid) OrderedPair(Guid a, Guid b) => a.CompareTo(b) <= 0 ? (a, b) : (b, a);
@@ -496,9 +519,15 @@ internal static class RoomExportStructure
     }
     private static void AddRoomFailure(List<RoomGraphExportFailure> failures, RoomState room, string cause, string? kind = null, string? child = null) => failures.Add(new(cause, room.Id, room.Row.Name, kind, child, room.Row.Id));
 
-    private static void Register(string id, string owner, Dictionary<string, string> identities, List<RoomGraphExportFailure> failures, RoomState? room = null, string? kind = null, string? child = null)
+    private static void Register(string id, string owner, Dictionary<string, string> identities, List<RoomGraphExportFailure> failures, RoomState? room = null, string? kind = null, string? child = null,
+        PreparedGraphEvidence? prepared = null, Guid? recordId = null)
     {
-        if (identities.TryGetValue(id, out var existing)) failures.Add(new($"export ID collision '{id}' between {existing} and {owner}", room?.Id, room?.Row.Name, kind, child, room?.Row.Id));
+        if (identities.TryGetValue(id, out var existing))
+        {
+            var failure = new RoomGraphExportFailure($"export ID collision '{id}' between {existing} and {owner}", room?.Id, room?.Row.Name, kind, child, room?.Row.Id);
+            failures.Add(failure);
+            prepared?.Integrity.Add(new(PreparedIntegrityFamily.Identifiers, failure, owner, kind ?? (room is null ? "group" : "room"), recordId, room?.Row.Id));
+        }
         else identities.Add(id, owner);
     }
 

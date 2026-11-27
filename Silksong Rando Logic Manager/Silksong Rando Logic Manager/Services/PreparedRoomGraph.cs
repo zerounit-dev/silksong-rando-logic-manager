@@ -1,5 +1,9 @@
 namespace Silksong_Rando_Logic_Manager.Services;
 
+internal enum PreparedIntegrityFamily { Identifiers, RoomGroup, Connection, Subroom, Exit, Catalogue }
+internal sealed record PreparedIntegrityFailure(PreparedIntegrityFamily Family, RoomGraphExportFailure Failure,
+    string Owner, string Kind, Guid? RecordId = null, Guid? RoomId = null, IReadOnlyList<Guid>? RelatedRooms = null);
+
 internal enum PreparedReferenceKind { Node, Port }
 internal enum PreparedReferenceProblem { Blank, Missing, Ambiguous, Stale, Incomplete, InvalidIdentity, NonReciprocal }
 internal sealed record PreparedGraphReference(PreparedReferenceKind Kind, PreparedReferenceProblem Problem,
@@ -26,6 +30,7 @@ internal sealed record PreparedGraphRoomIdentity(string Name, string Label, Prep
 // document is available for traversal only when the ordinary export succeeded.
 internal sealed class PreparedGraphEvidence
 {
+    internal List<PreparedIntegrityFailure> Integrity { get; } = [];
     internal List<PreparedGraphReference> References { get; } = [];
     internal List<PreparedGraphRule> Rules { get; } = [];
     internal IReadOnlyList<PreparedGraphRoom> Rooms { get; set; } = [];

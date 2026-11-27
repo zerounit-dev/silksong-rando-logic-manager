@@ -1255,6 +1255,28 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
       const requirementEditor = x => x instanceof HTMLTextAreaElement && x.matches("[data-v2-requirements-editor]");
       const expandedRequirementEditor = x => x instanceof HTMLTextAreaElement && x.matches("[data-v2-requirements-expanded-editor]");
        const identify = text => String(text).toLowerCase().replace(/[^\p{L}\p{Nd}\s]/gu, "").replace(/\s+/g, " ").trim();
+       const sq1Syntax = "{difficulty} {predicate} [{soul}] {quantity?}";
+       const minSoulQuantityCuts = 2; // Difficulty, predicate and Soul; quantity may be omitted.
+       // .NET char/Rune.IsWhiteSpace: NEL is whitespace, BOM/FEFF is not.
+       const serverSpace = character => /[\u0009-\u000D\u0020\u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]/u.test(character);
+       const legacySpace = character => /\s/u.test(character);
+       const trimRange = (text, start, end, space) => {
+           while(start<end&&space(text[start]))start++;
+           while(end>start&&space(text[end-1]))end--;
+           return {start,end};
+       };
+       const identifyServer = text => {
+           let result="", pendingSpace=false;
+           for(const rune of text){
+               if(serverSpace(rune))pendingSpace=result.length>0;
+               else if(/[\p{L}\p{Nd}]/u.test(rune)){
+                   // Invariant simple casing (not JS contextual or expanding casing).
+                   result+=(pendingSpace?" ":"")+(rune==="\u0130"?rune:rune.toLowerCase());
+                   pendingSpace=false;
+               }
+           }
+           return result;
+       };
        const addRequirementLookup = (lookup, key, value) => { const matches=lookup.get(key);if(matches)matches.push(value);else lookup.set(key,[value]); };
         // Keep every alias hit for Requirements recognition. Only Name coloring
         // consumes this distinct-definition summary on the same compiled bucket.
@@ -1263,15 +1285,28 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
             const matches=lookup.get(key);
             matches.uniqueDefinition=matches.length===1?definition:matches.uniqueDefinition===definition?definition:null;
         };
-         const compileRequirementsLookups = context => {
-               const roomsByReference=new Map(),checksByName=new Map(),checksByRoom=new Map(),itemAliases=new Map(),countableAliases=new Map(),soulAliases=new Map(),crestAliases=new Map(),methodAliases=new Map(),predicateAliasesByFirstToken=new Map(),predicateAliases=[];
-             for(const room of context.rooms||[])addRequirementLookup(roomsByReference,identify(room.referenceId),room);
-             for(const check of context.checks||[]){const name=identify(check.friendlyName);addRequirementLookup(checksByName,name,check);let roomChecks=checksByRoom.get(check.roomId);if(!roomChecks){roomChecks=new Map();checksByRoom.set(check.roomId,roomChecks);}addRequirementLookup(roomChecks,name,check);}
+         const compileRequirementView = (context,space,normalize) => {
+               const roomsByReference=new Map(),checksByName=new Map(),checksByRoom=new Map(),itemAliases=new Map(),countableAliases=new Map(),soulAliases=new Map(),crestAliases=new Map(),methodAliases=new Map(),predicateAliasesByFirstToken=new Map(),predicateAliases=[],sq1Predicates=[];
+             for(const room of context.rooms||[])addRequirementLookup(roomsByReference,normalize(room.referenceId),room);
+             for(const check of context.checks||[]){const name=normalize(check.friendlyName);addRequirementLookup(checksByName,name,check);let roomChecks=checksByRoom.get(check.roomId);if(!roomChecks){roomChecks=new Map();checksByRoom.set(check.roomId,roomChecks);}addRequirementLookup(roomChecks,name,check);}
                for(const [rows,map] of [[context.items,itemAliases],[context.countables,countableAliases],[context.souls,soulAliases],[context.crests,crestAliases],[context.methods,methodAliases]])
-                 for(const row of rows||[])for(const alias of row.aliases||[])addFriendlyNameAliasLookup(map,identify(alias),row);
-             for(const predicate of context.predicates||[])for(const alias of predicate.aliases||[]){const normalized=identify(alias),tokens=normalized?normalized.split(" "):[];if(tokens.length){const candidate={predicate,tokens,normalizedAlias:normalized};addRequirementLookup(predicateAliasesByFirstToken,tokens[0],candidate);predicateAliases.push(candidate);}}
-               return {roomsByReference,checksByName,checksByRoom,itemAliases,countableAliases,soulAliases,crestAliases,methodAliases,predicateAliasesByFirstToken,predicateAliases};
+                 for(const row of rows||[])for(const alias of row.aliases||[])addFriendlyNameAliasLookup(map,normalize(alias),row);
+               for(const predicate of context.predicates||[])for(const alias of predicate.aliases||[]){
+                   const sq1=predicate.inputSyntax===sq1Syntax;
+                   if(sq1&&space===legacySpace)continue;
+                   const normalized=normalize(alias),tokens=normalized?normalized.split(" "):[];
+                   if(!tokens.length)continue;
+                   const candidate={predicate,tokens,normalizedAlias:normalized};
+                   if(sq1)sq1Predicates.push(candidate);
+                   else {addRequirementLookup(predicateAliasesByFirstToken,tokens[0],candidate);predicateAliases.push(candidate);}
+               }
+                return {space,normalize,roomsByReference,checksByName,checksByRoom,itemAliases,countableAliases,soulAliases,crestAliases,methodAliases,predicateAliasesByFirstToken,predicateAliases,sq1Predicates};
          };
+         const compileRequirementsLookups = context => ({
+             ...compileRequirementView(context,legacySpace,identify),
+             server:(context.predicates||[]).some(predicate=>predicate.inputSyntax===sq1Syntax)
+                 ?compileRequirementView(context,serverSpace,identifyServer):null
+         });
        let requirementsLookups=compileRequirementsLookups(requirementsContext);
         const friendlyNameEditor = field => field instanceof HTMLTextAreaElement && field.matches("[data-v2-friendly-name-space]");
         const renderFriendlyName = field => {
@@ -1315,36 +1350,60 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
         };
         const reconcileFriendlyNames = () => { if(!disposed)root.querySelectorAll("textarea[data-v2-friendly-name-space]").forEach(renderFriendlyName); };
       const setText = (node, text, cls = "") => { const span = document.createElement("span"); span.textContent = text; if (cls) span.className = cls; node.append(span); };
-       const parseRequirementsV2 = (source, roomId) => {
-         const spans=[], add=(text,cls="")=>spans.push([text,cls]); let danger=false, at=0;
+        const parseRequirementsV2 = (source, roomId) => {
+            const ordinary=parseRequirementsV2WithSpace(source,roomId,legacySpace);
+            if(!ordinary.boundaryDifference)return ordinary;
+            // Only an actual divergent expression boundary can require another walk.
+            // If neither walk finds SQ1, retain the legacy expression result.
+            const server=parseRequirementsV2WithSpace(source,roomId,serverSpace);
+            return ordinary.usedSq1||server.usedSq1?server:ordinary;
+        };
+        const parseRequirementsV2WithSpace = (source, roomId, expressionSpace) => {
+          const spans=[], add=(text,cls="")=>spans.push([text,cls]); let danger=false, at=0;
+          const serverView=requirementsLookups.server,hasSq1=!!serverView?.sq1Predicates.length;
+          let usedSq1=false,boundaryDifference=false;
          const mark=(text,cls="requirements-malformed")=>{danger=true;add(text,cls);};
           const codePointBefore=(text,index)=>{if(index<=0)return "";const trailing=text.charCodeAt(index-1),leading=index>1?text.charCodeAt(index-2):0,start=trailing>=0xDC00&&trailing<=0xDFFF&&leading>=0xD800&&leading<=0xDBFF?index-2:index-1;return text.slice(start,index);};
           const codePointAt=(text,index)=>index>=text.length?"":String.fromCodePoint(text.codePointAt(index));
           const identifierCodePoint=value=>/[\p{L}\p{Nd}]/u.test(value);
           const wordAt=(word,index)=>source.slice(index,index+word.length)===word&&!identifierCodePoint(codePointBefore(source,index))&&!identifierCodePoint(codePointAt(source,index+word.length));
                 const syntax = { only:"{predicate}", optional:"{difficulty?} {predicate}", required:"{difficulty} {predicate}", direction:"{predicate} [{direction}]", optionalDirection:"{predicate} [{direction?}]", item:"{predicate} {item}", check:"{predicate} {check}", quantity:"{predicate} {quantity}", difficultySoul:"{difficulty} {predicate} [{soul}]", soul:"{predicate} [{soul}]", countable:"{predicate} {quantity} {countable}", countableFirst:"{predicate} {countable} {quantity}", crestDirection:"[{crest}] {predicate} {direction}", difficultyCrest:"{difficulty} [{crest}] {predicate}", optionalCrestDirection:"[{crest?}] {predicate} {direction}", difficultyOptionalCrest:"{difficulty} [{crest?}] {predicate}", difficultyMethod:"{difficulty} [{method}] {predicate}" };
-            const quantityShapes = ["{predicate} {quantity?}", "{predicate} [{direction}] {quantity?}", "{difficulty} {predicate} {quantity?}", "{difficulty} {predicate} {quantity}", "{difficulty} [{method}] {predicate} {quantity?}", "{predicate} [{direction?}] {quantity?}", "{difficulty} [{crest}] {predicate} {quantity?}"];
+             const quantityShapes = ["{predicate} {quantity?}", "{predicate} [{direction}] {quantity?}", "{difficulty} {predicate} {quantity?}", "{difficulty} {predicate} {quantity}", "{difficulty} [{method}] {predicate} {quantity?}", "{predicate} [{direction?}] {quantity?}", "{difficulty} [{crest}] {predicate} {quantity?}", sq1Syntax];
             const requiredOperandShapes = ["{predicate} [{method}]", "{difficulty} {predicate} [{direction}]"];
             const operandShapes=new Map([...Object.values(syntax).filter(pattern=>pattern.includes("[")),...quantityShapes,...requiredOperandShapes].map(pattern=>[pattern,pattern.split(" ").map(marker=>({role:marker.replace(/[\[\]{}?]/gu,""),optional:marker.includes("?"),list:marker.startsWith("[")}))]));
             // Composed final Quantity is raw syntax: optional omission, N, or separate plain x/X N.
            // Keep the old normalized/unbounded quantity and Countable paths untouched.
-           const composedQuantity = (text, part, optional) => {
-               const raw=text.slice(part.start,part.end), tokens=[...raw.matchAll(/\S+/gu)];
-               if(!tokens.length)return optional?{identity:"",roles:[]}:null;
-               if(tokens.length!==1&&(tokens.length!==2||!/^[xX]$/u.test(tokens[0][0])))return null;
-               const number=tokens.at(-1),token=number[0];
-               if(!/^[1-9][0-9]*$/u.test(token)||Number(token)>2147483647)return null;
-               const start=part.start+number.index;
-               return {identity:raw.trim(),roles:[{start,end:start+token.length,className:"requirements-quantity"}]};
+           const rawChunks = (text,space) => {
+               if(space===legacySpace)return [...text.matchAll(/\S+/gu)].map(match=>({start:match.index,end:match.index+match[0].length}));
+               const chunks=[],end=text.length;
+               let start=0;
+               while(start<end){
+                   if(space(text[start])){start++;continue;}
+                   let next=start+1;
+                   while(next<end&&!space(text[next]))next++;
+                   chunks.push({start,end:next});
+                   start=next;
+               }
+               return chunks;
+            };
+           const composedQuantity = (text, part, optional, space) => {
+                const raw=text.slice(part.start,part.end), tokens=rawChunks(raw,space);
+                if(!tokens.length)return optional?{identity:"",roles:[]}:null;
+                const spelling=token=>raw.slice(token.start,token.end);
+                if(tokens.length!==1&&(tokens.length!==2||!/^[xX]$/u.test(spelling(tokens[0]))))return null;
+                const number=tokens.at(-1),token=spelling(number),start=part.start+number.start;
+                if(!/^[1-9][0-9]*$/u.test(token)||Number(token)>2147483647)return null;
+                return {identity:raw,roles:[{start,end:start+token.length,className:"requirements-quantity"}]};
            };
            const difficulty = new Set(["easy","medium","hard","cbt","intended"]), direction = new Set(["left","right","up","down","both","either","any","all"]);
-           const tokenizeAtom = text => { const chunks=[...text.matchAll(/\S+/gu)].map(match=>({start:match.index,end:match.index+match[0].length,identity:identify(match[0])})),meaningful=chunks.filter(chunk=>chunk.identity);return {text,chunks,meaningful}; };
-              const matchingCandidates = tokens => { if(!tokens.length)return [];const matches=(requirementsLookups.predicateAliasesByFirstToken.get(tokens[0].identity)||[]).map(candidate=>({candidate,difficultyEnabled:false,invalidDifficulty:false}));if(tokens.length>1)for(const candidate of requirementsLookups.predicateAliasesByFirstToken.get(tokens[1].identity)||[]){const input=candidate.predicate.inputSyntax;if(difficulty.has(tokens[0].identity)&&(input===syntax.optional||input===syntax.required||input===syntax.difficultySoul))matches.push({candidate,difficultyEnabled:true,invalidDifficulty:false});else if(!difficulty.has(tokens[0].identity)&&(input===syntax.required||input===syntax.difficultySoul))matches.push({candidate,difficultyEnabled:false,invalidDifficulty:true});}return matches; };
+            const tokenizeAtom = (text,view) => { const chunks=rawChunks(text,view.space).map(chunk=>({...chunk,identity:view.normalize(text.slice(chunk.start,chunk.end))})),meaningful=chunks.filter(chunk=>chunk.identity);return {text,chunks,meaningful}; };
+               const matchingCandidates = (tokens,view) => { if(!tokens.length)return [];const matches=(view.predicateAliasesByFirstToken.get(tokens[0].identity)||[]).map(candidate=>({candidate,difficultyEnabled:false,invalidDifficulty:false}));if(tokens.length>1)for(const candidate of view.predicateAliasesByFirstToken.get(tokens[1].identity)||[]){const input=candidate.predicate.inputSyntax;if(difficulty.has(tokens[0].identity)&&(input===syntax.optional||input===syntax.required||input===syntax.difficultySoul))matches.push({candidate,difficultyEnabled:true,invalidDifficulty:false});else if(!difficulty.has(tokens[0].identity)&&(input===syntax.required||input===syntax.difficultySoul))matches.push({candidate,difficultyEnabled:false,invalidDifficulty:true});}return matches; };
            const matchedPrefix = (tokens,candidate,start) => { if(start+candidate.tokens.length>tokens.length)return null;for(let index=0;index<candidate.tokens.length;index++)if(tokens[start+index].identity!==candidate.tokens[index])return null;return {next:start+candidate.tokens.length,prefixEnd:tokens[start+candidate.tokens.length-1].end}; };
-            const argumentStart = (text,prefixEnd) => prefixEnd+(text.slice(prefixEnd).length-text.slice(prefixEnd).trimStart().length);
-          const scoped = (raw, prefixEnd) => { const rest=raw.slice(prefixEnd).trimStart(), words=[]; for(let index=0;index<rest.length;){const word=wordAtIn(rest,"IN",index)?"IN":wordAtIn(rest,"THE",index)?"THE":wordAtIn(rest,"GLOBAL",index)?"GLOBAL":null;if(word){words.push({word,index});index+=word.length;}else index++;} if(words.some(x=>x.word==="GLOBAL"))return { state:"unknown" }; if(words.length===0)return { state:"local", name:rest }; if(words.length!==1)return { state:"malformed" }; const qualifier=words[0]; if(qualifier.word==="THE"&&qualifier.index===0)return rest.slice(3).trim()?{state:"the",name:rest.slice(3).trimStart(),qualifier}:{state:"malformed"}; if(qualifier.word==="IN"&&qualifier.index>0&&rest.slice(qualifier.index+2).trim())return {state:"in",name:rest.slice(0,qualifier.index).trimEnd(),room:rest.slice(qualifier.index+2).trimStart(),qualifier}; return {state:"malformed"}; };
+            const trimText = (text,space) => {const range=trimRange(text,0,text.length,space);return text.slice(range.start,range.end);};
+            const argumentStart = (text,prefixEnd,space) => {while(prefixEnd<text.length&&space(text[prefixEnd]))prefixEnd++;return prefixEnd;};
+          const scoped = (raw,prefixEnd,space) => { const rest=raw.slice(argumentStart(raw,prefixEnd,space)), words=[]; for(let index=0;index<rest.length;){const word=wordAtIn(rest,"IN",index)?"IN":wordAtIn(rest,"THE",index)?"THE":wordAtIn(rest,"GLOBAL",index)?"GLOBAL":null;if(word){words.push({word,index});index+=word.length;}else index++;} if(words.some(x=>x.word==="GLOBAL"))return { state:"unknown" }; if(words.length===0)return { state:"local", name:rest }; if(words.length!==1)return { state:"malformed" }; const qualifier=words[0]; if(qualifier.word==="THE"&&qualifier.index===0)return trimText(rest.slice(3),space)?{state:"the",name:rest.slice(argumentStart(rest,3,space)),qualifier}:{state:"malformed"}; if(qualifier.word==="IN"&&qualifier.index>0&&trimText(rest.slice(qualifier.index+2),space))return {state:"in",name:rest.slice(0,trimRange(rest,0,qualifier.index,space).end),room:rest.slice(argumentStart(rest,qualifier.index+2,space)),qualifier}; return {state:"malformed"}; };
           const wordAtIn=(text,word,index)=>text.slice(index,index+word.length)===word&&!identifierCodePoint(codePointBefore(text,index))&&!identifierCodePoint(codePointAt(text,index+word.length));
-          const validListStructure = text => {
+           const validListStructure = (text,space=legacySpace) => {
               let opening=-1;
               for(let index=0;index<text.length;index++){
                   const character=text[index];
@@ -1352,26 +1411,36 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
                   else if(character==="]"){
                       if(opening<0)return false;
                       const entries=text.slice(opening+1,index).split(",");
-                      if(entries.some(entry=>!entry.trim()))return false;
+                       if(entries.some(entry=>space===legacySpace?!entry.trim():trimRange(entry,0,entry.length,space).start===entry.length))return false;
                       opening=-1;
                   }else if(character===","&&opening<0)return false;
                   else if(opening>=0&&(character==="("||character===")"||wordAtIn(text,"AND",index)||wordAtIn(text,"OR",index)))return false;
               }
               return opening<0;
           };
-          const operandPartitions = (text,slots) => {
-              const cuts=[];let bracket=false;
+           // Callers have already validated list structure. Cuts never lie
+           // inside a list and are shared by applications, guidance and pairs.
+           const operandCuts = (text,space) => {
+               const cuts=[];let bracket=false;
               for(let index=0;index<text.length;index++){
                   if(text[index]==="[")bracket=true;else if(text[index]==="]")bracket=false;
-                  if(!bracket&&/\s/u.test(text[index])&&index>0&&!/\s/u.test(text[index-1]))cuts.push(index);
-              }
+                   if(!bracket&&space(text[index])&&index>0&&!space(text[index-1]))cuts.push(index);
+               }
+               return cuts;
+           };
+           const operandPartitions = (text,slots,{space,normalize},cuts) => {
               const result=[];
+              const hasMeaningfulTail=()=>{
+                  let start=text.length;
+                  while(start>0&&!space(text[start-1]))start--;
+                  return normalize(text.slice(start));
+              };
               const split=(start,slot,prefix)=>{
-                  while(start<text.length&&/\s/u.test(text[start]))start++;
+                   while(start<text.length&&space(text[start]))start++;
                   if(slot===slots.length-1){if(start<text.length||slots[slot].optional)result.push([...prefix,{start,end:text.length}]);return;}
                   for(const end of cuts)if(end>start)split(end,slot+1,[...prefix,{start,end}]);
                    // Punctuation-only raw suffix is not optional Direction/Quantity omission.
-                  if(slot===slots.length-2&&slots.at(-1).optional&&start<text.length&&identify(text.match(/\S+$/u)?.[0]||""))result.push([...prefix,{start,end:text.length},{start:text.length,end:text.length}]);
+                  if(slot===slots.length-2&&slots.at(-1).optional&&start<text.length&&(hasMeaningfulTail()||slots[slot].role==="soul"&&text.endsWith("]")))result.push([...prefix,{start,end:text.length},{start:text.length,end:text.length}]);
               };
                split(0,0,[]);
                // Only the approved leading optional Crest may be absent; all present boundaries still compete.
@@ -1381,60 +1450,79 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
                 // full difficulty/predicate boundary and exact raw ranges, without skipping text.
                 if(slots.length===3&&slots[0].role==="difficulty"&&!slots[0].optional&&!slots[0].list&&slots[1].role==="crest"&&slots[1].optional&&slots[1].list&&slots[2].role==="predicate"&&!slots[2].optional&&!slots[2].list)
                     for(const end of cuts){
-                        let start=end;while(start<text.length&&/\s/u.test(text[start]))start++;
+                        let start=end;while(start<text.length&&space(text[start]))start++;
                         if(start<text.length)result.push([{start:0,end},{start:end,end},{start,end:text.length}]);
                     }
                  // QTY2 alone admits both supporting slots absent and empty-middle Direction
                  // with present Quantity. Keep every complete boundary and actual source range.
                  if(slots.length===3&&slots[0].role==="predicate"&&!slots[0].optional&&!slots[0].list&&slots[1].role==="direction"&&slots[1].optional&&slots[1].list&&slots[2].role==="quantity"&&slots[2].optional&&!slots[2].list){
-                     if(text.length&&identify(text.match(/\S+$/u)?.[0]||""))result.push([{start:0,end:text.length},{start:text.length,end:text.length},{start:text.length,end:text.length}]);
+                     if(text.length&&hasMeaningfulTail())result.push([{start:0,end:text.length},{start:text.length,end:text.length},{start:text.length,end:text.length}]);
                      for(const end of cuts){
-                         let start=end;while(start<text.length&&/\s/u.test(text[start]))start++;
+                         let start=end;while(start<text.length&&space(text[start]))start++;
                          if(start<text.length)result.push([{start:0,end},{start:end,end},{start,end:text.length}]);
                      }
                  }
                  return result;
           };
-          const operandValues = (text,part,slot) => {
+           const operandValues = (text,part,slot,space) => {
               const raw=text.slice(part.start,part.end);
               if(!raw)return slot.optional?[]:null;
               if(!/[\[\],]/u.test(raw))return [part];
               if(!slot.list||!raw.startsWith("[")||!raw.endsWith("]")||/[\[\]]/u.test(raw.slice(1,-1)))return null;
               const entries=[];let start=part.start+1;
               for(const entry of raw.slice(1,-1).split(",")){
-                  const leading=entry.length-entry.trimStart().length,trailing=entry.length-entry.trimEnd().length;
-                  entries.push({start:start+leading,end:start+entry.length-trailing});start+=entry.length+1;
+                   entries.push(trimRange(text,start,start+entry.length,space));start+=entry.length+1;
               }
               return entries;
           };
-          const operandCandidates = text => {
-              const complete=[];let incomplete=false,malformed=false;
-              for(const candidate of requirementsLookups.predicateAliases){
-                  const slots=operandShapes.get(candidate.predicate.inputSyntax);if(!slots)continue;
+           const positionedSq1Predicates = ({tokenized,cuts},view) => {
+               const {text}=tokenized,{space,normalize}=view;
+               const aliases=new Set(view.sq1Predicates.map(candidate=>candidate.normalizedAlias));
+               const ends=[...cuts,text.length];
+               const isPredicate=(start,end)=>{
+                   const raw=text.slice(start,end);
+                   return !/[\[\],]/u.test(raw)&&aliases.has(normalize(raw));
+               };
+               // Only a full predicate span at the application start (missing
+               // Difficulty) or following a complete Difficulty can guide.
+               for(const end of ends)if(isPredicate(0,end))return true;
+               for(const cut of cuts){
+                   const leading=text.slice(0,cut);
+                   if(/[\[\],]/u.test(leading)||!difficulty.has(normalize(leading)))continue;
+                   const start=argumentStart(text,cut,space);
+                   for(const end of ends)if(end>start&&isPredicate(start,end))return true;
+               }
+               return false;
+           };
+           const operandCandidates = ({tokenized,cuts},view,candidates,guidance=true) => {
+               const complete=[];let incomplete=false,rejectedAllocation=false;
+               const {text,meaningful:tokens}=tokenized,{space,normalize}=view;
+               for(const candidate of candidates){
+                   const slots=operandShapes.get(candidate.predicate.inputSyntax);if(!slots)continue;
                   // Per managed alias, not across definitions/aliases or formatted outputs.
                   const interpretations=new Map();
                   // Recognition guidance only; complete interpretation always uses all raw boundaries below.
-                  const tokens=tokenizeAtom(text).meaningful;
-                  if(tokens.some((_,start)=>matchedPrefix(tokens,candidate,start)))incomplete=true;
-                  for(const parts of operandPartitions(text,slots)){
+                   if(guidance&&!incomplete&&tokens.some((_,start)=>matchedPrefix(tokens,candidate,start)))incomplete=true;
+                   for(const parts of operandPartitions(text,slots,view,cuts)){
                       const predicateIndex=slots.findIndex(slot=>slot.role==="predicate"),predicateRaw=text.slice(parts[predicateIndex].start,parts[predicateIndex].end);
-                      if(/[\[\],]/u.test(predicateRaw)||identify(predicateRaw)!==candidate.normalizedAlias)continue;
-                      incomplete=true;let valid=true;const roles=[],identities=[];
+                       if(/[\[\],]/u.test(predicateRaw)||normalize(predicateRaw)!==candidate.normalizedAlias)continue;
+                       if(guidance)incomplete=true;
+                       let valid=true;const roles=[],identities=[];
                       for(let index=0;index<slots.length&&valid;index++){
                            const slot=slots[index];if(slot.role==="predicate")continue;
                            if(slot.role==="quantity"){
-                               const quantity=composedQuantity(text,parts[index],slot.optional);
-                               if(!quantity){valid=false;if(/[\[\],]/u.test(text.slice(parts[index].start,parts[index].end)))malformed=true;break;}
+                                const quantity=composedQuantity(text,parts[index],slot.optional,space);
+                                if(!quantity){valid=false;if(/[\[\],]/u.test(text.slice(parts[index].start,parts[index].end)))rejectedAllocation=true;break;}
                                identities.push(quantity.identity);roles.push(...quantity.roles);continue;
                            }
-                          const values=operandValues(text,parts[index],slot);
-                          if(values===null){valid=false;if(/[\[\],]/u.test(text.slice(parts[index].start,parts[index].end)))malformed=true;break;}
-                          identities.push(values.map(value=>identify(text.slice(value.start,value.end))));
+                           const values=operandValues(text,parts[index],slot,space);
+                           if(values===null){valid=false;if(/[\[\],]/u.test(text.slice(parts[index].start,parts[index].end)))rejectedAllocation=true;break;}
+                           identities.push(values.map(value=>normalize(text.slice(value.start,value.end))));
                           for(const value of values){
-                              const identity=identify(text.slice(value.start,value.end));
+                               const identity=normalize(text.slice(value.start,value.end));
                               if(slot.role==="difficulty")valid=difficulty.has(identity);
                               else if(slot.role==="direction")valid=direction.has(identity);
-                                else {const map={crest:requirementsLookups.crestAliases,method:requirementsLookups.methodAliases,soul:requirementsLookups.soulAliases}[slot.role];if(!map)throw new Error("Unexpected approved typed operand role.");valid=(map.get(identity)?.length??0)===1;}
+                                 else {const map={crest:view.crestAliases,method:view.methodAliases,soul:view.soulAliases}[slot.role];if(!map)throw new Error("Unexpected approved typed operand role.");valid=(map.get(identity)?.length??0)===1;}
                               if(!valid)break;
                               roles.push({...value,className:`requirements-${slot.role}`});
                           }
@@ -1442,7 +1530,7 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
                       if(valid){
                           // Arrays retain slot/entry boundaries, order and repeated authored alternatives.
                           const key=JSON.stringify(identities),existing=interpretations.get(key);
-                          if(!existing)interpretations.set(key,{type:"non-check",roles});
+                           if(!existing)interpretations.set(key,{type:"non-check",roles});
                           else for(let index=0;index<roles.length;index++){
                               // Equivalent allocations differ only at ignored boundary punctuation. Color their
                               // common exact operand span; leave the boundary in raw ordinary foreground, no winner.
@@ -1453,67 +1541,200 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
                   }
                   complete.push(...interpretations.values());
               }
-              return {complete,incomplete,malformed};
+               return {complete,incomplete,rejectedAllocation};
           };
-           const renderDependency = (raw, candidate) => { const prefix=raw.slice(0,candidate.prefixEnd), rest=raw.slice(candidate.prefixEnd), leading=rest.slice(0,rest.length-rest.trimStart().length), operand=rest.trimStart(); add(prefix);add(leading); if(candidate.scope.state==="the"){add("THE","requirements-syntax");const name=operand.slice(3),space=name.slice(0,name.length-name.trimStart().length),value=name.trim(),trailing=name.slice(name.trimEnd().length);add(space);add(value,candidate.className);add(trailing);return;} if(candidate.scope.state==="in"){const q=candidate.scope.qualifier.index,name=operand.slice(0,q),room=operand.slice(q+2),nameSpace=name.slice(0,name.length-name.trimStart().length),roomSpace=room.slice(0,room.length-room.trimStart().length),roomTrailing=room.slice(room.trimEnd().length);add(nameSpace);add(name.trim(),candidate.className);add(name.slice(name.length-(name.length-name.trimEnd().length)));add("IN","requirements-syntax");add(roomSpace);add(room.trim(),candidate.className);add(roomTrailing);return;} add(operand,candidate.className); };
-           const renderNonCheck = (raw, candidate) => {
-               if(!candidate.roles){if(!candidate.className){add(raw);return;}add(raw.slice(0,candidate.argumentStart));add(raw.slice(candidate.argumentStart,candidate.argumentEnd),candidate.className);add(raw.slice(candidate.argumentEnd));return;}
-               const offset=raw.length-raw.trimStart().length;
+            const renderDependency = (raw,candidate,space) => {
+                const operandStart=argumentStart(raw,candidate.prefixEnd,space),operand=raw.slice(operandStart);
+                add(raw.slice(0,candidate.prefixEnd));add(raw.slice(candidate.prefixEnd,operandStart));
+                const typedName = name => {
+                    const range=trimRange(name,0,name.length,space);
+                    add(name.slice(0,range.start));add(name.slice(range.start,range.end),candidate.className);add(name.slice(range.end));
+                };
+                if(candidate.scope.state==="the"){add("THE","requirements-syntax");typedName(operand.slice(3));}
+                else if(candidate.scope.state==="in"){
+                    const offset=candidate.scope.qualifier.index;
+                    typedName(operand.slice(0,offset));add("IN","requirements-syntax");typedName(operand.slice(offset+2));
+                }else add(operand,candidate.className);
+            };
+             const renderNonCheck = (raw,candidate) => {
+                if(!candidate.roles){if(!candidate.className){add(raw);return;}add(raw.slice(0,candidate.argumentStart));add(raw.slice(candidate.argumentStart,candidate.argumentEnd),candidate.className);add(raw.slice(candidate.argumentEnd));return;}
                const roles=candidate.roles;
                let cursor=0;
-               for(const role of roles){const start=offset+role.start,end=offset+role.end;add(raw.slice(cursor,start));add(raw.slice(start,end),role.className);cursor=end;}
+                for(const role of roles){add(raw.slice(cursor,role.start));add(raw.slice(role.start,role.end),role.className);cursor=role.end;}
                add(raw.slice(cursor));
            };
            // Quantity spelling is raw, unlike alias identity. Never skip a punctuation-only chunk here.
-           const countableArgument = (text,prefixEnd,end=text.length) => {
-               const start=argumentStart(text,prefixEnd),tail=text.slice(start,end),match=/^(\S+)(\s+)([\s\S]+)$/u.exec(tail);
-               if(!match||!/^[1-9][0-9]*$/u.test(match[1])||Number(match[1])>2147483647)return null;
-               const countableStart=start+match[1].length+match[2].length;
-               return {identity:identify(match[3]),roles:[{start,end:start+match[1].length,className:"requirements-quantity"},{start:countableStart,end,className:"requirements-countable"}]};
-           };
-           const completeNonCheck = (tokenized,chunkStart=0,chunkEnd=tokenized.chunks.length) => {
-               const end=tokenized.chunks[chunkEnd-1]?.end,tokens=tokenized.meaningful.filter(token=>token.start>=tokenized.chunks[chunkStart]?.start&&token.end<=end);
-               const raw=tokenized.text.slice(tokenized.chunks[chunkStart]?.start,end).trim();
-               if(!validListStructure(raw))return false;
-               if(operandCandidates(raw).complete.length>0)return true;
-               if(/[\[\],]/u.test(raw))return false;
-               for(const entry of matchingCandidates(tokens)){
-                   const input=entry.candidate.predicate.inputSyntax;if(input===syntax.check||operandShapes.has(input))continue;
-                   const shifted=entry.difficultyEnabled||entry.invalidDifficulty,match=matchedPrefix(tokens,entry.candidate,shifted?1:0);if(!match)continue;
-                   const exact=match.next===tokens.length,rest=tokens.slice(match.next).map(token=>token.identity).join(" ");
-                   if(input===syntax.countable&&!shifted){const argument=countableArgument(tokenized.text,match.prefixEnd,end);if(argument&&(requirementsLookups.countableAliases.get(argument.identity)?.length??0)>0)return true;continue;}
-                   if(input===syntax.countableFirst&&!shifted){const argument=countableFirstArgument(tokenized.text,match.prefixEnd,end);if(argument&&(requirementsLookups.countableAliases.get(argument.identity)?.length??0)>0)return true;continue;}
-                    if(input===syntax.only&&!shifted&&exact)return true;if(input===syntax.optional&&exact)return true;if(input===syntax.required&&entry.difficultyEnabled&&exact)return true;if(shifted)continue;
-                   if(input===syntax.quantity&&/^[1-9][0-9]*$/u.test(rest))return true;if(input===syntax.item&&(requirementsLookups.itemAliases.get(rest)?.length??0)>0)return true;
-               }return false;
-           };
-           const adjacentCompleteOperands = tokenized => { for(let split=1;split<tokenized.chunks.length;split++)if(completeNonCheck(tokenized,0,split)&&completeNonCheck(tokenized,split,tokenized.chunks.length))return true;return false; };
-           const countableFirstArgument = (text,prefixEnd,end=text.length) => {
-               // Quantity is the final raw token; never skip trailing punctuation or words.
-               const start=argumentStart(text,prefixEnd),tail=text.slice(start,end).trimEnd(),match=/^([\s\S]*\S)(\s+)(\S+)$/u.exec(tail);
-               if(!match||!/^[1-9][0-9]*$/u.test(match[3])||Number(match[3])>2147483647)return null;
-               const countableEnd=start+match[1].length,quantityStart=countableEnd+match[2].length;
-               return {identity:identify(match[1]),roles:[{start,end:countableEnd,className:"requirements-countable"},{start:quantityStart,end:start+tail.length,className:"requirements-quantity"}]};
-           };
-           const atom=(raw)=>{const text=raw.trim(); if(!text||!validListStructure(text)){mark(raw);return false;} const tokenized=tokenizeAtom(text),tokens=tokenized.meaningful,operands=operandCandidates(text),complete=[...operands.complete],incomplete=operands.incomplete?[true]:[]; let malformedScope=false, forbiddenGlobal=false;
-              for(const entry of matchingCandidates(tokens)){const input=entry.candidate.predicate.inputSyntax;if(operandShapes.has(input)||/[\[\],]/u.test(text))continue;const shifted=entry.difficultyEnabled||entry.invalidDifficulty,start=shifted?1:0,match=matchedPrefix(tokens,entry.candidate,start);if(!match)continue;const exact=match.next===tokens.length,restNorm=tokens.slice(match.next).map(token=>token.identity).join(" ");
-                if(input===syntax.only&&!shifted&&exact)complete.push({type:"plain"});
-                 if(input===syntax.optional||input===syntax.required){if(exact&&((input===syntax.optional&&!entry.difficultyEnabled)||entry.difficultyEnabled)){const sourceDifficulty=tokenized.chunks[0];complete.push(entry.difficultyEnabled&&difficulty.has(sourceDifficulty.identity)?{type:"non-check",argumentStart:sourceDifficulty.start,argumentEnd:sourceDifficulty.end,className:"requirements-difficulty"}:{type:"plain"});}else if(exact&&!entry.difficultyEnabled)incomplete.push(true);}
-                 if(input===syntax.countable&&!shifted){const argument=countableArgument(text,match.prefixEnd);if(argument)for(const countable of requirementsLookups.countableAliases.get(argument.identity)||[])complete.push({type:"non-check",roles:argument.roles});incomplete.push(true);continue;}
-                 if(input===syntax.countableFirst&&!shifted){const argument=countableFirstArgument(text,match.prefixEnd);if(argument)for(const countable of requirementsLookups.countableAliases.get(argument.identity)||[])complete.push({type:"non-check",roles:argument.roles});incomplete.push(true);continue;}
-                if(shifted)continue;
-               if(input===syntax.quantity){if(/^[1-9][0-9]*$/u.test(restNorm)){const start=argumentStart(text,match.prefixEnd);complete.push({type:"non-check",argumentStart:start,argumentEnd:text.length,className:"requirements-quantity"});}else incomplete.push(true);}
-               if(input===syntax.item){for(const item of requirementsLookups.itemAliases.get(restNorm)||[]){const start=argumentStart(text,match.prefixEnd);complete.push({type:"non-check",argumentStart:start,argumentEnd:text.length,className:"requirements-item"});}incomplete.push(true);}
-               if(input===syntax.check){const scope=scoped(text,match.prefixEnd);if(scope.state==="malformed"){malformedScope=true;continue;}if(scope.state==="unknown"){forbiddenGlobal=true;continue;}if(!scope.name?.trim()){incomplete.push(true);continue;}let targetRoom=roomId, className="requirements-local";if(scope.state==="the"){targetRoom=null;className="requirements-global";}if(scope.state==="in"){const rooms=requirementsLookups.roomsByReference.get(identify(scope.room))||[];if(rooms.length!==1){complete.push({type:"dependency",prefixEnd:match.prefixEnd,scope,className:"requirements-unresolved"});continue;}targetRoom=rooms[0].roomId;className="requirements-in";}const checkName=identify(scope.name),matches=targetRoom===null?(requirementsLookups.checksByName.get(checkName)||[]):(requirementsLookups.checksByRoom.get(targetRoom)?.get(checkName)||[]);complete.push({type:"dependency",prefixEnd:match.prefixEnd,scope,className:matches.length===1?className:"requirements-unresolved"});}
-             }
-             if(complete.length===1){const candidate=complete[0];if(candidate.type==="dependency")renderDependency(raw,candidate);else if(candidate.type==="non-check")renderNonCheck(raw,candidate);else add(raw);return true;}if(complete.length>1){add(raw,"requirements-unresolved");return true;}if(malformedScope||operands.malformed){mark(raw);return false;}if(forbiddenGlobal){mark(raw,"requirements-unknown");return false;}if(incomplete.length){mark(raw,"requirements-incomplete");return false;}if(adjacentCompleteOperands(tokenized)){mark(raw);return false;}mark(raw,"requirements-unknown");return false;};
+            const countableArgument = (text,prefixEnd,view,countableFirst) => {
+                const start=argumentStart(text,prefixEnd,view.space),tail=text.slice(start),chunks=rawChunks(tail,view.space);
+                if(chunks.length<2)return null;
+                const quantity=countableFirst?chunks.at(-1):chunks[0],token=tail.slice(quantity.start,quantity.end);
+                if(!/^[1-9][0-9]*$/u.test(token)||Number(token)>2147483647)return null;
+                const countableStart=countableFirst?start:start+chunks[1].start;
+                const countableEnd=countableFirst?start+chunks.at(-2).end:text.length;
+                const counted={start:countableStart,end:countableEnd,className:"requirements-countable"};
+                const amount={start:start+quantity.start,end:start+quantity.end,className:"requirements-quantity"};
+                return {identity:view.normalize(text.slice(countableStart,countableEnd)),roles:countableFirst?[counted,amount]:[amount,counted]};
+            };
+            const ordinaryCandidates = (tokenized,view,nonCheckOnly) => {
+                const {text,chunks,meaningful:tokens}=tokenized,{space,normalize}=view;
+                const complete=[];let incomplete=false,malformed=false,forbiddenGlobal=false;
+                if(/[\[\],]/u.test(text))return {complete,incomplete,malformed,forbiddenGlobal};
+                for(const entry of matchingCandidates(tokens,view)){
+                    const input=entry.candidate.predicate.inputSyntax;
+                    if(operandShapes.has(input)||nonCheckOnly&&input===syntax.check)continue;
+                    const shifted=entry.difficultyEnabled||entry.invalidDifficulty,match=matchedPrefix(tokens,entry.candidate,shifted?1:0);
+                    if(!match)continue;
+                    const exact=match.next===tokens.length,restNorm=tokens.slice(match.next).map(token=>token.identity).join(" ");
+                    if(input===syntax.only&&!shifted&&exact)complete.push({type:"plain"});
+                    if(input===syntax.optional||input===syntax.required){
+                        if(exact&&(input===syntax.optional||entry.difficultyEnabled)){
+                            const first=chunks[0];
+                            complete.push(entry.difficultyEnabled&&difficulty.has(first.identity)?{type:"non-check",argumentStart:first.start,argumentEnd:first.end,className:"requirements-difficulty"}:{type:"plain"});
+                        }else if(exact&&!entry.difficultyEnabled)incomplete=true;
+                    }
+                    if(shifted)continue;
+                    if(input===syntax.countable||input===syntax.countableFirst){
+                        const argument=countableArgument(text,match.prefixEnd,view,input===syntax.countableFirst);
+                        if(argument)for(const row of view.countableAliases.get(argument.identity)||[])complete.push({type:"non-check",roles:argument.roles});
+                        incomplete=true;
+                    }
+                    // Keep the old normalized positive-quantity grammar; Countable and
+                    // composed quantity take raw chunks with the selected whitespace.
+                    if(input===syntax.quantity){
+                        if(/^[1-9][0-9]*$/u.test(restNorm))complete.push({type:"non-check",argumentStart:argumentStart(text,match.prefixEnd,space),argumentEnd:text.length,className:"requirements-quantity"});
+                        else incomplete=true;
+                    }
+                    if(input===syntax.item){
+                        for(const row of view.itemAliases.get(restNorm)||[])complete.push({type:"non-check",argumentStart:argumentStart(text,match.prefixEnd,space),argumentEnd:text.length,className:"requirements-item"});
+                        incomplete=true;
+                    }
+                    if(input===syntax.check){
+                        const scope=scoped(text,match.prefixEnd,space);
+                        if(scope.state==="malformed"){malformed=true;continue;}
+                        if(scope.state==="unknown"){forbiddenGlobal=true;continue;}
+                        if(!trimText(scope.name,space)){incomplete=true;continue;}
+                        let targetRoom=roomId,className="requirements-local";
+                        if(scope.state==="the"){targetRoom=null;className="requirements-global";}
+                        if(scope.state==="in"){
+                            const rooms=view.roomsByReference.get(normalize(scope.room))||[];
+                            if(rooms.length!==1){complete.push({type:"dependency",resolved:false,prefixEnd:match.prefixEnd,scope,className:"requirements-unresolved"});continue;}
+                            targetRoom=rooms[0].roomId;className="requirements-in";
+                        }
+                        const name=normalize(scope.name),matches=targetRoom===null?(view.checksByName.get(name)||[]):(view.checksByRoom.get(targetRoom)?.get(name)||[]);
+                        const resolved=matches.length===1;
+                        complete.push({type:"dependency",resolved,prefixEnd:match.prefixEnd,scope,className:resolved?className:"requirements-unresolved"});
+                    }
+                }
+                return {complete,incomplete,malformed,forbiddenGlobal};
+            };
+             const analyzeAtom = (original,view) => {
+                 const range=trimRange(original,0,original.length,view.space),text=original.slice(range.start,range.end);
+                 const structural=!!text&&validListStructure(text,view.space);
+                 return {range,tokenized:tokenizeAtom(text,view),structural,cuts:structural?operandCuts(text,view.space):[]};
+             };
+             const describeAtom = (analysis,view,sq1,nonCheckOnly=false) => {
+                 if(!analysis.structural)return {complete:[],structuralFailure:true};
+                 const {tokenized}=analysis;
+                 const operands=operandCandidates(analysis,view,view.predicateAliases,!nonCheckOnly);
+                 const ordinary=ordinaryCandidates(tokenized,view,nonCheckOnly);
+                 // Keep unresolved check candidates for legacy guidance, but not
+                 // as competitors against a successful whole SQ1 application.
+                 const competitors=sq1?.complete.length
+                     ?ordinary.complete.filter(candidate=>candidate.type!=="dependency"||candidate.resolved)
+                     :ordinary.complete;
+                 return {complete:[...operands.complete,...competitors,...(sq1?.complete||[])],
+                     incomplete:operands.incomplete||ordinary.incomplete,
+                     malformedScope:ordinary.malformed,forbiddenGlobal:ordinary.forbiddenGlobal,
+                     rejectedAllocation:operands.rejectedAllocation||sq1?.rejectedAllocation};
+             };
+             const completeNonCheck = (raw,view,onlySq1=false) => {
+                 const analysis=analyzeAtom(raw,view);
+                 if(!analysis.structural)return false;
+                 const sq1=analysis.cuts.length>=minSoulQuantityCuts&&operandCandidates(analysis,view,view.sq1Predicates,false).complete.length>0;
+                 return sq1||!onlySq1&&describeAtom(analysis,view,null,true).complete.length>0;
+             };
+             const adjacentCompleteOperands = ({tokenized,cuts},view,requireSq1=false) => {
+                 const {text}=tokenized;
+                 for(const [index,cut] of cuts.entries()){
+                     const left=text.slice(0,cut),right=text.slice(argumentStart(text,cut,view.space));
+                     if(!requireSq1){
+                         if(completeNonCheck(left,view)&&completeNonCheck(right,view))return true;
+                     }else if(index>=minSoulQuantityCuts&&completeNonCheck(left,view,true)&&completeNonCheck(right,view) ||
+                         cuts.length-index-1>=minSoulQuantityCuts&&completeNonCheck(right,view,true)&&completeNonCheck(left,view))return true;
+                 }
+                 return false;
+             };
+             const atom = original => {
+                 const legacyView=requirementsLookups;
+                 const render = ({range},outcome,view,diagnosis) => {
+                    if(range.start)add(original.slice(0,range.start));
+                    const raw=original.slice(range.start),{complete}=outcome;
+                    if(complete.length===1){
+                        const candidate=complete[0];
+                        if(candidate.type==="dependency")renderDependency(raw,candidate,view.space);
+                        else if(candidate.type==="non-check")renderNonCheck(raw,candidate);
+                        else add(raw);
+                        return true;
+                    }
+                    if(complete.length>1){add(raw,"requirements-unresolved");return true;}
+                     mark(raw,diagnosis);
+                     return false;
+                 };
+                 const sharedDiagnosis = (outcome,pair,guidance) => {
+                     if(outcome.structuralFailure||outcome.malformedScope)return "requirements-malformed";
+                     if(outcome.forbiddenGlobal)return "requirements-unknown";
+                     if(pair)return "requirements-malformed";
+                     if(guidance||outcome.incomplete)return "requirements-incomplete";
+                     return outcome.rejectedAllocation?"requirements-malformed":"requirements-unknown";
+                 };
+                 const server=hasSq1?analyzeAtom(original,serverView):null;
+                 const sq1=server?.cuts.length>=minSoulQuantityCuts?operandCandidates(server,serverView,serverView.sq1Predicates,false):null;
+                 // Eligibility is independent of the winning diagnostic. A proven
+                 // pair can nominate a view whose whole candidate then wins.
+                 const pair=!!sq1&&!sq1.complete.length&&adjacentCompleteOperands(server,serverView,true);
+                 if(sq1?.complete.length||pair){
+                     usedSq1=true;
+                     const outcome=describeAtom(server,serverView,sq1);
+                     return render(server,outcome,serverView,sharedDiagnosis(outcome,pair,false));
+                 }
+                 const legacy=analyzeAtom(original,legacyView);
+                 const outcome=describeAtom(legacy,legacyView,null);
+                 if(server?.structural&&!outcome.complete.length&&positionedSq1Predicates(server,serverView)){
+                     const shared=describeAtom(server,serverView,sq1);
+                     const diagnosis=sharedDiagnosis(shared,false,true);
+                     if(!shared.complete.length&&diagnosis==="requirements-incomplete"){
+                         usedSq1=true;
+                         return render(server,shared,serverView,diagnosis);
+                     }
+                 }
+                 // Preserve the historical precedence for standalone older forms.
+                 const diagnosis=outcome.structuralFailure||outcome.malformedScope||outcome.rejectedAllocation?"requirements-malformed":
+                     outcome.forbiddenGlobal?"requirements-unknown":outcome.incomplete?"requirements-incomplete":
+                     !outcome.complete.length&&adjacentCompleteOperands(legacy,legacyView)?"requirements-malformed":"requirements-unknown";
+                 return render(legacy,outcome,legacyView,diagnosis);
+             };
         const expression=(end=false,depth=0)=>{let expect=true, operators=new Set(), lastKnown=false, saw=false, lastOperator=null;
-          while(at<source.length){if(end&&source[at]===")"){if(expect){if(lastOperator!==null)spans[lastOperator][1]="requirements-malformed";mark(")");}else add(")",`requirements-paren-depth-${(depth - 1) % 4}`);at++;return !expect;} if(!end&&source[at]===")"){mark(")");at++;expect=false;continue;} if(/\s/u.test(source[at])){const start=at;while(at<source.length&&/\s/u.test(source[at]))at++;add(source.slice(start,at));continue;}
+           while(at<source.length){
+             const gapStart=at;
+             if(hasSq1&&expressionSpace===legacySpace&&!boundaryDifference&&(legacySpace(source[at])||serverSpace(source[at]))){
+                 let next=at,different=false;
+                 while(next<source.length&&(legacySpace(source[next])||serverSpace(source[next]))){
+                     if(legacySpace(source[next])!==serverSpace(source[next]))different=true;
+                     next++;
+                 }
+                 boundaryDifference=different&&(next===source.length||source[next]==="("||source[next]===")"||wordAt("AND",next)||wordAt("OR",next));
+             }
+             while(at<source.length&&expressionSpace(source[at]))at++;
+             const gap=source.slice(gapStart,at);
+             if(at===source.length){if(gap)add(gap);break;}
+             const operator=wordAt("AND",at)?"AND":wordAt("OR",at)?"OR":null;
+             if(gap&&(operator||source[at]==="("||source[at]===")"))add(gap);
+             if(end&&source[at]===")"){if(expect){if(lastOperator!==null)spans[lastOperator][1]="requirements-malformed";mark(")");}else add(")",`requirements-paren-depth-${(depth - 1) % 4}`);at++;return !expect;} if(!end&&source[at]===")"){mark(")");at++;expect=false;continue;}
             if(source[at]==="("){if(!expect&&lastKnown){const start=at++;let escaped=false,nested=false;while(at<source.length&&source[at]!==")"){if(source[at]==="\\")escaped=true;if(source[at]==="(")nested=true;at++;}if(at>=source.length||escaped||nested){mark(source.slice(start,at));return false;}add(source.slice(start,++at),"requirements-annotation");lastKnown=false;continue;}if(!expect){mark("(");at++;continue;}const opening=spans.length;add("(",`requirements-paren-depth-${depth % 4}`);at++;if(!expression(true,depth+1))spans[opening][1]="requirements-malformed";lastKnown=false;expect=false;saw=true;continue;}
-              const operator=wordAt("AND",at)?"AND":wordAt("OR",at)?"OR":null;if(operator){if(expect)mark(operator);else{operators.add(operator);lastOperator=spans.length;add(operator,operators.size>1?"requirements-malformed":"requirements-syntax");if(operators.size>1)danger=true;expect=true;}at+=operator.length;lastKnown=false;continue;}
-            const start=at;let bracketDepth=0;while(at<source.length){const character=source[at];if(bracketDepth===0&&(character==="("||character===")"||wordAt("AND",at)||wordAt("OR",at)))break;if(character==="[")bracketDepth++;if(character==="]")bracketDepth--;at++;}const raw=source.slice(start,at);if(!raw){at++;continue;}if(!expect){mark(raw);continue;}lastKnown=atom(raw);expect=false;saw=true;}
+               if(operator){if(expect)mark(operator);else{operators.add(operator);lastOperator=spans.length;add(operator,operators.size>1?"requirements-malformed":"requirements-syntax");if(operators.size>1)danger=true;expect=true;}at+=operator.length;lastKnown=false;continue;}
+             const start=at;let bracketDepth=0;while(at<source.length){const character=source[at];if(bracketDepth===0&&(character==="("||character===")"||wordAt("AND",at)||wordAt("OR",at)))break;if(character==="[")bracketDepth++;if(character==="]")bracketDepth--;at++;}const raw=source.slice(start,at);if(!raw){if(gap)add(gap);at++;continue;}if(!expect){if(gap)add(gap);mark(raw);continue;}lastKnown=atom(source.slice(gapStart,at));expect=false;saw=true;}
            if(end){if(lastOperator!==null)spans[lastOperator][1]="requirements-malformed";mark("", "requirements-malformed");return false;}if(expect&&saw){danger=true;if(lastOperator!==null)spans[lastOperator][1]="requirements-malformed";}return !expect;};
-         try { if(!source.trim()){add(source);return {spans,danger:false};} expression(); return {spans,danger}; } catch { throw new Error("Requirements highlighter failed."); }
+          try { if(!source.trim()){add(source);return {spans,danger:false};} expression(); return {spans,danger,usedSq1,boundaryDifference}; } catch { throw new Error("Requirements highlighter failed."); }
       };
         const rawRequirements = (layer,value) => { const target=layer?.querySelector?.("[data-v2-requirements-highlight]");if(target){target.replaceChildren();target.textContent=value;}layer?.removeAttribute?.("data-v2-requirements-highlight-ready");layer?.classList?.remove("requirements-parser-danger");if(layer?.matches?.(".requirements-inline-layer"))layer.closest("td")?.classList.remove("requirements-parser-danger"); };
          // Successful presentation applicability only: no parse results or diagnostics
@@ -1538,7 +1759,8 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
              const source=target.textContent||"",savedContext=requirementsContext,savedLookups=requirementsLookups;
              try{
                  requirementsContext={...savedContext,rooms:[],checks:[]};
-                 requirementsLookups={...savedLookups,roomsByReference:new Map(),checksByName:new Map(),checksByRoom:new Map()};
+                 const withoutChecks = view => ({...view,roomsByReference:new Map(),checksByName:new Map(),checksByRoom:new Map()});
+                 requirementsLookups={...withoutChecks(savedLookups),server:savedLookups.server&&withoutChecks(savedLookups.server)};
                  target.replaceChildren();const result=parseRequirementsV2(source,null);
                  for(const [text,cls] of result.spans)setText(target,text,cls);
                  rememberRequirementPaint(target,target,source,null,savedLookups,true);

@@ -6,7 +6,10 @@ namespace Silksong_Rando_Logic_Manager.Services;
 internal sealed partial class RecordHistoryStore
 {
     internal sealed record ActivityEdit(DateTime RecordedUtc, Guid ActorId, Guid RoomId, string RoomName, string TableName, long RowId);
-    internal sealed record ActivityRead(bool Available, DateTime? LatestUtc, IReadOnlyList<ActivityEdit> Edits);
+    internal sealed record ActivityRead(bool Available, DateTime? LatestUtc, IReadOnlyList<ActivityEdit> Edits)
+    {
+        internal Guid? LatestActorId { get; init; }
+    }
     private static readonly string[] ActivityTables = ["Rooms", "Subrooms", "RoomTransitions", "SubroomConnections", "CheckLocations"];
 
     // Only scalar owner metadata is unioned. No full-row decoding or operation
@@ -27,10 +30,21 @@ internal sealed partial class RecordHistoryStore
             await CheckMirrorsAsync(connection, transaction);
             if (now is null)
             {
-                await using var maximum = Command(connection, transaction, "SELECT MAX(ChangeUtc) FROM (" +
-                    string.Join(" UNION ALL ", ActivityTables.Select(table => $"SELECT MAX(ChangeUtc) AS ChangeUtc FROM {Quote(Mirror(table))}")) + ")");
-                var raw = await maximum.ExecuteScalarAsync(token);
-                return new(true, raw is null or DBNull ? null : Utc((string)raw), []);
+                var times = string.Join(" UNION ALL ", ActivityTables.Select(table =>
+                    $"SELECT MAX(ChangeUtc) AS ChangeUtc FROM {Quote(Mirror(table))}"));
+                // Resolve exact-time ties by the binary-smallest stored actor ID,
+                // not by an inferred edit order or room identity. Only scalar
+                // columns are read, using the existing ChangeUtc indexes.
+                var actors = string.Join(" UNION ALL ", ActivityTables.Select(table =>
+                    $"SELECT MIN(UserId COLLATE BINARY) AS UserId FROM {Quote(Mirror(table))} WHERE ChangeUtc = (SELECT AtUtc FROM latestTime)"));
+                await using var latest = Command(connection, transaction, $"""
+                    WITH latestTime(AtUtc) AS (SELECT MAX(ChangeUtc) FROM ({times}))
+                    SELECT AtUtc, (SELECT MIN(UserId COLLATE BINARY) FROM ({actors}))
+                    FROM latestTime WHERE AtUtc IS NOT NULL
+                    """);
+                await using var reader = await latest.ExecuteReaderAsync(token);
+                if (!await reader.ReadAsync(token)) return new(true, null, []);
+                return new(true, Utc(reader.GetString(0)), []) { LatestActorId = Guid.Parse(reader.GetString(1)) };
             }
 
             (string Name, object? Value)[] window = [("$from", now.Value.AddHours(-24).ToString("O", CultureInfo.InvariantCulture)),

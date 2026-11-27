@@ -23,15 +23,56 @@ internal sealed class PublishingMapPreflight(PreparedGraphEvidence evidence)
     private const string NoTranslation = "The shared requirement catalogue is invalid; canonical translation could not run.";
     internal static MapCheck[] NewChecks() =>
     [
-        new("Broken references", "Broken Node Reference", "A route or check points to a node that was deleted or belongs to the wrong room."),
-        new("Broken references", "Exit to Nowhere", "A doorway has no valid destination entrance, even if it names the right room."),
-        new("Broken references", "Unknown Prerequisite", "A rule asks the player to complete a check that isn’t defined in the map."),
-        new("Broken references", "Unreadable Rule", "A route or check has a blank or unreadable requirement, so we can’t tell when it’s usable."),
-        new("Missing map data", "Orphaned Node", "We mapped a spot but gave it no incoming link, and it isn’t a starting point or story arrival."),
-        new("Missing map data", "Disconnected Island", "A group of spots links together, but there’s no way to reach the group from a starting point or story arrival, even with the locks ignored. The individual spots may all have incoming links, so Orphaned Node would miss them."),
-        new("Progression mistakes", "Self-Lock", "A switch is behind its own lock. An alternate route that doesn’t require the switch is enough for this check to pass."),
-        new("Progression mistakes", "Progression Deadlock", "The links and prerequisites exist, but nothing in the chain can happen first. The Bell Switch needs the Gate Switch, and the Gate Switch needs the Bell Switch.")
+        new("Invalid or incomplete logic", "Invalid Subroom Assignment", AssignmentDescription),
+        new("Invalid or incomplete logic", "Unknown Prerequisite", "A rule asks the player to complete a check that isn’t defined in the map."),
+        new("Invalid or incomplete logic", "Unreadable Rule", "A route or check has a blank or unreadable requirement, so we can’t tell when it’s usable."),
+        new("Progression and reachability", "Orphaned Node", "We mapped a spot but gave it no incoming link, and it isn’t a starting point or story arrival."),
+        new("Progression and reachability", "Disconnected Island", "A group of spots links together, but there’s no way to reach the group from a starting point or story arrival, even with the locks ignored. The individual spots may all have incoming links, so Orphaned Node would miss them."),
+        new("Progression and reachability", "Self-Lock", "A switch is behind its own lock. An alternate route that doesn’t require the switch is enough for this check to pass."),
+        new("Progression and reachability", "Progression Deadlock", "The links and prerequisites exist, but nothing in the chain can happen first. The Bell Switch needs the Gate Switch, and the Gate Switch needs the Bell Switch.")
     ];
+    private const string AssignmentDescription = "A connection, transition, or check has a missing or invalid subroom assignment.";
+    internal static MapCheck[] IntegrityChecks() =>
+    [
+        new("Graph integrity", "Invalid Identifiers", "A record is missing a name or usable identifier, or two records produce the same graph identifier."),
+        new("Graph integrity", "Broken Room Group", "A room has no group, or its group no longer exists."),
+        new("Graph integrity", "Invalid Connection", "A connection joins a subroom to itself, or connections with the same alias don’t describe the same link between two subrooms."),
+        new("Graph integrity", "Invalid Subroom Assignment", AssignmentDescription),
+        new("Graph integrity", "Exit to Nowhere", "A doorway has no valid destination entrance, even if it names the right room."),
+        new("Graph integrity", "Invalid Requirement Catalogue Entry", "A Requirement Catalogue entry has invalid syntax, aliases, or output.")
+    ];
+    internal MapCheck[] Integrity(PreparedRoomGraph prepared)
+    {
+        var failures = evidence.Integrity.ToList();
+        foreach (var reference in evidence.References.Where(r => r.HardFailure is not null))
+            failures.Add(new(reference.Kind == PreparedReferenceKind.Node ? PreparedIntegrityFamily.Subroom : PreparedIntegrityFamily.Exit,
+                reference.HardFailure!, reference.Record, reference.RecordKind, reference.RecordId, reference.RoomRecordId, reference.RelatedRooms));
+        // A new canonical emitter must carry typed evidence rather than silently passing.
+        var reported = failures.Select(x => x.Failure).ToHashSet(ReferenceEqualityComparer.Instance);
+        if (prepared.Export.Failures.Any(x => !reported.Contains(x)))
+            throw new InvalidOperationException("A canonical graph failure has no preparation integrity evidence.");
+        return IntegrityChecks().Select((row, index) =>
+        {
+            var findings = failures.Where(x => (int)x.Family == index).Select(x => Finding(evidence,
+                x.RecordId is { } id && x.RoomId is { } room && evidence.RecordTitles.ContainsKey((x.Kind, id)) ? RecordTitle(x.Kind, id, room)
+                    : new(new(x.Owner), x.Kind, x.RecordId ?? default),
+                x.Failure.Cause, (x.RoomId is { } owner ? new[] { owner } : []).Concat(x.RelatedRooms ?? []))).ToArray();
+            return row with { Status = findings.Length == 0 ? MapCheckStatus.Pass : MapCheckStatus.Fail,
+                Report = findings.Length == 0 ? null : GroupFindings(findings) };
+        }).ToArray();
+    }
+    internal MapCheck[] RuleChecks(IReadOnlyList<PublishingDocuments.RuleIssue> issues) =>
+        new[]
+        {
+            new MapCheck("Rule violations", "Missing Combat Requirements", "A boss or gauntlet check doesn’t include Combat Requirements."),
+            new MapCheck("Rule violations", "Incorrect Pogo Difficulty", "A pogo-off requirement doesn’t use Intended difficulty for an enemy designed for pogoing.")
+        }.Select((row, index) =>
+        {
+            var findings = issues.Where(x => x.Combat == (index == 0)).Select(x =>
+                Finding(evidence, RecordTitle(x.Kind, x.RecordId, x.RoomId), x.Reason, [x.RoomId])).ToArray();
+            return row with { Status = findings.Length == 0 ? MapCheckStatus.Pass : MapCheckStatus.Fail,
+                Report = findings.Length == 0 ? null : GroupFindings(findings) };
+        }).ToArray();
 
     private readonly record struct DisplayTitle(string Exact, string? Compact = null);
     private readonly record struct FindingIdentity(string Kind, Guid RecordId = default, string? GraphId = null);
@@ -43,15 +84,14 @@ internal sealed class PublishingMapPreflight(PreparedGraphEvidence evidence)
     private sealed record FindingEvidence(FindingTitle Title, string Detail, IReadOnlyList<MapFindingRoom> Rooms);
     private sealed record RecordEvidence(DisplayTitle Title, MapFindingRoom[] Rooms, FindingEvidence[] Reasons);
     private sealed record Location(PreparedGraphRoom Room, RoomGraphLocation Row, FindingTitle Title);
-    private sealed record Route(string From, string To, string Label, string[][] Clauses);
+    private sealed record Route(string From, string To, string Label, string[][] Clauses, bool Unreadable);
     private readonly record struct Fact(bool IsLocation, string Id);
-    private sealed class Alternative(Fact output, int remaining)
-    {
-        internal Fact Output { get; } = output;
-        internal int Remaining = remaining;
-    }
+    private sealed record Production(Fact Output, Fact[] Inputs, Route? Route = null);
 
-    internal void Run(Action<int, MapCheckStatus, MapFindingReport?, string?> publish)
+    private static Fact Node(string id) => new(false, id);
+    private static Fact Check(string id) => new(true, id);
+
+    internal void Run(Action<int, MapCheckStatus, MapFindingReport?, string?> publish, CancellationToken cancellationToken)
     {
         var locations = evidence.Rooms.SelectMany(r => r.Room.Locations.Select((l, i) =>
             new Location(r, l, RecordTitle("location", r.LocationRecordIds[i], r.RoomRecordId)))).ToArray();
@@ -65,16 +105,13 @@ internal sealed class PublishingMapPreflight(PreparedGraphEvidence evidence)
             findings.Count == 0 && unavailable is null ? MapCheckStatus.Pass : MapCheckStatus.Fail,
             findings.Count == 0 ? null : GroupFindings(findings), unavailable);
 
-        for (var i = 0; i < 2; i++)
-        {
-            Begin(i);
-            foreach (var r in evidence.References.Where(r => r.Kind == (i == 0 ? PreparedReferenceKind.Node : PreparedReferenceKind.Port)))
-                Add(RecordTitle(r.RecordKind, r.RecordId, r.RoomRecordId),
-                    r is { Kind: PreparedReferenceKind.Node, Problem: PreparedReferenceProblem.Blank, RecordKind: "location", Field: "subroom" }
-                        ? "Subroom is blank." : $"{r.Field}: {r.Requested ?? "(blank)"}. {r.Cause}.", r.RoomRecordId, r.RelatedRooms);
-            End(i);
-        }
-        Begin(2);
+        Begin(0);
+        foreach (var r in evidence.References.Where(r => r.Kind == PreparedReferenceKind.Node && r.HardFailure is null))
+            Add(RecordTitle(r.RecordKind, r.RecordId, r.RoomRecordId),
+                r is { Kind: PreparedReferenceKind.Node, Problem: PreparedReferenceProblem.Blank, RecordKind: "location", Field: "subroom" }
+                    ? "Subroom is blank." : $"{r.Field}: {r.Requested ?? "(blank)"}. {r.Cause}.", r.RoomRecordId, r.RelatedRooms);
+        End(0);
+        Begin(1);
         foreach (var rule in evidence.Rules)
         {
             foreach (var failure in rule.Evidence.MissingChecks.DistinctBy(f => (f.Problem, f.Operand, f.Cause)))
@@ -83,9 +120,9 @@ internal sealed class PublishingMapPreflight(PreparedGraphEvidence evidence)
                 if (!identities.Contains(id))
                     Add(RecordTitle(rule.Kind, rule.RecordId, rule.RoomRecordId), $"Exact prerequisite '{id}' does not exist.", rule.RoomRecordId);
         }
-        End(2, evidence.TranslationAvailable ? null : NoTranslation);
+        End(1, evidence.TranslationAvailable ? null : NoTranslation);
 
-        Begin(3);
+        Begin(2);
         foreach (var rule in evidence.Rules)
         {
             foreach (var reason in rule.Evidence.UnreadableReasons.DistinctBy(r => (r.Cause, r.CheckOperand)))
@@ -96,9 +133,9 @@ internal sealed class PublishingMapPreflight(PreparedGraphEvidence evidence)
                 if (identities[id].Count() > 1)
                     Add(RecordTitle(rule.Kind, rule.RecordId, rule.RoomRecordId), $"Exact prerequisite '{id}' is not unique.", rule.RoomRecordId, identities[id].Select(l => l.Room.RoomRecordId));
         }
-        End(3, evidence.TranslationAvailable ? null : NoTranslation);
+        End(2, evidence.TranslationAvailable ? null : NoTranslation);
 
-        Begin(4);
+        Begin(3);
         var seeds = new HashSet<string>(StringComparer.Ordinal);
         foreach (var spawn in locations.Where(l => l.Row.LocationType == "spawn"))
         {
@@ -117,16 +154,16 @@ internal sealed class PublishingMapPreflight(PreparedGraphEvidence evidence)
             else Add(spawn.Title, $"Invalid Spawn. {reason}", spawn.Room.RoomRecordId, related);
         }
         var unavailable = evidence.Document is null ? Rejected : seeds.Count == 0 ? NoStarts : null;
-        var graph = evidence.Document is null ? null : new GraphIndex(evidence, locations, identities);
+        var graph = evidence.Document is null ? null : new GraphIndex(evidence, locations, identities, cancellationToken);
         if (unavailable is null) graph!.FindOrphans(seeds, findings);
+        End(3, unavailable);
+
+        Begin(4);
+        if (unavailable is null) graph!.FindIslands(seeds, findings);
         End(4, unavailable);
 
         Begin(5);
-        if (unavailable is null) graph!.FindIslands(seeds, findings);
-        End(5, unavailable);
-
-        Begin(6);
-        var selfActivating = new HashSet<string>(StringComparer.Ordinal);
+        var selfLocked = new HashSet<string>(StringComparer.Ordinal);
         foreach (var loc in locations)
         {
             var row = loc.Row;
@@ -134,23 +171,17 @@ internal sealed class PublishingMapPreflight(PreparedGraphEvidence evidence)
             var alternatives = row.Requirement.Dnf.Where(IsPossible).ToArray();
             if (alternatives.Length != 0 && alternatives.All(c => c.Contains(DependencyPrefix + row.Id, StringComparer.Ordinal)))
             {
-                selfActivating.Add(row.Id);
+                selfLocked.Add(row.Id);
                 Add(loc.Title, "Every activation alternative requires this exact location to be acquired first.", loc.Room.RoomRecordId);
             }
         }
-        HashSet<string>? optimistic = null;
-        var optimisticTree = new HashSet<Route>();
-        if (unavailable is null)
-        {
-            optimistic = graph!.Walk(seeds, r => r.Clauses.Length != 0, optimisticTree);
-            graph.FindApproachLocks(seeds, optimistic, findings);
-        }
-        End(6, unavailable is null ? null : $"Approach analysis could not run: {unavailable}" +
+        if (unavailable is null) graph!.FindApproachLocks(seeds, selfLocked, findings);
+        End(5, unavailable is null ? null : $"Approach analysis could not run: {unavailable}" +
             (!evidence.TranslationAvailable ? " Self-activation could not run: the shared requirement catalogue is invalid." : ""));
 
-        Begin(7);
-        if (unavailable is null) graph!.FindProgressionBlocks(seeds, optimistic!, optimisticTree, selfActivating, findings);
-        End(7, unavailable);
+        Begin(6);
+        if (unavailable is null) graph!.FindProgressionLocks(seeds, selfLocked, findings);
+        End(6, unavailable);
     }
 
     private FindingTitle RecordTitle(string kind, Guid id, Guid owner)
@@ -267,19 +298,26 @@ internal sealed class PublishingMapPreflight(PreparedGraphEvidence evidence)
     {
         private Dictionary<string, (FindingTitle Title, Guid RoomId)> Nodes { get; } = new(StringComparer.Ordinal);
         private readonly PreparedGraphEvidence evidence;
-        internal Dictionary<string, Location> ExecutableLocations { get; } = new(StringComparer.Ordinal);
+        private readonly CancellationToken cancellationToken;
+        private Dictionary<string, Location> ExecutableLocations { get; } = new(StringComparer.Ordinal);
         private readonly List<Route> routes = [];
-        internal ILookup<string, Route> Outgoing { get; }
+        private ILookup<string, Route> Outgoing { get; }
+        private readonly ILookup<string, Route> incoming;
         private readonly HashSet<string> coverageNodes = new(StringComparer.Ordinal);
         private readonly ILookup<string, string> coverageIncoming;
         private readonly ILookup<string, string> coverageOutgoing;
-        private readonly ILookup<string, Route> approachByDependency;
+        private readonly string[] approachDependencies;
         private readonly Dictionary<Route, string[][]> approachClauses;
         private readonly Dictionary<string, string[][]> activation = new(StringComparer.Ordinal);
+        private readonly Production[] readableRules;
+        private readonly Production[] possibleRules;
+        private Dictionary<Fact, Production?>? possible;
 
-        internal GraphIndex(PreparedGraphEvidence evidence, IReadOnlyList<Location> locations, ILookup<string, Location> identities)
+        internal GraphIndex(PreparedGraphEvidence evidence, IReadOnlyList<Location> locations, ILookup<string, Location> identities,
+            CancellationToken cancellationToken)
         {
             this.evidence = evidence;
+            this.cancellationToken = cancellationToken;
             // A known area is either physical or virtual. Virtual nodes are
             // coverage connectors only; Nodes remains the physical index.
             var admitted = evidence.Rooms.Where(r => r.IsPlayable.HasValue).ToArray();
@@ -295,10 +333,10 @@ internal sealed class PublishingMapPreflight(PreparedGraphEvidence evidence)
             foreach (var room in admitted)
             {
                 foreach (var c in room.Room.Connections)
-                    Add(c.SourceNodeId, c.TargetNodeId, $"{room.Room.Name} / {c.Name} ({c.Id})", c.Requirement);
+                    Add(c.SourceNodeId, c.TargetNodeId, room, $"connection {c.Name} ({c.Alias})", c.Requirement);
                 foreach (var t in room.Room.Transitions)
                     if (t.Target is { } id && ports.TryGetValue(id, out var target))
-                        Add(t.SourceNodeId, target.SourceNodeId, $"{room.Room.Name} / {t.Name} ({t.Id})", t.Requirement);
+                        Add(t.SourceNodeId, target.SourceNodeId, room, $"transition {t.Name} ({t.Alias})", t.Requirement);
             }
             foreach (var loc in locations.Where(l => l.Row.LogicStatus == "active" && Nodes.ContainsKey(l.Row.NodeId)))
             {
@@ -308,6 +346,7 @@ internal sealed class PublishingMapPreflight(PreparedGraphEvidence evidence)
                 activation.Add(loc.Row.Id, clauses);
             }
             Outgoing = routes.ToLookup(r => r.From, StringComparer.Ordinal);
+            incoming = routes.ToLookup(r => r.To, StringComparer.Ordinal);
             coverageIncoming = coverageLinks.ToLookup(r => r.To, r => r.From, StringComparer.Ordinal);
             coverageOutgoing = coverageLinks.ToLookup(r => r.From, r => r.To, StringComparer.Ordinal);
 
@@ -318,24 +357,35 @@ internal sealed class PublishingMapPreflight(PreparedGraphEvidence evidence)
                 l.Row.Requirement.Dnf.Count != 0 && !l.Row.Requirement.Dnf.Any(IsPossible)).Select(l => l.Row.Id).ToHashSet(StringComparer.Ordinal);
             approachClauses = routes.ToDictionary(r => r, r => impossibleLocations.Count == 0 ? r.Clauses
                 : r.Clauses.Where(c => !c.Any(impossibleLocations.Contains)).ToArray());
-            approachByDependency = routes.SelectMany(r => approachClauses[r].SelectMany(c => c).Distinct(StringComparer.Ordinal).Select(d => (Id: d, Route: r)))
-                .ToLookup(x => x.Id, x => x.Route, StringComparer.Ordinal);
+            approachDependencies = approachClauses.Values.SelectMany(a => a).SelectMany(c => c)
+                .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+            readableRules = routes.SelectMany(r => Make(Node(r.To), Node(r.From), r.Clauses, r))
+                .Concat(ExecutableLocations.Values.SelectMany(l => Make(Check(l.Row.Id), Node(l.Row.NodeId), activation[l.Row.Id]))).ToArray();
+            possibleRules = [.. readableRules, .. routes.Where(r => r.Unreadable).Select(r => new Production(Node(r.To), [Node(r.From)]))];
 
-            void Add(string from, string to, string label, RoomGraphRequirement requirement)
+            void Add(string from, string to, PreparedGraphRoom owner, string rule, RoomGraphRequirement requirement)
             {
                 // Coverage counts resolved topology unless the canonical rule rules it out.
                 if (coverageNodes.Contains(from) && coverageNodes.Contains(to) &&
                     (requirement.Mode == "unresolved" || requirement.Dnf.Any(IsPossible)))
                     coverageLinks.Add((from, to));
                 // Executable clauses and progression walks retain physical endpoints only.
-                if (Nodes.ContainsKey(from) && Nodes.ContainsKey(to))
-                    routes.Add(new(from, to, label, Clauses(requirement)));
+                if (Nodes.TryGetValue(from, out var source) && Nodes.TryGetValue(to, out var destination))
+                {
+                    var roomName = evidence.RoomIdentities[owner.RoomRecordId].Label;
+                    var targetRoom = source.RoomId == destination.RoomId ? "" : evidence.RoomIdentities[destination.RoomId].Label + " / ";
+                    var label = $"{roomName} / {rule} ({source.Title.Label.Compact} → {targetRoom}{destination.Title.Label.Compact})";
+                    routes.Add(new(from, to, label, Clauses(requirement), requirement.Mode == "unresolved"));
+                }
             }
             string[][] Clauses(RoomGraphRequirement rule) => rule.Dnf.Where(IsPossible).Select(c => c
                 .Where(a => a.StartsWith(DependencyPrefix, StringComparison.Ordinal)).Select(a => a[DependencyPrefix.Length..])
                 .Distinct(StringComparer.Ordinal).ToArray()).Where(c => c.All(id => identities[id].Count() == 1)).ToArray();
             // Empty DNF and impassable clauses contribute no executable alternative.
             // Other non-dependency atoms are optimistic, not modeled completions.
+
+            static IEnumerable<Production> Make(Fact output, Fact source, string[][] clauses, Route? route = null) =>
+                clauses.Select(c => new Production(output, [source, .. c.Select(Check)], route));
         }
 
         internal void FindOrphans(HashSet<string> seeds, List<FindingEvidence> findings)
@@ -383,84 +433,172 @@ internal sealed class PublishingMapPreflight(PreparedGraphEvidence evidence)
             }
         }
 
-        internal void FindApproachLocks(HashSet<string> seeds, HashSet<string> optimistic, List<FindingEvidence> findings)
+        internal void FindApproachLocks(HashSet<string> seeds, HashSet<string> selfLocked, List<FindingEvidence> findings)
         {
-            var baseline = approachClauses.Any(p => p.Value.Length != p.Key.Clauses.Length)
-                ? Walk(seeds, route => approachClauses[route].Length != 0) : optimistic;
-            foreach (var routesForCheck in approachByDependency)
+            var baseline = Walk(seeds, route => approachClauses[route].Length != 0);
+            var hasUnreadableRoutes = routes.Any(r => r.Unreadable);
+            foreach (var id in approachDependencies)
             {
-                var id = routesForCheck.Key;
-                if (!ExecutableLocations.TryGetValue(id, out var loc) || !baseline.Contains(loc.Row.NodeId)) continue;
+                cancellationToken.ThrowIfCancellationRequested();
+                if (selfLocked.Contains(id) || !ExecutableLocations.TryGetValue(id, out var loc) || !baseline.Contains(loc.Row.NodeId))
+                    continue;
                 bool Bypasses(Route route) => approachClauses[route].Any(c => !c.Contains(id, StringComparer.Ordinal));
-                var alternate = Walk(seeds, Bypasses);
-                if (!alternate.Contains(loc.Row.NodeId))
+                var readable = Walk(seeds, Bypasses);
+                // Preserve the optimistic *readable* approach comparison: a
+                // readable alternate gate may instead be a mutual lock. For
+                // an unreadable detour, require a realizable upper acquisition
+                // of each check on its remaining gates. In a least closure A
+                // cannot help reach A's own placement before it is reached.
+                if (readable.Contains(loc.Row.NodeId) ||
+                    (hasUnreadableRoutes && Possible(seeds).ContainsKey(Node(loc.Row.NodeId))))
+                    continue;
+
+                // Find readable crossings into the region from which this
+                // check can be approached. Other gates on the same frontier
+                // are not evidence about this placement.
+                var leadsToCheck = new HashSet<string>(StringComparer.Ordinal) { loc.Row.NodeId };
+                var pending = new Queue<string>(leadsToCheck);
+                var gates = new List<Route>();
+                while (pending.TryDequeue(out var node))
                 {
-                    var boundary = routesForCheck.Where(r => alternate.Contains(r.From) && !alternate.Contains(r.To) && !Bypasses(r)).ToArray();
-                    findings.Add(Finding(evidence, loc.Title, $"Its node is reachable only through rules requiring this location. Rules on the reachable boundary: {string.Join("; ", boundary.Select(r => r.Label))}.",
-                        RouteRooms(boundary).Prepend(loc.Room.RoomRecordId)));
+                    cancellationToken.ThrowIfCancellationRequested();
+                    foreach (var route in incoming[node])
+                    {
+                        if (approachClauses[route].Length == 0) continue;
+                        if (readable.Contains(route.From)) gates.Add(route);
+                        else if (leadsToCheck.Add(route.From)) pending.Enqueue(route.From);
+                    }
                 }
+                selfLocked.Add(id);
+                findings.Add(Finding(evidence, loc.Title, $"‘{loc.Title.Label.Exact}’ is behind its own gate. Blocking rules: {string.Join("; ", gates.Select(r => r.Label).Order(StringComparer.Ordinal))}.",
+                    RouteRooms(gates).Prepend(loc.Room.RoomRecordId)));
             }
         }
 
-        internal HashSet<string> Walk(IEnumerable<string> seeds, Func<Route, bool> allowed, HashSet<Route>? tree = null)
+        private HashSet<string> Walk(IEnumerable<string> seeds, Func<Route, bool> allowed)
         {
             var reached = seeds.ToHashSet(StringComparer.Ordinal);
             var queue = new Queue<string>(reached);
             while (queue.TryDequeue(out var node))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
                 foreach (var r in Outgoing[node])
-                    if (!reached.Contains(r.To) && allowed(r) && reached.Add(r.To))
-                    {
-                        tree?.Add(r);
-                        queue.Enqueue(r.To);
-                    }
+                    if (allowed(r) && reached.Add(r.To)) queue.Enqueue(r.To);
+            }
             return reached;
         }
 
-        internal void FindProgressionBlocks(HashSet<string> seeds, HashSet<string> optimistic, HashSet<Route> optimisticTree,
-            HashSet<string> selfActivating, List<FindingEvidence> findings)
+        internal void FindProgressionLocks(HashSet<string> seeds, HashSet<string> selfLocked, List<FindingEvidence> findings)
         {
-            var waiting = new Dictionary<Fact, List<Alternative>>();
-            var acquired = new HashSet<Fact>();
-            var queue = new Queue<Fact>();
-            foreach (var r in routes) Register(new(false, r.From), new(false, r.To), r.Clauses);
-            foreach (var l in ExecutableLocations.Values) Register(new(false, l.Row.NodeId), new(true, l.Row.Id), activation[l.Row.Id]);
-            foreach (var node in seeds) Learn(new(false, node));
-            while (queue.TryDequeue(out var fact))
-                if (waiting.TryGetValue(fact, out var alternatives))
-                    foreach (var alternative in alternatives)
-                        if (--alternative.Remaining == 0) Learn(alternative.Output);
+            var confirmed = new WalkIndex(readableRules, cancellationToken).Run(seeds.Select(Node));
+            var upper = Possible(seeds);
+            var viable = ClassifyViable(seeds);
+            var candidates = viable.Where(id => !selfLocked.Contains(id) && !upper.ContainsKey(Check(id)))
+                .ToHashSet(StringComparer.Ordinal);
+            if (candidates.Count < 2) return;
 
-            var viable = ClassifyViable(seeds, optimistic, optimisticTree);
-            bool ViableClause(string[] clause) => clause.All(viable.Locations.Contains);
-            // Report the reachable frontier and blocked acquisitions there, not
-            // every location stranded behind the same gate or missing topology.
-            foreach (var group in routes.Where(r => r.Clauses.Any(ViableClause) && acquired.Contains(new(false, r.From)) &&
-                viable.Nodes.Contains(r.To) && !acquired.Contains(new(false, r.To))).GroupBy(r => r.To))
-                findings.Add(Finding(evidence, Nodes[group.Key].Title, string.Join("\n", group.Select(r => $"{r.Label}: {Unmet(r.Clauses.Where(ViableClause))}")),
-                    RouteRooms(group).Concat(UnmetRooms(group.SelectMany(r => r.Clauses.Where(ViableClause)))).Prepend(Nodes[group.Key].RoomId)));
-            foreach (var l in ExecutableLocations.Values)
-                if (viable.Locations.Contains(l.Row.Id) && !selfActivating.Contains(l.Row.Id) && acquired.Contains(new(false, l.Row.NodeId)) && !acquired.Contains(new(true, l.Row.Id)))
-                    findings.Add(Finding(evidence, l.Title, Unmet(activation[l.Row.Id].Where(ViableClause)),
-                        UnmetRooms(activation[l.Row.Id].Where(ViableClause)).Prepend(l.Room.RoomRecordId)));
-
-            string Unmet(IEnumerable<string[]> clauses) => "Unmet prerequisites by alternative: " + string.Join(" OR ", clauses.Select(c =>
-                "[" + string.Join(" AND ", c.Where(id => !acquired.Contains(new(true, id)))) + "]"));
-            IEnumerable<Guid> UnmetRooms(IEnumerable<string[]> clauses) => clauses.SelectMany(c => c)
-                .Where(id => !acquired.Contains(new(true, id))).Select(id => ExecutableLocations[id].Room.RoomRecordId);
-            void Learn(Fact fact) { if (acquired.Add(fact)) queue.Enqueue(fact); }
-            void Register(Fact source, Fact output, string[][] clauses)
+            bool AvailableInput(Fact fact) => !fact.IsLocation || viable.Contains(fact.Id);
+            var upperRules = possibleRules.Where(r => r.Inputs.All(AvailableInput)).ToLookup(r => r.Output);
+            var knownRules = readableRules.Where(r => r.Inputs.All(AvailableInput)).ToLookup(r => r.Output);
+            // References (including possible detours) only bound the searches.
+            // They say nothing about which alternatives hold or how many repairs
+            // a component needs.
+            var edges = upperRules.SelectMany(g => g).Where(r => !upper.ContainsKey(r.Output))
+                .SelectMany(r => r.Inputs.Where(f => !upper.ContainsKey(f) && !(f.IsLocation && selfLocked.Contains(f.Id)))
+                    .Select(input => (r.Output, input))).ToArray();
+            foreach (var component in Components(edges))
             {
-                foreach (var clause in clauses)
+                cancellationToken.ThrowIfCancellationRequested();
+                var checks = component.Where(f => f.IsLocation && candidates.Contains(f.Id))
+                    .Select(f => f.Id).Order(StringComparer.Ordinal).ToArray();
+                if (checks.Length < 2) continue;
+                var local = checks.ToHashSet(StringComparer.Ordinal);
+                var tryUpper = BuildProbe(checks, local, upperRules, upper);
+                var tryReadable = BuildProbe(checks, local, knownRules, confirmed);
+                FindObligations(checks, tryUpper, tryReadable, findings);
+            }
+        }
+
+        private Dictionary<Fact, Production?> Possible(IEnumerable<string> seeds) =>
+            possible ??= new WalkIndex(possibleRules, cancellationToken).Run(seeds.Select(Node));
+
+        private HashSet<string> ClassifyViable(IEnumerable<string> seeds)
+        {
+            // Upper limit on conditional *inputs*, not on confirmed acquisitions.
+            // Remove checks with no supported placement and full activation,
+            // even when every remaining check is hypothetically supplied.
+            var inputs = ExecutableLocations.Keys.ToHashSet(StringComparer.Ordinal);
+            var approach = new WalkIndex(possibleRules.Where(r => !r.Output.IsLocation), cancellationToken);
+            while (inputs.Count != 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var reached = approach.Run(seeds.Select(Node).Concat(inputs.Select(Check)));
+                if (inputs.RemoveWhere(id => !reached.ContainsKey(Node(ExecutableLocations[id].Row.NodeId)) ||
+                    !activation[id].Any(c => c.All(dep => reached.ContainsKey(Check(dep))))) == 0) break;
+            }
+            return inputs;
+        }
+
+        private delegate Dictionary<Fact, Production?> Probe(HashSet<string> withhold, HashSet<string>? supply);
+
+        private Probe BuildProbe(string[] checks, HashSet<string> local,
+            ILookup<Fact, Production> producers, Dictionary<Fact, Production?> known)
+        {
+            // Only visit producers on the backward slice of candidate checks.
+            // Supplied external inputs and facts already reached need no producers.
+            var rules = new List<Production>();
+            var seen = new HashSet<Fact>();
+            var pending = new Stack<Fact>(checks.Select(Check));
+            while (pending.TryPop(out var fact))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!seen.Add(fact) || known.ContainsKey(fact) || (fact.IsLocation && !local.Contains(fact.Id))) continue;
+                foreach (var rule in producers[fact])
                 {
-                    var alternative = new Alternative(output, clause.Length + 1);
-                    Watch(source, alternative);
-                    foreach (var id in clause) Watch(new(true, id), alternative);
+                    rules.Add(rule);
+                    foreach (var input in rule.Inputs) pending.Push(input);
                 }
             }
-            void Watch(Fact fact, Alternative alternative)
+            var knownFacts = seen.Where(known.ContainsKey).ToArray();
+            var inputs = seen.Where(f => f.IsLocation && !known.ContainsKey(f)).ToArray();
+            var walk = new WalkIndex(rules, cancellationToken);
+            return (withhold, supply) => walk.Run(knownFacts.Concat(inputs.Where(f => !withhold.Contains(f.Id) || supply?.Contains(f.Id) == true)));
+        }
+
+        private sealed class WalkIndex
+        {
+            private readonly Production[] rules;
+            private readonly ILookup<Fact, int> watches;
+            private readonly CancellationToken token;
+
+            internal WalkIndex(IEnumerable<Production> rules, CancellationToken token)
             {
-                if (!waiting.TryGetValue(fact, out var list)) waiting.Add(fact, list = []);
-                list.Add(alternative);
+                this.rules = rules.ToArray();
+                watches = this.rules.SelectMany((rule, i) => rule.Inputs.Select(input => (input, i))).ToLookup(x => x.input, x => x.i);
+                this.token = token;
+            }
+
+            internal Dictionary<Fact, Production?> Run(IEnumerable<Fact> seeds)
+            {
+                token.ThrowIfCancellationRequested();
+                var reached = new Dictionary<Fact, Production?>();
+                var waiting = rules.Select(r => r.Inputs.Length).ToArray();
+                var queue = new Queue<Fact>();
+                foreach (var fact in seeds) Learn(fact, null);
+                while (queue.TryDequeue(out var fact))
+                {
+                    token.ThrowIfCancellationRequested();
+                    foreach (var i in watches[fact])
+                        if (--waiting[i] == 0) Learn(rules[i].Output, rules[i]);
+                }
+                return reached;
+
+                // Keep one real predecessor, not the combinations of paths
+                // that could produce the same fact.
+                void Learn(Fact fact, Production? production)
+                {
+                    if (reached.TryAdd(fact, production)) queue.Enqueue(fact);
+                }
             }
         }
 
@@ -473,72 +611,192 @@ internal sealed class PublishingMapPreflight(PreparedGraphEvidence evidence)
             }
         }
 
-        private (HashSet<string> Nodes, HashSet<string> Locations) ClassifyViable(HashSet<string> seeds, HashSet<string> optimistic, HashSet<Route> tree)
+        private void FindObligations(string[] checks, Probe tryUpper, Probe tryReadable, List<FindingEvidence> findings)
         {
-            // Upper bound for reporting only: assume candidates until no rooted
-            // placement or supported alternative remains. Cyclic prerequisites may
-            // remain candidates, but unavailable facts never enter actual closure.
-            var candidates = ExecutableLocations.Keys.ToHashSet(StringComparer.Ordinal);
-            var placements = ExecutableLocations.Values.ToLookup(l => l.Row.NodeId, l => l.Row.Id, StringComparer.Ordinal);
-            var activationCounts = activation.ToDictionary(p => p.Key, p => p.Value.Length, StringComparer.Ordinal);
-            var routeCounts = routes.ToDictionary(r => r, r => r.Clauses.Length);
-            var watches = new Dictionary<string, List<AvailabilityClause>>(StringComparer.Ordinal);
-            foreach (var (id, clauses) in activation)
-                foreach (var clause in clauses) Watch(clause, new(id, null));
-            foreach (var route in routes)
-                foreach (var clause in route.Clauses) Watch(clause, new(null, route));
-            var removed = new Queue<string>();
-            foreach (var dependency in watches.Keys)
-                if (!candidates.Contains(dependency)) removed.Enqueue(dependency);
-            foreach (var l in ExecutableLocations.Values)
-                if (!optimistic.Contains(l.Row.NodeId)) Remove(l.Row.Id);
-
-            var rooted = optimistic;
-            // Keep a rooted witness tree. Losing a non-tree edge cannot strand a
-            // node; rebuild at most once for a batch that breaks the tree, then
-            // invalidate only locations placed on the newly stranded nodes.
-            while (removed.Count != 0)
+            var held = checks.ToHashSet(StringComparer.Ordinal);
+            while (held.Count >= 2)
             {
-                var treeBroken = false;
-                while (removed.TryDequeue(out var id))
+                cancellationToken.ThrowIfCancellationRequested();
+                held.ExceptWith(ReachedChecks(tryUpper(held, null)));
+                if (held.Count < 2) return;
+                var anchors = held.Order(StringComparer.Ordinal).Select(id =>
                 {
-                    if (!watches.TryGetValue(id, out var clauses)) continue;
-                    foreach (var clause in clauses)
+                    var followers = ReachedChecks(tryUpper(held, new(StringComparer.Ordinal) { id })).Where(held.Contains)
+                        .ToHashSet(StringComparer.Ordinal);
+                    return (Id: id, Followers: followers);
+                }).OrderByDescending(t => t.Followers.Count).ToArray();
+
+                var reported = false;
+                foreach (var (anchor, followers) in anchors)
+                {
+                    if (followers.Count < 2) break;
+                    var cut = held.ToHashSet(StringComparer.Ordinal);
+                    // Try releasing other obligations first, before the checks
+                    // this anchor itself would release. Keep a grant only when
+                    // the anchor is still blocked; remove all newly freed checks.
+                    // The resulting cut is closed under every full upper rule.
+                    foreach (var id in held.Where(id => id != anchor).OrderBy(followers.Contains).ThenBy(id => id, StringComparer.Ordinal))
                     {
-                        if (clause.Invalidated) continue;
-                        clause.Invalidated = true;
-                        if (clause.Location is { } location)
-                        {
-                            if (--activationCounts[location] == 0) Remove(location);
-                        }
-                        else if (clause.Route is { } route && --routeCounts[route] == 0 && tree.Contains(route))
-                            treeBroken = true;
+                        if (!cut.Remove(id)) continue;
+                        var after = tryUpper(cut, null);
+                        if (after.ContainsKey(Check(anchor))) cut.Add(id);
+                        else cut.ExceptWith(ReachedChecks(after));
                     }
-                }
-                if (!treeBroken) break;
-                tree.Clear();
-                var next = Walk(seeds, r => routeCounts[r] != 0, tree);
-                foreach (var stranded in rooted)
-                    if (!next.Contains(stranded))
-                        foreach (var location in placements[stranded]) Remove(location);
-                rooted = next;
-            }
-            return (rooted, candidates);
+                    if (cut.Count < 2 || !cut.IsSubsetOf(followers)) continue;
+                    var witnesses = ReadableWitnesses(cut, tryReadable);
+                    if (witnesses.Count < 2 || !witnesses.ContainsKey(anchor)) continue;
 
-            void Remove(string id) { if (candidates.Remove(id)) removed.Enqueue(id); }
-            void Watch(string[] prerequisites, AvailabilityClause clause)
-            {
-                foreach (var id in prerequisites)
-                {
-                    if (!watches.TryGetValue(id, out var watchers)) watches.Add(id, watchers = []);
-                    watchers.Add(clause);
+                    Report(witnesses, findings);
+                    // A single conditional release really discharges this cut.
+                    // Do not grant its followers separately: those which still
+                    // need a different intervention must remain withheld.
+                    held.Remove(anchor);
+                    reported = true;
+                    break;
                 }
+                if (reported) continue;
+
+                // Do not split a joint AND/OR obligation merely because it
+                // contains smaller reference cycles. Where no single release
+                // separates a readable cut, prove the remaining set together.
+                var joint = ReadableWitnesses(held, tryReadable);
+                if (joint.Count >= 2) Report(joint, findings);
+                return;
             }
+
+            static IEnumerable<string> ReachedChecks(Dictionary<Fact, Production?> reached) =>
+                reached.Keys.Where(f => f.IsLocation).Select(f => f.Id);
         }
 
-        private sealed record AvailabilityClause(string? Location, Route? Route)
+        private sealed record Witness(HashSet<string> Checks, HashSet<Route> Gates, HashSet<string> OtherChecks);
+
+        private Dictionary<string, Witness> ReadableWitnesses(HashSet<string> cut, Probe tryReadable)
         {
-            internal bool Invalidated { get; set; }
+            // An unreadable-only member may keep an upper alternative closed,
+            // but cannot be borrowed to manufacture readable circular evidence.
+            // Prune members that cannot actually produce themselves readably
+            // under the other still-supported hypotheses. Outside inputs have
+            // already passed viability; they are not claims of acquisition.
+            var supported = cut.ToHashSet(StringComparer.Ordinal);
+            while (supported.Count >= 2)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var found = new Dictionary<string, Witness>(StringComparer.Ordinal);
+                foreach (var id in supported.Order(StringComparer.Ordinal))
+                {
+                    var granted = supported.Where(other => other != id).ToHashSet(StringComparer.Ordinal);
+                    var read = tryReadable(cut, granted);
+                    if (read.TryGetValue(Check(id), out var producer) && producer is not null)
+                        found.Add(id, Trace(id, read, granted));
+                }
+                if (found.Count == supported.Count)
+                {
+                    foreach (var (id, witness) in found)
+                    {
+                        // Show other readable arms when they can avoid a
+                        // dependency of the first. Keep only their related
+                        // checks and gates, never their combinations.
+                        var granted = supported.Where(other => other != id).ToHashSet(StringComparer.Ordinal);
+                        foreach (var dependency in witness.Checks.Order(StringComparer.Ordinal))
+                        {
+                            granted.Remove(dependency);
+                            var alternate = tryReadable(cut, granted);
+                            if (alternate.TryGetValue(Check(id), out var producer) && producer is not null)
+                            {
+                                var arm = Trace(id, alternate, granted);
+                                witness.Gates.UnionWith(arm.Gates);
+                                witness.OtherChecks.UnionWith(arm.Checks.Where(check => !witness.Checks.Contains(check)));
+                            }
+                            granted.Add(dependency);
+                        }
+                    }
+                    return found;
+                }
+                supported.IntersectWith(found.Keys);
+            }
+            return new(StringComparer.Ordinal);
+        }
+
+        private Witness Trace(string id, Dictionary<Fact, Production?> read, HashSet<string> granted)
+        {
+            var seen = new HashSet<Fact>();
+            var dependencies = new HashSet<string>(StringComparer.Ordinal);
+            var gates = new HashSet<Route>();
+            var pending = new Stack<Fact>();
+            pending.Push(Check(id));
+            while (pending.TryPop(out var fact))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!seen.Add(fact)) continue;
+                if (fact.IsLocation && granted.Contains(fact.Id)) dependencies.Add(fact.Id);
+                if (read[fact] is not { } production) continue;
+                if (production.Route is { } route && production.Inputs.Any(input => input.IsLocation && granted.Contains(input.Id)))
+                    gates.Add(route);
+                foreach (var input in production.Inputs) pending.Push(input);
+            }
+            return new(dependencies, gates, new(StringComparer.Ordinal));
+        }
+
+        private void Report(Dictionary<string, Witness> witnesses, List<FindingEvidence> findings)
+        {
+            var ordered = witnesses.Keys.Order(StringComparer.Ordinal).ToArray();
+            var labels = AssignDisplayTitles(ordered, id => new(ExecutableLocations[id].Title.Label.Exact));
+            var title = new FindingTitle(new($"Progression loop: {labels[ordered[0]]}"), "deadlock", GraphId: ordered[0]);
+            var gates = ordered.SelectMany(id => witnesses[id].Gates).Distinct().OrderBy(r => r.Label, StringComparer.Ordinal).ToArray();
+            var reason = "None of these checks can happen first. Readable loop steps:\n" +
+                string.Join("\n", ordered.Select(id =>
+                {
+                    var witness = witnesses[id];
+                    var step = $"‘{labels[id]}’ needs {Names(witness.Checks, " AND ")} on one readable approach or activation.";
+                    return witness.OtherChecks.Count == 0 ? step
+                        : $"{step} Other readable alternatives involve {Names(witness.OtherChecks, "; ")}.";
+                }));
+            if (gates.Length != 0)
+                reason += "\nReadable gate evidence: " + string.Join("; ", gates.Select(r => r.Label)) + ".";
+            findings.Add(Finding(evidence, title, reason,
+                ordered.Select(id => ExecutableLocations[id].Room.RoomRecordId).Concat(RouteRooms(gates))));
+
+            string Names(IEnumerable<string> ids, string separator) =>
+                string.Join(separator, ids.Order(StringComparer.Ordinal).Select(id => $"‘{labels[id]}’"));
+        }
+
+        private IEnumerable<List<T>> Components<T>(IEnumerable<(T From, T To)> edges) where T : notnull
+        {
+            var pairs = edges.ToArray();
+            var forward = pairs.ToLookup(e => e.From, e => e.To);
+            var reverse = pairs.ToLookup(e => e.To, e => e.From);
+            var visited = new HashSet<T>();
+            var order = new Stack<T>();
+            var walk = new Stack<(T Vertex, bool Finished)>();
+            foreach (var start in forward.Select(g => g.Key))
+            {
+                walk.Push((start, false));
+                while (walk.TryPop(out var entry))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (entry.Finished) order.Push(entry.Vertex);
+                    else if (visited.Add(entry.Vertex))
+                    {
+                        walk.Push((entry.Vertex, true));
+                        foreach (var next in forward[entry.Vertex]) walk.Push((next, false));
+                    }
+                }
+            }
+            visited.Clear();
+            while (order.TryPop(out var start))
+            {
+                if (!visited.Add(start)) continue;
+                var group = new List<T>();
+                walk.Push((start, false));
+                while (walk.TryPop(out var entry))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    group.Add(entry.Vertex);
+                    foreach (var next in reverse[entry.Vertex])
+                        if (visited.Add(next)) walk.Push((next, false));
+                }
+                yield return group;
+            }
         }
     }
 }

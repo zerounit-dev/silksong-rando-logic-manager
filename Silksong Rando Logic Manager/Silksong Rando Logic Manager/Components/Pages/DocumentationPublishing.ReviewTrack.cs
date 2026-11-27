@@ -11,8 +11,12 @@ public partial class DocumentationPublishing
     private ElementReference reviewHost;
     private DotNetObjectReference<DocumentationPublishing>? trackReference;
     private IJSObjectReference? trackObserver;
+    private Task? observingReviewTrack;
     private PublishingReviewLayout? reviewLayout;
     private readonly Queue<(long Revision, PublishingReviewLayout Layout)> anchorLayouts = new();
+    // One pinned source for a local stage suspension, even if late room payloads
+    // produce more revisions than the ordinary short anchor queue retains.
+    private (long Revision, PublishingReviewLayout Layout)? suspendedAnchorLayout;
     private long layoutRevision, indexedRevision = -1;
     private long initialBandHeight;
     private BandWindow? bandWindow;
@@ -119,7 +123,9 @@ public partial class DocumentationPublishing
     {
         if (!TrackCurrent(revision) || !double.IsFinite(anchor.Position) || !double.IsFinite(anchor.Offset)) return null;
         var layout = reviewLayout!;
-        var mapped = anchorLayouts.FirstOrDefault(x => x.Revision == oldRevision).Layout is { } old
+        var source = suspendedAnchorLayout is { } suspended && suspended.Revision == oldRevision
+            ? suspended.Layout : anchorLayouts.FirstOrDefault(x => x.Revision == oldRevision).Layout;
+        var mapped = source is { } old
             ? layout.Reanchor(old, anchor) : layout.AnchorAt(anchor.Position);
         return new(revision, layout.Total, mapped, false);
     });
@@ -184,7 +190,9 @@ public partial class DocumentationPublishing
         return result;
     }
 
-    private async Task ObserveReviewTrack()
+    private Task ObserveReviewTrack() => trackObserver is not null || disposed ? Task.CompletedTask
+        : observingReviewTrack ??= InstallReviewTrack();
+    private async Task InstallReviewTrack()
     {
         try
         {
@@ -197,6 +205,7 @@ public partial class DocumentationPublishing
         }
         catch (JSDisconnectedException) { }
         catch (Exception exception) { Logger.LogError(exception, "Installing the publishing review track failed."); }
+        finally { observingReviewTrack = null; }
     }
 
     private async Task DisposeReviewTrack()

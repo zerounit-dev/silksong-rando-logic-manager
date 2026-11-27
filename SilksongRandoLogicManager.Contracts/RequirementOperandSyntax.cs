@@ -4,7 +4,7 @@ using System.Text;
 
 namespace Silksong_Rando_Logic_Manager.Services;
 
-/// <summary>Bounded lexical descriptors, derived only from the twenty-six approved choices.
+/// <summary>Bounded lexical descriptors, derived only from the twenty-seven approved choices.
 /// No identity resolution or parser-result sharing between the independent parsers.</summary>
 internal static class RequirementOperandSyntax
 {
@@ -28,7 +28,8 @@ internal static class RequirementOperandSyntax
         RequirementInputSyntax.RequiredDifficultyThenPredicateThenOptionalQuantity or
         RequirementInputSyntax.RequiredDifficultyThenPredicateThenQuantity or
         RequirementInputSyntax.RequiredDifficultyThenMethodThenPredicateThenOptionalQuantity or
-        RequirementInputSyntax.RequiredDifficultyThenCrestThenPredicateThenOptionalQuantity;
+        RequirementInputSyntax.RequiredDifficultyThenCrestThenPredicateThenOptionalQuantity or
+        RequirementInputSyntax.RequiredDifficultyThenPredicateThenSoulThenOptionalQuantity;
 
     internal static bool UsesOperands(RequirementInputSyntax syntax) => HasComposedQuantity(syntax) || HasAlternatives(syntax);
 
@@ -135,7 +136,8 @@ internal static class RequirementOperandSyntax
                 foreach (var result in Split(end, slot + 1, [.. prefix, text[start..end]])) yield return result;
             // Approved optional final Direction or QTY1 Quantity may be omitted.
             if (slot == slots.Count - 2 && slots[^1].Optional && start < text.Length &&
-                RequirementCatalogueLanguage.NormalizeIdentification(text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)[^1]).Length != 0)
+                (slots[slot].Role == "soul" && text.EndsWith(']') ||
+                 RequirementCatalogueLanguage.NormalizeIdentification(text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)[^1]).Length != 0))
                 yield return [.. prefix, text[start..], ""];
         }
     }

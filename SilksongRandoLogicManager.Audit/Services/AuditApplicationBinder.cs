@@ -405,6 +405,7 @@ internal sealed class AuditApplicationBinder(PreparedAuditRoom room, Cancellatio
             RequirementInputSyntax.RequiredDifficultyThenCrestThenPredicateThenOptionalQuantity => [difficulty, OperandName("crest"), predicate, OptionalQuantity()],
             RequirementInputSyntax.PredicateThenMethod => [predicate, OperandName("method")],
             RequirementInputSyntax.RequiredDifficultyThenPredicateThenDirection => [difficulty, predicate, direction],
+            RequirementInputSyntax.RequiredDifficultyThenPredicateThenSoulThenOptionalQuantity => [difficulty, predicate, OperandName("soul"), OptionalQuantity()],
             _ => throw new InvalidOperationException("Recognized audit application has no input shape")
         };
         return string.Join(" ", parts.Where(x => !string.IsNullOrEmpty(x)));

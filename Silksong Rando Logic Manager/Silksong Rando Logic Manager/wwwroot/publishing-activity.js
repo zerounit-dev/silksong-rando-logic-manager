@@ -1,5 +1,5 @@
 // Resolve each instant in the browser's local zone, keeping the compact date on both surfaces.
-export function formatTimes(instants, hasLatest) {
+export function formatTimes(instants, inlineCount) {
     const formatter = new Intl.DateTimeFormat("en-GB", {
         year: "numeric", month: "2-digit", day: "2-digit",
         hour: "2-digit", minute: "2-digit", hourCycle: "h23"
@@ -10,7 +10,7 @@ export function formatTimes(instants, hasLatest) {
         const { year, month, day, hour, minute } = parts;
         if (!year || !month || !day || !hour || !minute) return null;
         const date = `${year.padStart(4, "0")}-${month}-${day}`;
-        if (hasLatest && index === 0) {
+        if (index < inlineCount) {
             const hour24 = Number(hour);
             return `${date} ${hour24 % 12 || 12}:${minute} ${hour24 < 12 ? "AM" : "PM"}`;
         }

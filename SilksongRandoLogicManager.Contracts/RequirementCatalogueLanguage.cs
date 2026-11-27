@@ -32,7 +32,8 @@ public static class RequirementCatalogueLanguage
         new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenQuantityThenCountable, "{predicate} {quantity} {countable}", "Quantity then countable", "Quantity"),
         new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenCountableThenQuantity, "{predicate} {countable} {quantity}", "Countable then quantity", "Quantity"),
         new RequirementInputSyntaxOption(RequirementInputSyntax.PredicateThenSoul, "{predicate} [{soul}]", "Soul", "Soul"),
-        new RequirementInputSyntaxOption(RequirementInputSyntax.RequiredDifficultyThenPredicateThenSoul, "{difficulty} {predicate} [{soul}]", "Difficulty + soul", "Soul")
+        new RequirementInputSyntaxOption(RequirementInputSyntax.RequiredDifficultyThenPredicateThenSoul, "{difficulty} {predicate} [{soul}]", "Difficulty + soul", "Soul"),
+        new RequirementInputSyntaxOption(RequirementInputSyntax.RequiredDifficultyThenPredicateThenSoulThenOptionalQuantity, "{difficulty} {predicate} [{soul}] {quantity?}", "Difficulty + soul + optional quantity", "Soul")
     };
 
     public static IReadOnlyList<RequirementInputSyntaxOption> InputSyntaxOptions => inputSyntaxOptions;
@@ -163,6 +164,7 @@ public static class RequirementCatalogueLanguage
         RequirementInputSyntax.RequiredDifficultyThenMethodThenPredicateThenOptionalQuantity => new HashSet<RequirementOutputPlaceholder> { RequirementOutputPlaceholder.Difficulty, RequirementOutputPlaceholder.Method, RequirementOutputPlaceholder.Quantity },
         RequirementInputSyntax.RequiredDifficultyThenCrestThenPredicateThenOptionalQuantity => new HashSet<RequirementOutputPlaceholder> { RequirementOutputPlaceholder.Difficulty, RequirementOutputPlaceholder.Crest, RequirementOutputPlaceholder.Quantity },
         RequirementInputSyntax.RequiredDifficultyThenPredicateThenSoul => new HashSet<RequirementOutputPlaceholder> { RequirementOutputPlaceholder.Difficulty, RequirementOutputPlaceholder.Soul },
+        RequirementInputSyntax.RequiredDifficultyThenPredicateThenSoulThenOptionalQuantity => new HashSet<RequirementOutputPlaceholder> { RequirementOutputPlaceholder.Difficulty, RequirementOutputPlaceholder.Soul, RequirementOutputPlaceholder.Quantity },
         RequirementInputSyntax.PredicateThenSoul => new HashSet<RequirementOutputPlaceholder> { RequirementOutputPlaceholder.Soul },
         RequirementInputSyntax.PredicateThenQuantityThenCountable => new HashSet<RequirementOutputPlaceholder> { RequirementOutputPlaceholder.Quantity, RequirementOutputPlaceholder.Countable },
         RequirementInputSyntax.PredicateThenCountableThenQuantity => new HashSet<RequirementOutputPlaceholder> { RequirementOutputPlaceholder.Countable, RequirementOutputPlaceholder.Quantity },
@@ -196,7 +198,7 @@ public sealed record RequirementOutputPlaceholderToken(RequirementOutputPlacehol
 
 public static class RequirementOutputTemplate
 {
-    // ONS1, RM1, PMD1 and CQ1 input list markers never become output placeholder markers.
+    // ONS1, RM1, PMD1, CQ1 and SQ1 input list markers never become output placeholder markers.
     // Keep literal-output handling of the other choices unchanged.
     internal static bool HasBracketedOns1Placeholder(RequirementInputSyntax syntax, string template) =>
         syntax == RequirementInputSyntax.RequiredDifficultyThenOptionalCrestThenPredicate &&
@@ -207,6 +209,7 @@ public static class RequirementOutputTemplate
         syntax == RequirementInputSyntax.RequiredDifficultyThenPredicateThenDirection &&
         (template.Contains("[{difficulty}]", StringComparison.Ordinal) || template.Contains("[{direction}]", StringComparison.Ordinal)) ||
         syntax == RequirementInputSyntax.RequiredDifficultyThenCrestThenPredicateThenOptionalQuantity && template.Contains("[{crest}]", StringComparison.Ordinal) ||
+        syntax == RequirementInputSyntax.RequiredDifficultyThenPredicateThenSoulThenOptionalQuantity && template.Contains("[{soul}]", StringComparison.Ordinal) ||
         RequirementOperandSyntax.HasComposedQuantity(syntax) &&
         new[] { "quantity", "difficulty", "direction", "method" }.Any(role => template.Contains("[{" + role + "}]", StringComparison.Ordinal));
 

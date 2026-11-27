@@ -7,7 +7,7 @@ internal sealed record DecideMapPreflight(Guid Decision, bool Proceed);
 public sealed partial class DocumentationPublishingService
 {
     private enum MapDecisionChoice { Proceed, Cancel, Shutdown }
-    private sealed record PendingMapDecision(Guid Id, string Owner)
+    private sealed record PendingMapDecision(Guid Id)
     {
         internal TaskCompletionSource<MapDecisionChoice> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
@@ -43,10 +43,10 @@ public sealed partial class DocumentationPublishingService
                 if (access.RequireInsideSynchronousGate(AccessPolicies.PublishDocumentation).Owner != actor.Owner)
                     throw new AccessDeniedException("not_found", 404, "This resource is not available to this account.");
                 if (stopping || applicationStopping.IsCancellationRequested || pendingMapDecision is not { } pending ||
-                    pending.Id != command.Decision || pending.Owner != actor.Owner ||
+                    pending.Id != command.Decision ||
                     !pending.Completion.TrySetResult(command.Proceed ? MapDecisionChoice.Proceed : MapDecisionChoice.Cancel))
                     throw new PublishingBlock("There is no matching map decision available to this account. Read the current preparation before responding.");
-                // Retire the token immediately, including for another page of this owner.
+                // Retire the exact-run token immediately for every publisher.
                 pendingMapDecision = null;
                 mapPreflight = mapPreflight! with { AwaitingDecision = false, Outcome = command.Proceed ? "Checking authorization to continue." : "Cancelling preparation." };
             }
@@ -68,7 +68,7 @@ public sealed partial class DocumentationPublishingService
         if ((failed && rows is null) || rows?.Any(row => row.Status is MapCheckStatus.Waiting or MapCheckStatus.Checking) == true)
         {
             var reason = $"Preparation stopped at step {step.Step} of {step.Steps}: {step.Task} See the publishing details for the failure.";
-            mapPreflight = new((rows ?? PublishingMapPreflight.NewChecks()).Select(row => row.Status is MapCheckStatus.Waiting or MapCheckStatus.Checking
+            mapPreflight = new((rows ?? PublishingMapPreflight.IntegrityChecks()).Select(row => row.Status is MapCheckStatus.Waiting or MapCheckStatus.Checking
                 ? row with { Status = MapCheckStatus.Fail, NotRun = reason }
                 : row).ToArray(), true, "Generation did not start.");
         }
@@ -81,42 +81,38 @@ public sealed partial class DocumentationPublishingService
         }
     }
 
-    private void PublishValidation(IReadOnlyList<string> findings)
-    {
-        lock (gate) validation = findings;
-        NotifyChanged();
-    }
-
-    private static string DescribeGraphFailure(RoomGraphExportFailure failure) =>
-        string.Join(" / ", new[] { failure.RoomName, failure.ChildName, failure.Cause }.Where(s => s is not null));
-
     private async Task ValidateMapAsync(LiveAccess execution, PreparedRoomGraph prepared,
-        IReadOnlyList<string> documentIssues, List<string> hardReasons)
+        PublishingDocuments documents)
     {
-        var rows = PublishingMapPreflight.NewChecks();
+        var preflight = new PublishingMapPreflight(prepared.Evidence);
+        var integrity = taskTiming!.Measure(PublishingMetric.Validation, () => preflight.Integrity(prepared));
+        lock (gate) mapPreflight = new(integrity, !prepared.Export.Succeeded,
+            prepared.Export.Succeeded ? null : "Fix the problems below before generating the docs.");
+        NotifyChanged();
+        if (!prepared.Export.Succeeded)
+            throw new PublishingBlock("Graph integrity failed. Correct the identified records or definitions before preparing again.");
+
+        // Advisory validation is never invoked on rejected integrity.
+        var rules = taskTiming.Measure(PublishingMetric.Validation, () => preflight.RuleChecks(documents.Validate()));
+        var rows = integrity.Concat(rules).Concat(PublishingMapPreflight.NewChecks()).ToArray();
+        var advisoryStart = integrity.Length + rules.Length;
         lock (gate) mapPreflight = new(rows.ToArray());
         NotifyChanged();
-        taskTiming!.Measure(PublishingMetric.Validation, () => new PublishingMapPreflight(prepared.Evidence).Run((i, status, report, notRun) =>
+        try
         {
-            rows[i] = rows[i] with { Status = status, Report = report, NotRun = notRun };
-            lock (gate) mapPreflight = new(rows.ToArray());
-            NotifyChanged();
-        }));
+            taskTiming.Measure(PublishingMetric.Validation, () => preflight.Run((i, status, report, notRun) =>
+            {
+                rows[advisoryStart + i] = rows[advisoryStart + i] with { Status = status, Report = report, NotRun = notRun };
+                lock (gate) mapPreflight = new(rows.ToArray());
+                NotifyChanged();
+            }, applicationStopping));
+        }
+        catch (OperationCanceledException) when (applicationStopping.IsCancellationRequested)
+        {
+            throw new PublishingBlock("Server shutdown interrupted preparation before generation.");
+        }
         taskTiming.Complete(); taskTiming.Dispose(); taskTiming = null; storage.Timing = null;
 
-        var export = prepared.Export;
-        var classified = prepared.Evidence.References.Where(r => r.HardFailure is not null).Select(r => r.HardFailure!).ToHashSet(ReferenceEqualityComparer.Instance);
-        hardReasons.AddRange(export.Failures.Where(f => !classified.Contains(f)).Select(DescribeGraphFailure));
-        if (!export.Succeeded || documentIssues.Count != 0 || hardReasons.Count != 0)
-        {
-            lock (gate)
-            {
-                validation = [.. documentIssues, .. hardReasons];
-                mapPreflight = new(rows, true, "Generation is blocked by required publication validation or export failures. The checklist cannot override them.");
-            }
-            NotifyChanged();
-            throw new PublishingBlock("Publication validation or export failed. Review the listed findings, correct the authored records, then discard and prepare again.");
-        }
         if (rows.All(r => r.Status == MapCheckStatus.Pass))
         {
             lock (gate) mapPreflight = new(rows, true);
@@ -126,7 +122,7 @@ public sealed partial class DocumentationPublishingService
 
         var admitted = execution.CapturePrincipal();
         var owner = execution.RequireInsideSynchronousGate(AccessPolicies.PublishDocumentation).Owner;
-        var pending = new PendingMapDecision(Guid.NewGuid(), owner);
+        var pending = new PendingMapDecision(Guid.NewGuid());
         lock (gate)
         {
             if (stopping || applicationStopping.IsCancellationRequested)
@@ -156,10 +152,10 @@ public sealed partial class DocumentationPublishingService
         NotifyChanged();
         if (choice != MapDecisionChoice.Proceed)
             throw new PublishingBlock(choice == MapDecisionChoice.Cancel
-                ? "Preparation cancelled before generation. Discard the frozen preparation before preparing again."
+                ? "Preparation cancelled before generation. Prepare again when ready."
                 : "Server shutdown interrupted preparation before generation.");
 
-        // A fresh page of the same owner can submit the choice, but cannot grant
+        // Another publisher can submit the choice, but cannot grant
         // the parked Prepare job a new detached credential or security stamp.
         try
         {

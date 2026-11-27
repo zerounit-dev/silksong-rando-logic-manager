@@ -17,6 +17,7 @@ export function observe(main, owner) {
     const measured = new Map();
     const observed = new Set();
     let glass;
+    let suspended = false, savedView;
     const clamp = (value, a, b) => Math.max(a, Math.min(b, value));
     const hostOrigin = () => host.getBoundingClientRect().top + host.clientTop;
     const hostLeft = () => host.getBoundingClientRect().left + host.clientLeft;
@@ -283,6 +284,7 @@ export function observe(main, owner) {
     }
 
     const resize = new ResizeObserver(entries => {
+        if (suspended) { widthDirty = true; return; }
         for (const { target } of entries) {
             if (target === host) widthDirty = true;
             const key = target.dataset.reviewMeasure;
@@ -321,7 +323,7 @@ export function observe(main, owner) {
         const position = sameReview ? pendingMap ?? lastAnchor : null;
         // Sample before changing representations, even if the DOM already has
         // the new revision. Keep the original map source and accumulated input.
-        if (position) sampleMotion(position);
+        if (position && !suspended) sampleMotion(position);
         const oldBand = band;
         root = next;
         revision = nextRevision;
@@ -332,7 +334,10 @@ export function observe(main, owner) {
         host.style.overflowAnchor = band ? "none" : originalOverflowAnchor;
         if (!band) main.style.removeProperty("--publishing-scroll-inset");
         widthDirty = true;
-        if (!sameReview) { base = 0; focusKey = null; horizontal.clear(); mountedPans.clear(); }
+        if (!sameReview) {
+            base = 0; focusKey = null; horizontal.clear(); mountedPans.clear();
+            suspended = false; savedView = null;
+        }
         pendingMap = position?.intent === absoluteIntent ? position : null;
         lastAnchor = lastRead = null;
         measured.clear();
@@ -361,7 +366,7 @@ export function observe(main, owner) {
         frame = 0;
         if (signal.aborted) return;
         syncRoot();
-        if (!root) return;
+        if (!root || suspended) return;
         normalizeY();
         sampleMotion();
         if (band) {
@@ -395,7 +400,7 @@ export function observe(main, owner) {
                 inFlight = true;
                 try {
                     const mapped = await owner.invokeMethodAsync("MapReviewAnchor", stamp, from, anchor);
-                    if (signal.aborted || !mapped || pendingMap !== position || intent !== absoluteIntent ||
+                    if (signal.aborted || suspended || !mapped || pendingMap !== position || intent !== absoluteIntent ||
                         !root?.isConnected || stamp !== Number(root.dataset.reviewRoot)) return;
                     sampleMotion(position);
                     pendingMap = null;
@@ -439,7 +444,7 @@ export function observe(main, owner) {
         let follow = false;
         try {
             const result = await owner.invokeMethodAsync("ReadReviewViewport", stamp, top, height, columns, geometry.map(([key, height]) => ({ key, height })));
-            if (signal.aborted || !result?.mounted || !root?.isConnected || stamp !== Number(root.dataset.reviewRoot)) return;
+            if (signal.aborted || suspended || !result?.mounted || !root?.isConnected || stamp !== Number(root.dataset.reviewRoot)) return;
             follow = true;
             const now = logicalTop();
             const newerSeek = intent !== absoluteIntent;
@@ -462,16 +467,18 @@ export function observe(main, owner) {
 
     const mutation = new MutationObserver(() => { widthDirty = true; schedule(); });
     mutation.observe(main, { childList: true, subtree: true, attributes: true,
-        attributeFilter: ["data-review-root", "data-review-origin", "data-review-first-y", "data-review-last-y"] });
+        attributeFilter: ["data-review-root", "data-review-origin", "data-review-first-y", "data-review-last-y", "data-review-navigation"] });
     resize.observe(host);
     host.addEventListener("scroll", () => {
         syncRoot();
+        if (suspended) return;
         const position = pendingMap ?? lastAnchor;
         if (!widthDirty && canvasX === host.scrollLeft && position?.physical === host.scrollTop) return;
         sampleMotion(position);
         schedule();
     }, { passive: true, signal });
     main.addEventListener("scroll", event => {
+        if (suspended) return;
         const state = mountedPans.get(event.target);
         if (!state?.usable) return;
         // Resize can clamp one surface before the next layout sync. Don't
@@ -487,6 +494,7 @@ export function observe(main, owner) {
     // Wheel, trackpad, and touch panning remain native. The replacement control
     // handles only explicit absolute seeks and keyboard operations on its thumb.
     host.addEventListener("keydown", event => {
+        if (suspended) return;
         if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey ||
             event.target.closest("input,textarea,select,[contenteditable],dialog")) return;
         syncRoot();
@@ -524,6 +532,7 @@ export function observe(main, owner) {
         schedule();
     }, { signal });
     main.addEventListener("pointerdown", event => {
+        if (suspended) return;
         const hovered = event.target.closest(".publishing-review-scrollbar,[data-review-x-thumb]");
         if (!hovered || event.button !== 0) return;
         const horizontal = [...mountedPans.values()].find(state => state.thumb === hovered);
@@ -561,6 +570,39 @@ export function observe(main, owner) {
 
     schedule();
     return {
+        suspend(identity) {
+            if (signal.aborted || main.dataset.reviewNavigation !== identity) return false;
+            if (suspended) return savedView?.identity === identity;
+            syncRoot();
+            const anchor = root ? (band ? captureBand() : captureNative()) : null;
+            savedView = { root, revision, anchor, identity, x: host.scrollLeft, y: host.scrollTop };
+            if (anchor) rememberAnchor(anchor);
+            suspended = true;
+            drag = null;
+            if (bar) bar.hidden = true;
+            return true;
+        },
+        resume(identity) {
+            if (signal.aborted || !suspended || main.dataset.reviewNavigation !== identity || savedView?.identity !== identity) return;
+            const saved = savedView;
+            syncRoot();
+            if (!suspended || root !== saved?.root) return;
+            suspended = false;
+            savedView = null;
+            pendingMap = lastAnchor = null;
+            host.scrollLeft = saved.x;
+            if (saved.anchor && revision !== saved.revision) {
+                pendingMap = { from: saved.revision, anchor: saved.anchor, intent: absoluteIntent, physical: host.scrollTop, motion: 0 };
+            } else if (saved.anchor) {
+                if (band) seek(saved.anchor.position);
+                else restoreNative(saved.anchor, 0);
+                rememberAnchor(band ? captureBand() : captureNative());
+            } else host.scrollTop = saved.y;
+            widthDirty = true;
+            measured.clear();
+            lastRead = null;
+            schedule();
+        },
         dispose() {
             lifetime.abort();
             mutation.disconnect();

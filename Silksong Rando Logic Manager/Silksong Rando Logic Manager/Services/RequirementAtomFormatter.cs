@@ -47,7 +47,7 @@ public static class RequirementAtomFormatter
             : Required(arguments.Direction, "direction"),
         RequirementOutputPlaceholder.Item => Required(arguments.ItemOutputValue, "item output value"),
         RequirementOutputPlaceholder.Quantity => PositiveQuantity(arguments.Quantity ??
-            (RequirementOperandSyntax.HasComposedQuantity(inputSyntax) && inputSyntax != RequirementInputSyntax.RequiredDifficultyThenPredicateThenQuantity ? 1 : null)),
+            (RequirementOperandSyntax.Describe(inputSyntax).Any(slot => slot.Role == "quantity" && slot.Optional) ? 1 : null)),
         RequirementOutputPlaceholder.Check => Required(arguments.CheckGraphId, "check graph ID"),
         RequirementOutputPlaceholder.Soul => Required(arguments.SoulOutputValue, "soul output value"),
         RequirementOutputPlaceholder.Countable => Required(arguments.CountableOutputValue, "countable output value"),

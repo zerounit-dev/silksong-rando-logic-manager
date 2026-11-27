@@ -481,11 +481,15 @@ internal static class ManagedRequirementValidator
             if (text.Length == 0) return false;
             var normalized = RequirementCatalogueLanguage.NormalizeIdentification(text);
             var candidates = new List<bool>();
+            var hasSuccessfulSq1 = false;
             foreach (var predicate in context.Predicates)
             {
                 if (RequirementOperandSyntax.UsesOperands(predicate.Syntax))
                 {
+                    var previousCount = candidates.Count;
                     AddOperandCandidates(text, predicate, candidates);
+                    if (predicate.Syntax == RequirementInputSyntax.RequiredDifficultyThenPredicateThenSoulThenOptionalQuantity &&
+                        candidates.Count > previousCount) hasSuccessfulSq1 = true;
                     continue;
                 }
                 if (text.IndexOfAny(['[', ']', ',']) >= 0) continue;
@@ -527,7 +531,9 @@ internal static class ManagedRequirementValidator
                         throw new ArgumentOutOfRangeException();
                 }
             }
-            return candidates.Count == 1 && candidates[0];
+            // An unresolved dependency remains legacy guidance, not a successful
+            // competitor against a complete SQ1 application.
+            return hasSuccessfulSq1 ? candidates.Count(resolved => resolved) == 1 : candidates.Count == 1 && candidates[0];
         }
 
         private void AddOperandCandidates(string text, PreparedPredicate predicate, List<bool> candidates)

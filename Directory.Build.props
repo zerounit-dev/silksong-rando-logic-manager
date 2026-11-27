@@ -2,7 +2,7 @@
   <PropertyGroup>
     <LogicApplicationProject Condition="'$(MSBuildProjectName)' == 'Silksong Rando Logic Manager' Or '$(MSBuildProjectName)' == 'SilksongRandoLogicManager.Client' Or '$(MSBuildProjectName)' == 'SilksongRandoLogicManager.Contracts' Or '$(MSBuildProjectName)' == 'SilksongRandoLogicManager.Audit' Or '$(MSBuildProjectName)' == 'SilksongRandoLogicManager.SceneProcessing'">true</LogicApplicationProject>
     <!-- Approved release baseline; explicit MSBuild Version remains authoritative. -->
-    <Version Condition="'$(LogicApplicationProject)' == 'true' And '$(Version)' == ''">1.5.0</Version>
+    <Version Condition="'$(LogicApplicationProject)' == 'true' And '$(Version)' == ''">1.6.0</Version>
     <!-- Informational release metadata is authored, not the internal build identity. -->
     <IncludeSourceRevisionInInformationalVersion Condition="'$(LogicApplicationProject)' == 'true'">false</IncludeSourceRevisionInInformationalVersion>
     <!-- Optional evidence output isolation does not alter the backup tool or hook. -->

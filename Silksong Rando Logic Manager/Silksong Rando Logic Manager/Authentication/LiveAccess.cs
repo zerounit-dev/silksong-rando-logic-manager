@@ -98,9 +98,11 @@ public sealed class LiveAccess(AuthenticationMode mode, IHttpContextAccessor htt
             return true;
         }
     }
+    internal const string StandaloneAdministratorName = "Standalone administrator";
+
     internal static ClaimsPrincipal BypassPrincipal(string owner) => new(new ClaimsIdentity(new[]
     {
-        new Claim(ClaimTypes.NameIdentifier, "bypass"), new Claim(ClaimTypes.Name, "Standalone administrator"),
+        new Claim(ClaimTypes.NameIdentifier, "bypass"), new Claim(ClaimTypes.Name, StandaloneAdministratorName),
         new Claim(AccessPolicies.BypassClaim, "true"),
         new Claim(AccessPolicies.BypassOwnerClaim, owner)
     }, "LogicManager.Bypass"));
@@ -113,7 +115,7 @@ public sealed class LiveAccess(AuthenticationMode mode, IHttpContextAccessor htt
     private ExecutionIdentity? Project(ClaimsPrincipal principal)
     {
         if (mode.Bypass) return IsBypassPrincipal(principal)
-            ? new("bypass", "Standalone administrator", AccountPermissions.Admin, false, true, principal.FindFirstValue(AccessPolicies.BypassOwnerClaim)) : null;
+            ? new("bypass", StandaloneAdministratorName, AccountPermissions.Admin, false, true, principal.FindFirstValue(AccessPolicies.BypassOwnerClaim)) : null;
         if (principal.Identity?.IsAuthenticated != true || principal.HasClaim(AccessPolicies.BypassClaim, "true")) return null;
         var claims = options.Value.ClaimsIdentity;
         if (!Guid.TryParse(principal.FindFirstValue(claims.UserIdClaimType), out var id)) return null;

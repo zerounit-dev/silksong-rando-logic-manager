@@ -52,10 +52,7 @@ internal sealed class PublishingDocuments
             foreach (var room in d.roomsByGroup[group.Id])
                 d.Paths[room.Id] = d.GroupPaths[group.Id] + "/" + Unique(room.FriendlyName, names) + ".md";
         }
-        var ungrouped = d.Rooms.Where(x => !d.Paths.ContainsKey(x.Id)).ToArray();
-        if (ungrouped.Length != 0) throw new PublishingBlock("Active rooms have no matching room group in the frozen publication snapshot:\n" +
-            string.Join("\n", ungrouped.Select(x => $"{x.FriendlyName} (room {x.Id:D}; group {x.RoomGroupId})")) +
-            "\nAssign these rooms to existing room groups in the editor, then discard the failed preparation and prepare again.");
+        // Canonical graph integrity reports ungrouped rooms before Write can run.
         return d;
     }
     private static string Unique(string name, HashSet<string> used)
@@ -67,9 +64,10 @@ internal sealed class PublishingDocuments
         return result;
     }
     internal static string Title(Room r) => Regex.Replace(r.FriendlyName + (string.IsNullOrEmpty(r.InGameId) ? "" : $" ({r.InGameId})"), @"\s+", " ").Trim();
-    internal List<string> Validate()
+    internal sealed record RuleIssue(bool Combat, Guid RoomId, string Kind, Guid RecordId, string Reason);
+    internal List<RuleIssue> Validate()
     {
-        var issues = new List<string>();
+        var issues = new List<RuleIssue>();
         var protectedNames = new HashSet<string>(["driftlin", "mnemonid", "mnemonord", "skullwing", "wingmould", "barnak"]);
         static string Normalize(string value) => Regex.Replace(value.Trim().ToLowerInvariant(), @"\s+", " ");
         var aliases = protectedNames.ToDictionary(x => x, x => x);
@@ -80,16 +78,16 @@ internal sealed class PublishingDocuments
         {
             foreach (var check in ChecksByRoom[room.Id].Where(x => new[] { "boss", "gauntlet" }.Contains(x.LocationType?.Trim().ToLowerInvariant())))
                 if (!Regex.IsMatch(check.Requirements, @"(?<!\w)Combat\s+Requirements(?!\w)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
-                    issues.Add($"{Title(room)}: {check.FriendlyName} [{check.LocationType}] must include Combat Requirements.");
-            var rows = TransitionsByRoom[room.Id].Select(x => (x.FriendlyName, x.Requirements, Kind: "transition"))
-                .Concat(ConnectionsByRoom[room.Id].Select(x => (x.FriendlyName, x.Requirements, Kind: "connection")))
-                .Concat(ChecksByRoom[room.Id].Select(x => (x.FriendlyName, x.Requirements, Kind: "location")));
+                    issues.Add(new(true, room.Id, "location", check.Id, $"{check.FriendlyName} [{check.LocationType}] must include Combat Requirements."));
+            var rows = TransitionsByRoom[room.Id].Select(x => (x.FriendlyName, x.Requirements, Kind: "transition", x.Id))
+                .Concat(ConnectionsByRoom[room.Id].Select(x => (x.FriendlyName, x.Requirements, Kind: "connection", x.Id)))
+                .Concat(ChecksByRoom[room.Id].Select(x => (x.FriendlyName, x.Requirements, Kind: "location", x.Id)));
             foreach (var row in rows)
                 foreach (Match match in pogo.Matches(row.Requirements))
                 {
                     var names = match.Groups["enemies"].Value.Trim('[', ']').Split(',').Select(Normalize).Where(aliases.ContainsKey).Select(x => aliases[x]).Distinct().Order(StringComparer.Ordinal).ToArray();
                     if (names.Length > 0 && !match.Groups["difficulty"].Value.Equals("intended", StringComparison.OrdinalIgnoreCase))
-                        issues.Add($"{Title(room)}: {row.FriendlyName} [{row.Kind}]: {string.Join(", ", names)} pogo-off must use Intended.");
+                        issues.Add(new(false, room.Id, row.Kind, row.Id, $"{string.Join(", ", names)} pogo-off must use Intended."));
                 }
         }
         return issues;
@@ -145,11 +143,11 @@ internal sealed class PublishingDocuments
             finally { storage.Timing = taskTiming; }
         }
     }
-    internal static void WriteText(PublishingStorage storage, string directory, string path, string value)
+    private static void WriteText(PublishingStorage storage, string directory, string path, string value)
     {
         var destination = PublishingStorage.Resolve(directory, path);
         var bytes = storage.Timing is { } timing ? timing.Measure(PublishingMetric.TextEncoding, () => new UTF8Encoding(false).GetBytes(value)) : new UTF8Encoding(false).GetBytes(value);
-        storage.Atomic(destination, bytes);
+        storage.AtomicGeneratedCandidate(destination, bytes);
     }
     private static string Anchor(string path) => "room-" + path[..^3].Replace("/", "--");
     private static string Cell(object? value) => (value?.ToString() ?? "").Replace("|", "\\|").Replace("\r", "").Replace("\n", " ").Trim();

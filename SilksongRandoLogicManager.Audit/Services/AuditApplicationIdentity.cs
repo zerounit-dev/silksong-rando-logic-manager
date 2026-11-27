@@ -47,7 +47,8 @@ internal sealed record PreparedAuditApplication(AuditApplicationHandle Handle, A
         RequirementInputSyntax.RequiredDifficultyThenPredicateThenOptionalQuantity or RequirementInputSyntax.RequiredDifficultyThenPredicateThenQuantity or
         RequirementInputSyntax.RequiredDifficultyThenMethodThenPredicateThenOptionalQuantity or
         RequirementInputSyntax.RequiredDifficultyThenPredicateThenDirection or
-        RequirementInputSyntax.RequiredDifficultyThenCrestThenPredicateThenOptionalQuantity)
+        RequirementInputSyntax.RequiredDifficultyThenCrestThenPredicateThenOptionalQuantity or
+        RequirementInputSyntax.RequiredDifficultyThenPredicateThenSoulThenOptionalQuantity)
         && Key.Arguments.Difficulty is "easy" or "medium" or "hard" or "cbt";
     internal bool Admitted(AuditRequirementsContext context) => context.Advanced || !RequiresAdvanced;
 }

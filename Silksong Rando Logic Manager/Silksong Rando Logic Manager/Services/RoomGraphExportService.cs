@@ -17,16 +17,14 @@ public sealed class RoomGraphExportService(IDbContextFactory<LogicDbContext> con
     // Only the publishing copy already acquired under live admission can use this
     // entry. Rendering an immutable prepared database must not block live writes.
     internal static async Task<PreparedRoomGraph> GeneratePreparedAsync(Publishing.PublishingSnapshotFactory contexts,
-        Action<IReadOnlyList<RoomGraphExportFailure>> reportGlobalFailures,
         CancellationToken cancellationToken = default)
     {
         var evidence = new PreparedGraphEvidence();
-        return new(await GenerateAsync(contexts, null, cancellationToken, evidence, reportGlobalFailures), evidence);
+        return new(await GenerateAsync(contexts, null, cancellationToken, evidence), evidence);
     }
 
     private static async Task<RoomGraphExportResult> GenerateAsync(IDbContextFactory<LogicDbContext> contexts,
-        SharedPublicationCoordinator.Admission? publication, CancellationToken cancellationToken, PreparedGraphEvidence? evidence = null,
-        Action<IReadOnlyList<RoomGraphExportFailure>>? reportGlobalFailures = null)
+        SharedPublicationCoordinator.Admission? publication, CancellationToken cancellationToken, PreparedGraphEvidence? evidence = null)
     {
         await using var db = await contexts.CreateDbContextAsync(cancellationToken);
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
@@ -47,9 +45,8 @@ public sealed class RoomGraphExportService(IDbContextFactory<LogicDbContext> con
         publication?.Dispose();
 
         var globalFailures = new List<RoomGraphExportFailure>();
-        var typeLegend = RoomExportStructure.BuildTypeLegend(globalFailures);
-        var catalogue = BuildCatalogue(predicates, items, countables, souls, crests, methods, globalFailures);
-        if (globalFailures.Count != 0) reportGlobalFailures?.Invoke(globalFailures);
+        var typeLegend = RoomExportStructure.BuildTypeLegend(globalFailures, evidence);
+        var catalogue = BuildCatalogue(predicates, items, countables, souls, crests, methods, globalFailures, evidence);
         var structure = RoomExportStructure.Project(snapshot, globalFailures, evidence);
         var context = catalogue is null ? null : new RoomGraphTranslationContext(catalogue.Predicates, catalogue.Items,
             structure.Rooms.Select(x => new RoomGraphRequirementRoom(x.Row.Id, x.Row.ReferenceId)).ToArray(),
@@ -124,7 +121,8 @@ public sealed class RoomGraphExportService(IDbContextFactory<LogicDbContext> con
         : RoomGraphRequirementTranslator.Translate(raw, roomId, context);
 
     private static Catalogue? BuildCatalogue(IReadOnlyList<PredicateRow> predicateRows, IReadOnlyList<ItemRow> itemRows,
-        IReadOnlyList<ItemRow> countableRows, IReadOnlyList<ItemRow> soulRows, IReadOnlyList<ItemRow> crestRows, IReadOnlyList<ItemRow> methodRows, List<RoomGraphExportFailure> failures)
+        IReadOnlyList<ItemRow> countableRows, IReadOnlyList<ItemRow> soulRows, IReadOnlyList<ItemRow> crestRows, IReadOnlyList<ItemRow> methodRows, List<RoomGraphExportFailure> failures,
+        PreparedGraphEvidence? evidence = null)
     {
         var initialFailureCount = failures.Count;
         var predicateInputs = new List<RequirementCataloguePredicateValidation>();
@@ -140,13 +138,14 @@ public sealed class RoomGraphExportService(IDbContextFactory<LogicDbContext> con
         var items = itemRows.Where(row => RequirementCatalogueLanguage.TryCanonicalizeAliases(row.Aliases, out var canonical, out _, out _) && canonical == row.Aliases)
             .Select(row => new RoomGraphItemDefinition(row.Id, row.Name, row.OutputValue, RequirementCatalogueLanguage.ParseAliases(row.Aliases))).ToArray();
         foreach (var issue in RequirementCatalogueValidator.Validate(predicateInputs, itemInputs))
-            failures.Add(new($"requirement catalogue definition '{issue.DefinitionName ?? issue.DefinitionId.ToString()}' is invalid: {issue.Message}"));
+            Add($"requirement catalogue definition '{issue.DefinitionName ?? issue.DefinitionId.ToString()}' is invalid: {issue.Message}",
+                $"Requirement Catalogue: {issue.DefinitionName}", "catalogue definition", issue.DefinitionId);
         foreach (var row in predicateRows)
             if (RequirementCatalogueLanguage.TryCanonicalizeAliases(row.Aliases, out var canonical, out _, out _) && canonical != row.Aliases)
-                failures.Add(new($"requirement predicate '{row.Name}' has noncanonical aliases; apply the definition again before export"));
+                Add($"requirement predicate '{row.Name}' has noncanonical aliases; apply the definition again before export", $"Requirement predicate: {row.Name}", "predicate", row.Id);
         foreach (var row in itemRows)
             if (RequirementCatalogueLanguage.TryCanonicalizeAliases(row.Aliases, out var canonical, out _, out _) && canonical != row.Aliases)
-                failures.Add(new($"requirement item '{row.Name}' has noncanonical aliases; apply the definition again before export"));
+                Add($"requirement item '{row.Name}' has noncanonical aliases; apply the definition again before export", $"Requirement item: {row.Name}", "item", row.Id);
         var invalidCheckOutputs = predicates.Where(x => x.Syntax == RequirementInputSyntax.PredicateThenCheck).Where(predicate =>
         {
             try
@@ -157,27 +156,40 @@ public sealed class RoomGraphExportService(IDbContextFactory<LogicDbContext> con
             catch { return true; }
         }).Select(x => x.Name).ToArray();
         if (invalidCheckOutputs.Length != 0)
-            failures.Add(new($"check-consuming requirement predicate output must emit exactly 'dependency:{{check}}'; correct: {string.Join(", ", invalidCheckOutputs)}"));
-        var countables = BuildTypedValues(countableRows, "countable", failures);
-        var souls = BuildTypedValues(soulRows, "soul", failures);
-        var crests = BuildTypedValues(crestRows, "crest", failures);
-        var methods = BuildTypedValues(methodRows, "method", failures);
+            Add($"check-consuming requirement predicate output must emit exactly 'dependency:{{check}}'; correct: {string.Join(", ", invalidCheckOutputs)}",
+                $"Requirement predicates: {string.Join(", ", invalidCheckOutputs)}", "check-consuming predicates");
+        var countables = BuildTypedValues(countableRows, "countable", failures, evidence);
+        var souls = BuildTypedValues(soulRows, "soul", failures, evidence);
+        var crests = BuildTypedValues(crestRows, "crest", failures, evidence);
+        var methods = BuildTypedValues(methodRows, "method", failures, evidence);
         return failures.Count == initialFailureCount ? new(predicates, items, countables, souls, crests, methods) : null;
+        void Add(string cause, string owner, string kind, Guid? id = null)
+        {
+            var failure = new RoomGraphExportFailure(cause);
+            failures.Add(failure);
+            evidence?.Integrity.Add(new(PreparedIntegrityFamily.Catalogue, failure, owner, kind, id));
+        }
     }
 
-    private static IReadOnlyList<RoomGraphItemDefinition> BuildTypedValues(IReadOnlyList<ItemRow> rows, string kind, List<RoomGraphExportFailure> failures)
+    private static IReadOnlyList<RoomGraphItemDefinition> BuildTypedValues(IReadOnlyList<ItemRow> rows, string kind, List<RoomGraphExportFailure> failures, PreparedGraphEvidence? evidence)
     {
         foreach (var issue in RequirementCatalogueValidator.ValidateReferenceValues(rows.Select(row =>
             new RequirementCatalogueItemValidation(row.Id, row.Name, row.Category, row.OutputValue, row.Notes, row.Aliases))))
-            failures.Add(new($"requirement {kind} '{issue.DefinitionName ?? issue.DefinitionId.ToString()}' is invalid: {issue.Message}"));
+            Add($"requirement {kind} '{issue.DefinitionName ?? issue.DefinitionId.ToString()}' is invalid: {issue.Message}", issue.DefinitionName ?? kind, issue.DefinitionId);
         var result = new List<RoomGraphItemDefinition>();
         foreach (var row in rows)
         {
             if (!RequirementCatalogueLanguage.TryCanonicalizeAliases(row.Aliases, out var canonical, out var aliases, out _)) continue;
-            if (canonical != row.Aliases) failures.Add(new($"requirement {kind} '{row.Name}' has noncanonical aliases; apply the definition again before export"));
+            if (canonical != row.Aliases) Add($"requirement {kind} '{row.Name}' has noncanonical aliases; apply the definition again before export", row.Name, row.Id);
             else result.Add(new(row.Id, row.Name, row.OutputValue, aliases));
         }
         return result;
+        void Add(string cause, string name, Guid id)
+        {
+            var failure = new RoomGraphExportFailure(cause);
+            failures.Add(failure);
+            evidence?.Integrity.Add(new(PreparedIntegrityFamily.Catalogue, failure, $"Requirement {kind}: {name}", kind, id));
+        }
     }
 
     private sealed record Catalogue(IReadOnlyList<RoomGraphPredicateDefinition> Predicates, IReadOnlyList<RoomGraphItemDefinition> Items, IReadOnlyList<RoomGraphItemDefinition> Countables, IReadOnlyList<RoomGraphItemDefinition> Souls, IReadOnlyList<RoomGraphItemDefinition> Crests, IReadOnlyList<RoomGraphItemDefinition> Methods);

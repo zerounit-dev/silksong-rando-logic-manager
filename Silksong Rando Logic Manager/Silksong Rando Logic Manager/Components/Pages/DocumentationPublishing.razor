@@ -12,7 +12,7 @@
 @inject IJSRuntime JS
 
 <PageTitle>Documentation publishing | Silksong Logic Manager</PageTitle>
-<main @ref="reviewHost" class="publishing-tool tools-body">
+<main @ref="reviewHost" class="publishing-tool tools-body @(ShowReview ? "publishing-wide" : null)" data-review-navigation="@ReviewNavigation">
     <h1 class="tool-title">documentation publishing</h1>
     @if (view is null && Diagnostics.ErrorDetails is { } initialError)
     {
@@ -21,72 +21,155 @@
     @if (view is not null)
     {
         var awaitingMapDecision = view.MapPreflight?.AwaitingDecision == true;
-        <p class="publishing-context tool-metadata">@view.Repository · @view.Branch</p>
+        var destination = Uri.TryCreate(view.Repository, UriKind.Absolute, out var repository) ? repository : null;
+        var repositoryName = destination?.AbsolutePath.TrimStart('/') ?? view.Repository;
+        if (destination is not null && repositoryName.EndsWith(".git", StringComparison.OrdinalIgnoreCase))
+        {
+            repositoryName = repositoryName[..^4];
+        }
+        var destinationUrl = destination is null ? null : $"https://github.com/{repositoryName}/tree/{Uri.EscapeDataString(view.Branch)}";
+        <p class="publishing-context tool-metadata">
+            @if (destinationUrl is not null)
+            {
+                <a href="@destinationUrl" target="_blank" rel="noopener noreferrer">@repositoryName</a><text> · @view.Branch</text>
+            }
+            else { @repositoryName }
+        </p>
         <div class="publishing-activity">
-            <span>Last recorded room edit: @(latestActivity is null ? "Loading…" : !latestActivity.Available ? "History unavailable." : latestActivity.RecordedUtc is { } last ? (latestLocalTime ?? ActivityUtcTime(last)) : "No recorded room edits.")</span>
-            <button @ref="recentLauncher" class="tool-action" type="button" aria-haspopup="dialog" @onclick="OpenRecentEdits">recent edits</button>
-        </div>
-        <section class="publishing-card" aria-label="Preparation">
-            <h2 class="tool-section-title">prepare</h2>
-            <div class="publishing-actions" aria-busy="@EffectiveBusy.ToString().ToLowerInvariant()">
-                <button class="tool-action" type="button" disabled="@(!view.Enabled || EffectiveBusy || view.CandidateId is not null)" @onclick="Prepare"><i class="@(awaitingMapDecision ? "fa-solid fa-hourglass-half" : CommandIcon(PublishingCommand.Prepare, "fa-file-export"))" aria-hidden="true"></i> prepare</button>
-                <button class="tool-action" type="button" disabled="@(EffectiveBusy || view.Phase is not ("Prepared" or "Interrupted" or "Failed"))" @onclick="Discard"><i class="@CommandIcon(PublishingCommand.Discard, "fa-trash")" aria-hidden="true"></i> discard prepared changes</button>
+            <div>
+                <span class="publishing-activity-label">Last room edit</span>
+                <div class="publishing-activity-value">
+                    <div>
+                        @(latestActivity is null ? "Loading…" : !latestActivity.Available ? "History unavailable." : latestActivity.RecordedUtc is { } last ? (latestLocalTime ?? ActivityUtcTime(last)) : "No recorded room edits.")
+                        @if (!reviewNavigationDenied && latestActivity?.User is { } editor) { <div>@editor</div> }
+                    </div>
+                    <button @ref="recentLauncher" class="publishing-text-action" type="button" aria-haspopup="dialog" @onclick="OpenRecentEdits">Recent edits</button>
+                </div>
             </div>
+            @if (!reviewNavigationDenied && view.LatestPreparation is { } preparation)
+            {
+                var active = view.Busy && view.Progress?.Operation == "Preparation";
+                var highlight = preparation.IsOtherAccount && (active || DateTime.UtcNow < preparation.RecordedUtc.Add(PreparationNoticeWindow));
+                <div class="publishing-preparation-activity @(highlight ? "publishing-notice" : null)">
+                    <span class="publishing-activity-label">
+                        @if (highlight) { <i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i> }
+                        @(highlight ? "Last prep · another account" : "Last prep")
+                    </span>
+                    @(preparationLocalTime.At == preparation.RecordedUtc && preparationLocalTime.Label is { } local ? local : ActivityUtcTime(preparation.RecordedUtc))
+                    <div>@preparation.User</div>
+                </div>
+            }
+        </div>
+        <div class="publishing-workspace @(!ShowReview ? "publishing-compact" : null)">
+            <ol class="publishing-stages" role="list" aria-label="Publishing stages">
+                <li aria-current="@(CurrentStage == WizardStage.Prepare ? "step" : null)"><span class="publishing-stage-number" aria-hidden="true">1</span> Prepare</li>
+                <li aria-current="@(CurrentStage == WizardStage.Review ? "step" : null)"><span class="publishing-stage-number" aria-hidden="true">2</span> Review changes</li>
+                <li aria-current="@(CurrentStage == WizardStage.Publish ? "step" : null)"><span class="publishing-stage-number" aria-hidden="true">3</span> Publish</li>
+            </ol>
+        @if (checksOrigin is not null && CanReview)
+        {
+            <section class="publishing-card publishing-compact">
+                 <h2 class="tool-section-title">preparation report</h2>
+                 <button class="publishing-text-action" type="button" @onclick="ReturnFromChecks">@(checksOrigin == WizardStage.Publish ? "Back to publish form" : "Back to change review")</button>
+                @if (view.MapPreflight is null) { <p role="status">Preparation checks are unavailable for this retained candidate.</p> }
+            </section>
+        }
+        @if (checksOrigin is null && !CanReview && !awaitingMapDecision && (EffectiveBusy || view.Stage != "Not prepared" || CurrentStage == WizardStage.Publish))
+        {
+            <section class="publishing-card publishing-compact" aria-label="Operation status">
+            @if (CurrentStage == WizardStage.Publish)
+            {
+                <h2 class="tool-section-title">publish</h2>
+            }
             <p class="tool-progress" role="status" aria-live="polite">
-                @if (awaitingMapDecision)
-                {
-                    <span>Waiting for the initiating account’s decision.</span><br />
-                }
-                else if (EffectiveBusy)
+                @if (EffectiveBusy && (!view.Busy || view.Progress is null))
                 {
                     <span><span class="publishing-progress-dots" aria-hidden="true"><span></span><span></span><span></span></span> @(view.Phase == "Restoring" ? "Restoring publishing review." : view.Busy ? "Publishing operation in progress." : AdmissionStatus)</span><br />
                 }
                 @if (view.Progress is { } progress)
                 {
-                    <span>@progress.Operation · @(view.Busy ? "Step" : "Stopped at step") @progress.Step of @progress.Steps</span><br />
-                    <span>@progress.Task</span>
+                    @if (view.Busy)
+                    {
+                        <small class="publishing-task-detail">Task @progress.Step of @progress.Steps <span class="publishing-progress-dots" aria-hidden="true"><span></span><span></span><span></span></span></small>
+                        <span>@ProgressActivity(progress)…</span>
+                    }
+                    else
+                    {
+                        <span>@view.Stage</span>
+                        <small class="publishing-task-detail">Last task (@progress.Step of @progress.Steps): @ProgressActivity(progress)</small>
+                    }
                     @if (progress.RoomsCompleted is { } completed && progress.RoomsTotal is { } total)
                     {
                         <br /><span>Rooms completed: @completed of @total</span>
                     }
                     @if (progress.CurrentRoom is { } room) { <br /><span>Current room: @room</span> }
-                    @if (progress.Detail is { } detail) { <br /><span>@detail</span> }
-                }
-                else { @view.Stage }
-            </p>
-            @if (view.MapPreflight is { } map)
-            {
-                <section @key="view.MapPreparation" class="publishing-map" aria-label="Validate map data">
-                    <h3>Validate map data</h3>
-                    @if (map.Finished && map.Checks.Any(row => row.Status == MapCheckStatus.Fail))
+                    @if (progress.Detail is { } detail)
                     {
-                        <h4>Map findings</h4>
-                        <p class="publishing-map-summary">@MapSummary(map)</p>
+                        <br /><span>@(detail == "Write README, MASTER and documentation indexes." ? "Writing README, MASTER and documentation indexes…" : detail)</span>
                     }
-                    @if (map.Outcome is { } outcome) { <p role="status">@outcome</p> }
-                    @if (map.AwaitingDecision)
+                }
+                else { @(view.Phase == "Interrupted" ? "Preparation was interrupted." : view.Stage) }
+            </p>
+            @if (view.Commit is not null)
+            {
+                <p>Update saved on server. Delivery not verified.</p>
+                <p>Exact commit: <code>@view.Commit</code></p>
+                <button class="tool-action" type="button" disabled="@(EffectiveBusy || view.Phase != "PendingPush")" aria-busy="@((ActiveCommand == PublishingCommand.Retry).ToString().ToLowerInvariant())" @onclick="Retry"><i class="@CommandIcon(PublishingCommand.Retry, "fa-rotate-right")" aria-hidden="true"></i> Retry publishing</button>
+            }
+            @if (view.PublishedUrl is not null)
+            {
+                <p>Published to @view.Branch</p>
+                <p><a class="tool-action" href="@view.PublishedUrl" target="_blank" rel="noopener noreferrer">View on GitHub</a></p>
+                <button class="tool-action" type="button" disabled="@(!CanPrepare)" @onclick="Prepare"><i class="@CommandIcon(PublishingCommand.Prepare, "fa-file-export")" aria-hidden="true"></i> Prepare</button>
+            }
+            </section>
+        }
+        @if (checksOrigin is null && view.Error is not null) { <p class="publishing-error publishing-compact" role="alert">@view.Error</p> }
+        @if (checksOrigin is null && view.Validation.Count > 0) { <ul class="publishing-error publishing-compact">@foreach (var issue in view.Validation) { <li>@issue</li> }</ul> }
+        @if (checksOrigin is null && CurrentStage == WizardStage.Prepare && !EffectiveBusy)
+        {
+            <div class="publishing-actions">
+                <button class="tool-action" type="button" disabled="@(!CanPrepare)" @onclick="Prepare"><i class="fa-solid fa-file-export" aria-hidden="true"></i> @(view.Phase is "Interrupted" or "Failed" ? "Retry preparation" : "Prepare")</button>
+            </div>
+        }
+        @if (view.MapPreflight is { } map)
+            {
+                <section @key="view.MapPreparation" class="publishing-map" aria-label="Preparation checks" hidden="@(!ShowChecks)">
+                    @if (checksOrigin is null && map.Finished && map.Checks.Any(row => row.Status == MapCheckStatus.Fail))
                     {
-                        <p>Generation has not started.</p>
+                        var blocked = map.Checks.Any(row => row.Group == "Graph integrity" && row.Report is { Count: > 0 });
+                        var reviewable = map.AwaitingDecision || map.Checks.Any(row => row.Report is { Count: > 0 });
+                        <div role="status" class="publishing-notice @(blocked ? "publishing-notice-blocked" : reviewable ? null : "publishing-notice-incomplete")">
+                            <i class="fa-solid @(blocked ? "fa-circle-exclamation" : reviewable ? "fa-triangle-exclamation" : "fa-circle-info")" aria-hidden="true"></i>
+                            @if (blocked) { <strong>Preparation blocked:</strong> }
+                            else if (map.AwaitingDecision) { <strong>Preparation paused · </strong> }
+                            else if (!reviewable) { <strong>Preparation checks incomplete:</strong> }
+                            <strong>@MapSummary(map, reviewable && !blocked)</strong>
+                        </div>
+                    }
+                     @if (checksOrigin is null && !map.AwaitingDecision && map.Outcome is { } outcome) { <p role="status">@outcome</p> }
+                    @if (checksOrigin is null && map.AwaitingDecision)
+                    {
                         @if (view.MapDecision is { } decision)
                         {
-                            <p>Proceed with generation anyway?</p>
                             <div class="publishing-actions publishing-map-actions">
-                                <button class="tool-action" type="button" disabled="@(sendingMapDecision == decision)" @onclick="() => DecideMap(decision, true)">Proceed anyway</button>
-                                <button class="tool-action" type="button" disabled="@(sendingMapDecision == decision)" @onclick="() => DecideMap(decision, false)">Cancel preparation</button>
+                                 <button class="tool-action primary" type="button" disabled="@(sendingMapDecision == decision)" @onclick="() => DecideMap(decision, true)"><i class="fa-solid fa-arrow-right" aria-hidden="true"></i> Continue generation</button>
+                                 <button class="tool-action" type="button" disabled="@(sendingMapDecision == decision)" @onclick="() => DecideMap(decision, false)"><i class="fa-solid fa-stop" aria-hidden="true"></i> Cancel preparation</button>
                             </div>
                         }
                     }
-                    @if (mapDecisionError is { } decisionError && decisionError.Decision == view.MapDecision)
+                    @if (checksOrigin is null && mapDecisionError is { } decisionError && decisionError.Decision == view.MapDecision)
                     {
                         <p class="publishing-error" role="alert">@decisionError.Message</p>
                     }
-                    @foreach (var group in map.Checks.GroupBy(row => row.Group))
+                     <div class="publishing-map-report">
+                     @foreach (var group in map.Checks.GroupBy(row => row.Group))
                     {
                         <h4 class="publishing-map-category">@group.Key</h4>
                         <ul class="publishing-map-rows">
                             @foreach (var row in group)
                             {
-                                <li @key="row.Name">
+                                <li @key="(row.Group, row.Name)">
                                     <div class="publishing-map-status" role="status">
                                         <span><i class="@MapCheckIcon(row.Status) @MapCheckTone(row.Status)" aria-hidden="true"></i> @row.Name</span>
                                         <strong class="@MapCheckTone(row.Status)">@row.Status.ToString().ToUpperInvariant()</strong>
@@ -106,32 +189,35 @@
                             }
                         </ul>
                     }
+                    </div>
                 </section>
             }
-            @if (view.Phase == "Prepared")
-            {
-                @if (view.Changes.Count == 0) { <p>No changes to publish.</p> }
-                <p>@view.Changes.Count changed files · @view.Changes.Count(x => x.Kind == "Image") images · @view.Changes.Count(x => x.Change == "Removed") removals</p>
-            }
-            @if (view.Error is not null) { <p class="publishing-error" role="alert">@view.Error</p> }
-            @if (view.Validation.Count > 0) { <ul class="publishing-error">@foreach (var issue in view.Validation) { <li>@issue</li> }</ul> }
-            @if (view.PublishedUrl is not null) { <p><a class="tool-action" href="@view.PublishedUrl" target="_blank" rel="noopener noreferrer">view confirmed publication on GitHub</a></p> }
-        </section>
-        @if (view.Commit is not null)
-        {
-            <section class="publishing-card">
-                <h2 class="tool-section-title">pending push</h2><p>Exact commit: <code>@view.Commit</code>. Retry pushes this existing commit.</p>
-                <button class="tool-action" type="button" disabled="@EffectiveBusy" aria-busy="@((ActiveCommand == PublishingCommand.Retry).ToString().ToLowerInvariant())" @onclick="Retry"><i class="@CommandIcon(PublishingCommand.Retry, "fa-rotate-right")" aria-hidden="true"></i> retry push</button>
-            </section>
-        }
         @if (previewError is not null) { <p class="publishing-error" role="alert">@previewError</p> }
-        @if (view.Phase == "Prepared")
+        @if (CanReview)
         {
-            <section class="publishing-card" aria-label="Candidate review">
-                <h2 class="tool-section-title">review</h2>
+            <section class="publishing-card publishing-compact" hidden="@(checksOrigin is not null || CurrentStage != WizardStage.Publish)" aria-label="Publish decision">
+                <h2 class="tool-section-title publishing-context">Publish to @repositoryName · @view.Branch</h2>
+                <p>@ChangeSummary</p>
+                <div class="publishing-back-actions" role="group" aria-label="Back to earlier views">
+                    <button class="publishing-text-action" type="button" @onclick="BackToReview">Back to change review</button>
+                    <span class="publishing-back-divider" aria-hidden="true"></span>
+                    <button class="publishing-text-action" type="button" @onclick="ViewChecks">Back to preparation report</button>
+                </div>
                 <label class="tool-label" for="publishing-message">Commit message</label>
                 <textarea class="tool-control" id="publishing-message" @bind="message" disabled="@EffectiveBusy" rows="3"></textarea>
-                <button class="tool-action" type="button" disabled="@(EffectiveBusy || view.Changes.Count == 0 || !view.CredentialsReady || string.IsNullOrWhiteSpace(message))" aria-busy="@((ActiveCommand == PublishingCommand.Commit).ToString().ToLowerInvariant())" @onclick="Commit"><i class="@CommandIcon(PublishingCommand.Commit, "fa-upload")" aria-hidden="true"></i> commit and push</button>
+                <div class="publishing-actions">
+                    <button class="tool-action primary" type="button" disabled="@(EffectiveBusy || !view.CredentialsReady || string.IsNullOrWhiteSpace(message))" aria-busy="@((ActiveCommand == PublishingCommand.Commit).ToString().ToLowerInvariant())" @onclick="Commit"><i class="@CommandIcon(PublishingCommand.Commit, "fa-upload")" aria-hidden="true"></i> Commit and push</button>
+                    <button class="tool-action" type="button" disabled="@(!CanPrepare)" @onclick="Prepare">Cancel and start over</button>
+                </div>
+            </section>
+            <section class="publishing-card" hidden="@(!ShowReview)" aria-label="Candidate review">
+                <h2 class="tool-section-title">review changes</h2>
+                <p>@ChangeSummary</p>
+                <div class="publishing-actions">
+                    <button class="tool-action primary" type="button" @onclick="ContinueToPublish">Continue to publish <i class="fa-solid fa-arrow-right" aria-hidden="true"></i></button>
+                    <button class="tool-action" type="button" disabled="@(!CanPrepare)" @onclick="Prepare"><i class="@CommandIcon(PublishingCommand.Prepare, "fa-file-export")" aria-hidden="true"></i> Start Over</button>
+                    <button class="publishing-text-action" type="button" @onclick="ViewChecks">Back to preparation report</button>
+                </div>
                 @if (!EffectiveBusy && view.Review is { } review)
                 {
                     var epoch = view.ReviewEpoch;
@@ -188,6 +274,7 @@
                 }
             </section>
         }
+        </div>
     }
     <dialog @ref="recentDialog" class="confirmation-modal publishing-activity-modal" aria-labelledby="publishing-activity-title">
         <h2 id="publishing-activity-title">recent edits</h2>
@@ -214,6 +301,77 @@
 
 @code {
     private PublishingView? view;
+    private enum WizardStage { Prepare, Review, Publish }
+    private WizardStage laterStage = WizardStage.Review;
+    private WizardStage? checksOrigin;
+    private string? navigationCandidate;
+    private long navigationEpoch;
+    private bool resumeReviewPending;
+    private bool navigatingWizard;
+    private bool reviewNavigationDenied;
+    private bool CanReview => !reviewNavigationDenied && !EffectiveBusy && view is { Phase: "Prepared", CandidateId: not null, Changes.Count: > 0 };
+    private bool CanPrepare => !reviewNavigationDenied && view is { Enabled: true } && !EffectiveBusy
+        && view.Phase is "Idle" or "Prepared" or "Interrupted" or "Failed";
+    private WizardStage CurrentStage => CanReview ? laterStage
+        : view?.Commit is not null || view?.PublishedUrl is not null
+        || view?.Phase is "PendingPush" or "Replacing" or "Advancing" or "Published"
+        || ActiveCommand is PublishingCommand.Commit or PublishingCommand.Retry
+        || view?.Progress?.Operation is "Commit and push" or "Retry push"
+            ? WizardStage.Publish : WizardStage.Prepare;
+    private bool ShowReview => CanReview && checksOrigin is null && CurrentStage == WizardStage.Review;
+    private bool ShowChecks => checksOrigin is not null && CanReview
+        || CurrentStage == WizardStage.Prepare && view?.MapPreflight is { } map && view.Phase != "Prepared"
+            && (map.AwaitingDecision || !map.Finished || view.Busy == false);
+    private string ChangeSummary => $"{view!.Changes.Count} changed files · {view.Changes.Count(x => x.Kind == "Image")} images · {view.Changes.Count(x => x.Change == "Removed")} removals";
+    private string ReviewNavigation => $"{view?.CandidateId}/{view?.ReviewEpoch}";
+
+    private void ReconcileWizard()
+    {
+        if (!CanReview || navigationCandidate != view!.CandidateId || navigationEpoch != view.ReviewEpoch)
+        {
+            checksOrigin = null;
+            laterStage = WizardStage.Review;
+            resumeReviewPending = false;
+            if (navigationCandidate != view?.CandidateId) message = "";
+        }
+        navigationCandidate = CanReview ? view!.CandidateId : null;
+        navigationEpoch = view?.ReviewEpoch ?? 0;
+    }
+    private async Task NavigateWizard(WizardStage destination, bool inspect = false)
+    {
+        if (!CanReview || navigatingWizard) return;
+        navigatingWizard = true;
+        try
+        {
+            var candidate = view!.CandidateId;
+            var epoch = view.ReviewEpoch;
+            var origin = laterStage;
+            var identity = ReviewNavigation;
+            var wasReview = ShowReview;
+            if (wasReview)
+            {
+                await ObserveReviewTrack();
+                if (trackObserver is null)
+                    throw new InvalidOperationException("The publication review position owner is unavailable.");
+                suspendedAnchorLayout = reviewLayout is null ? null : (indexedRevision, reviewLayout);
+                if (!await trackObserver.InvokeAsync<bool>("suspend", identity)) return;
+            }
+            if (!CanReview || view.CandidateId != candidate || view.ReviewEpoch != epoch) return;
+            checksOrigin = inspect ? origin : null;
+            if (!inspect) laterStage = destination;
+            resumeReviewPending = ShowReview;
+        }
+        catch (Exception exception)
+        {
+            Logger.LogError(exception, "Saving publication review position failed.");
+            Diagnostics.Show($"Saving publication review position failed.\n{exception}");
+        }
+        finally { navigatingWizard = false; }
+    }
+    private Task ViewChecks() => NavigateWizard(laterStage, inspect: true);
+    private Task ReturnFromChecks() => NavigateWizard(checksOrigin ?? WizardStage.Review);
+    private Task ContinueToPublish() => NavigateWizard(WizardStage.Publish);
+    private Task BackToReview() => NavigateWizard(WizardStage.Review);
     private PublishingLatestActivity? latestActivity;
     private PublishingRecentActivity? recentActivity;
     private bool loadingActivity, openActivityPending, initializingActivityDialog;
@@ -223,6 +381,9 @@
     private IJSObjectReference? activityModule, activityDialogOwner;
     private Task<IJSObjectReference?>? activityModuleImport;
     private string? latestLocalTime;
+    private (DateTime At, string? Label) preparationLocalTime;
+    private DateTime? preparationTimeRequested;
+    private static readonly TimeSpan PreparationNoticeWindow = TimeSpan.FromMinutes(15);
     private string?[]? recentLocalTimes;
     private bool latestTimeRequested;
     private long recentTimeRequested;
@@ -248,9 +409,11 @@
     {
         if (disposed || view is null) return;
         DateTime? latest = !latestTimeRequested && latestActivity is { Available: true } ? latestActivity.RecordedUtc : null;
+        var preparation = view.LatestPreparation;
+        DateTime? prepared = preparation?.RecordedUtc != preparationTimeRequested ? preparation?.RecordedUtc : null;
         var read = activityRead;
         var rows = read != recentTimeRequested && recentActivity is { Available: true } ? recentActivity.Rows : null;
-        if (latest is null && (rows is null || rows.Count == 0)) return;
+        if (latest is null && prepared is null && (rows is null || rows.Count == 0)) return;
 
         var instants = new List<long>();
         if (latest is { } last)
@@ -258,6 +421,14 @@
             latestTimeRequested = true;
             instants.Add(ActivityUnixMilliseconds(last));
         }
+        if (prepared is { } started)
+        {
+            preparationTimeRequested = started;
+            instants.Add(ActivityUnixMilliseconds(started));
+            if (preparation?.IsOtherAccount == true)
+                _ = UpdatePreparationNoticeAtExpiry(started.Add(PreparationNoticeWindow));
+        }
+        var inlineCount = instants.Count;
         if (rows is { Count: > 0 })
         {
             recentTimeRequested = read;
@@ -267,7 +438,7 @@
         {
             var module = await GetActivityModule();
             if (disposed || module is null) return;
-            var labels = await module.InvokeAsync<string?[]>("formatTimes", activityLifetime.Token, (object)instants, latest is not null);
+            var labels = await module.InvokeAsync<string?[]>("formatTimes", activityLifetime.Token, (object)instants, inlineCount);
             if (disposed || labels?.Length != instants.Count) return;
 
             var changed = false;
@@ -276,10 +447,15 @@
                 latestLocalTime = label;
                 changed = true;
             }
+            if (prepared is { } attempt && view?.LatestPreparation?.RecordedUtc == attempt)
+            {
+                preparationLocalTime = (attempt, labels[inlineCount - 1]);
+                changed = true;
+            }
             // Rows are in read order. Never apply labels from a closed, superseded open to a new read.
             if (rows is { Count: > 0 } && read == activityRead)
             {
-                recentLocalTimes = latest is null ? labels : labels[1..];
+                recentLocalTimes = labels[inlineCount..];
                 changed = true;
             }
             if (changed) StateHasChanged();
@@ -290,6 +466,19 @@
         {
             try { Logger.LogWarning(exception, "Browser publisher activity time formatting unavailable; using UTC."); } catch { }
         }
+    }
+
+    private async Task UpdatePreparationNoticeAtExpiry(DateTime expiresAt)
+    {
+        var remaining = expiresAt - DateTime.UtcNow;
+        if (remaining <= TimeSpan.Zero) return;
+        try
+        {
+            await Task.Delay(remaining, activityLifetime.Token);
+            if (!disposed && view?.LatestPreparation?.RecordedUtc.Add(PreparationNoticeWindow) == expiresAt)
+                await InvokeAsync(StateHasChanged);
+        }
+        catch (OperationCanceledException) when (activityLifetime.IsCancellationRequested) { }
     }
 
     private async Task LoadLatestActivity()
@@ -383,14 +572,19 @@
 
     private void RetireReview()
     {
+        checksOrigin = null;
+        laterStage = WizardStage.Review;
+        resumeReviewPending = false;
         openRooms.Clear(); openZones.Clear(); openingZones.Clear();
         reviewLayout = null;
         anchorLayouts.Clear();
+        suspendedAnchorLayout = null;
         ReviewChanged();
     }
     private void DenyReview(string message)
     {
         RetireReview();
+        RetireMapAccess(view?.MapPreparation);
         view = view! with { Review = null, ReviewError = null };
         previewError = message;
     }
@@ -469,6 +663,24 @@
     private PublishingCommand? ActiveCommand => view?.Busy == true ? serviceCommand : pendingCommand;
     private string CommandIcon(PublishingCommand command, string idleIcon) =>
         ActiveCommand == command ? "fa-solid fa-spinner fa-spin" : $"fa-solid {idleIcon}";
+    private static string ProgressActivity(PublishingProgress progress) => (progress.Operation, progress.Step) switch
+    {
+        ("Preparation", 1) => "Checking the publishing repository and fetching remote changes if needed",
+        ("Preparation", 2) => "Copying room data and images",
+        ("Preparation", 3) => "Loading and checking room records",
+        ("Preparation", 4) => "Exporting the requirement catalogue",
+        ("Preparation", 5) => "Exporting the room catalogue",
+        ("Preparation", 6) => "Exporting room connections and logic",
+        ("Preparation", 7) => "Validating map data",
+        ("Preparation", 8) => "Exporting room-map coordinates and boundaries",
+        ("Preparation", 9) => "Writing room pages, annotated images and documentation indexes",
+        ("Preparation", 10) => "Verifying generated files and comparing them with the current publication",
+        ("Preparation", 11) => "Saving the candidate for review and removing temporary images",
+        ("Commit and push", 1) => "Validating the reviewed candidate and creating its publication commit",
+        ("Commit and push", 2) or ("Retry push", 1) => "Checking the remote, pushing the exact commit if needed, and confirming publication",
+        _ => progress.Task.TrimEnd('.')
+    };
+
     private string AdmissionStatus => pendingCommand switch
     {
         PublishingCommand.Prepare => "Requesting documentation preparation…",
@@ -486,7 +698,19 @@
     private IReadOnlyList<PublishingTiming> pendingTimings = [];
     private readonly Queue<IReadOnlyList<PublishingTiming>> pendingPreviewTimings = new();
     protected override Task OnAfterRenderAsync(bool firstRender) =>
-        Task.WhenAll(RunPublishingAfterRender(), LocalizeActivityTimesAfterRender(), firstRender ? ObserveReviewTrack() : Task.CompletedTask);
+        Task.WhenAll(RunPublishingAfterRender(), LocalizeActivityTimesAfterRender(), UpdateReviewTrack(firstRender));
+    private async Task UpdateReviewTrack(bool firstRender)
+    {
+        if (firstRender) await ObserveReviewTrack();
+        if (disposed || !resumeReviewPending || !ShowReview || trackObserver is null) return;
+        resumeReviewPending = false;
+        try { await trackObserver.InvokeVoidAsync("resume", ReviewNavigation); }
+        catch (Exception exception)
+        {
+            Logger.LogError(exception, "Restoring publication review position failed.");
+            Diagnostics.Show($"Restoring publication review position failed.\n{exception}");
+        }
+    }
 
     private async Task RunPublishingAfterRender()
     {
@@ -599,11 +823,13 @@
                             !Access.TryUseCircuitObservation(proof.Revision, () =>
                             {
                                 mapAccessDenial = null;
+                                reviewNavigationDenied = false;
                                 view = next;
                             }))
                             view = WithoutMapEvidence(next);
                     }
                     else view = next;
+                    ReconcileWizard();
                     if (mapDecisionError is { } prior && prior.Decision != view?.MapDecision) mapDecisionError = null;
                     // Identity comes from actual running service work, not a local
                     // click that another page's admission may have beaten.
@@ -677,6 +903,10 @@
 
     private MapAccessDenial RetireMapAccess(Guid? preparation, bool decisionReply = false)
     {
+        reviewNavigationDenied = true;
+        checksOrigin = null;
+        laterStage = WizardStage.Review;
+        resumeReviewPending = false;
         var retiresCurrentControls = !decisionReply || view?.MapPreparation == preparation;
         if (view is not null) view = WithoutMapEvidence(view);
         if (retiresCurrentControls)
@@ -691,12 +921,13 @@
 
     private async Task<(PublishingView View, MapAccessProof? Proof)> FilterMapAccess(PublishingView status)
     {
-        if (mapAccessDenial is not { } denial || status.MapPreflight is null) return (status, null);
+        if (mapAccessDenial is not { } denial) return (status, null);
         var masked = (WithoutMapEvidence(status), (MapAccessProof?)null);
         if (status.MapPreparation is not { } later || later == denial.Preparation) return masked;
 
-        // A later job's authorized status is necessary but not sufficient: a
-        // circuit read does not prove the credential/stamp rejected by a command.
+        // A later admission can restore activity before any checks exist.
+        // An authorized status read alone does not prove the credential/stamp
+        // rejected by a command.
         LiveAccess.CircuitPrincipalObservation proofInput;
         try
         {
@@ -722,7 +953,7 @@
             ? (confirmed, new(denial, later, proofInput.Revision))
             : (WithoutMapEvidence(confirmed), null);
     }
-    private static string MapSummary(MapPreflightView map)
+    private static string MapSummary(MapPreflightView map, bool toReview)
     {
         var total = 0;
         var incomplete = 0;
@@ -733,7 +964,11 @@
             total += row.Report?.Count ?? 0;
         }
         var counts = new List<string>(2);
-        if (total > 0) counts.Add(total == 1 ? "1 finding" : $"{total} findings");
+        if (total > 0)
+        {
+            var findings = total == 1 ? "1 finding" : $"{total} findings";
+            counts.Add(toReview ? $"{findings} to review" : findings);
+        }
         if (incomplete > 0) counts.Add(incomplete == 1 ? "1 check not fully run" : $"{incomplete} checks not fully run");
         return string.Join(", ", counts) + ".";
     }
@@ -786,7 +1021,9 @@
     private Task Prepare()
     {
         mapDecisionError = null;
-        return RunCommand(PublishingCommand.Prepare, () => Publishing.PrepareAsync(Access, new(page)), "Preparing documentation");
+        var expected = view?.CandidateId;
+        var epoch = view?.ReviewEpoch ?? 0;
+        return RunCommand(PublishingCommand.Prepare, () => Publishing.PrepareAsync(Access, new(page, expected, epoch)), "Preparing documentation");
     }
     private Task Discard() => RunCommand(PublishingCommand.Discard, () => Publishing.DiscardAsync(Access, new(page, view?.CandidateId)), "Discarding prepared changes");
     private Task Commit() => view?.CandidateId is { } id

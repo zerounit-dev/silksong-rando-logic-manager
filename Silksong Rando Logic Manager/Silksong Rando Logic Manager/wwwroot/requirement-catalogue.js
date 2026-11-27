@@ -52,9 +52,11 @@ window.requirementCatalogueDrag = (() => {
             "{difficulty} {predicate} {quantity?}": ["difficulty", "quantity"],
             "{difficulty} {predicate} {quantity}": ["difficulty", "quantity"],
             "{difficulty} [{method}] {predicate} {quantity?}": ["difficulty", "method", "quantity"],
-            "{difficulty} [{crest}] {predicate} {quantity?}": ["difficulty", "crest", "quantity"]
+            "{difficulty} [{crest}] {predicate} {quantity?}": ["difficulty", "crest", "quantity"],
+            "{difficulty} {predicate} [{soul}] {quantity?}": ["difficulty", "soul", "quantity"]
         }[syntax];
         if (!required) return "Input syntax is not supported.";
+        if (syntax === "{difficulty} {predicate} [{soul}] {quantity?}" && /\[\{(?:difficulty|soul|quantity)\}\]/u.test(output)) return "Output placeholders must not use input list brackets.";
         if (syntax === "{difficulty} [{crest}] {predicate} {quantity?}" && /\[\{(?:difficulty|crest|quantity)\}\]/u.test(output)) return "Output placeholders must not use input list brackets.";
         if (syntax === "{difficulty} [{crest?}] {predicate}" && /\[\{(?:difficulty|crest)\}\]/u.test(output)) return "Output placeholders must not use input list brackets.";
         if (syntax === "{difficulty} [{method}] {predicate}" && /\[\{(?:difficulty|method)\}\]/u.test(output)) return "Output placeholders must not use input list brackets.";

@@ -49,7 +49,11 @@ internal sealed class PublishingJournal
     public string? IntendedTree { get; set; }
     public string? Commit { get; set; }
     public string? Message { get; set; }
+    public JsonElement? PreparationReport { get; set; }
 }
+
+// Completed display data only, outside Candidate and outside its file inventory.
+internal sealed record PublishingPreparationReport(string CandidateId, Guid Preparation, MapPreflightView Report);
 
 internal sealed class PublishingStorage : IDisposable
 {
@@ -70,6 +74,8 @@ internal sealed class PublishingStorage : IDisposable
         Directory.CreateDirectory(Staging);
     }
     public static string Hash(byte[] bytes) => Convert.ToHexStringLower(SHA256.HashData(bytes));
+    internal static string CandidateIdentity(PublishingJournal journal) => Hash(JsonSerializer.SerializeToUtf8Bytes(new
+    { journal.Configuration, journal.BaseCommit, journal.Renderer, Files = journal.Files.OrderBy(x => x.Key, StringComparer.Ordinal), journal.Removed }));
     public static string FileHash(string path)
     {
         using var stream = OpenFileForHash(path);
@@ -192,7 +198,11 @@ internal sealed class PublishingStorage : IDisposable
         foreach (var relative in retained.Files.Keys.Concat(retained.Removed).Concat(retained.Preimages.Keys))
             ValidateRelativePath(relative);
     }
-    public void Atomic(string path, byte[] bytes)
+    public void Atomic(string path, byte[] bytes) => Atomic(path, bytes, generatedCandidate: false);
+
+    internal void AtomicGeneratedCandidate(string path, byte[] bytes) => Atomic(path, bytes, generatedCandidate: true);
+
+    private void Atomic(string path, byte[] bytes, bool generatedCandidate)
     {
         var timing = Timing;
         var started = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -203,12 +213,23 @@ internal sealed class PublishingStorage : IDisposable
         path = Path.GetFullPath(path);
         if (!path.StartsWith(Root + Path.DirectorySeparatorChar, StringComparison.Ordinal))
             throw new PublishingBlock("A publication write destination is outside Publishing's owned workspace. No write is authorized to that destination. Keep Staging/current.json and generated files; have the application maintainer correct destination ownership before continuing.");
+        if (generatedCandidate)
+        {
+            var candidatePrefix = Candidate + Path.DirectorySeparatorChar;
+            if (path.Length <= candidatePrefix.Length || !path.StartsWith(candidatePrefix, StringComparison.Ordinal))
+                throw new PublishingBlock("A generated documentation write destination is not inside this workspace's Staging/Candidate. No write is authorized to that destination. Keep retained publishing evidence; have the application maintainer correct destination ownership before continuing.");
+        }
         CheckPath(path, Path.GetRelativePath(Root, path).Replace('\\', '/'));
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         // Scratch belongs to this explicit storage instance, never a destination
         // sibling or part of Candidate. Collisions fail without opening old bytes.
-        CheckPath(Staging, "Staging");
-        Directory.CreateDirectory(Staging);
+        if (!generatedCandidate)
+        {
+            CheckPath(Staging, "Staging");
+            Directory.CreateDirectory(Staging);
+        }
+        // For generated descendants, the checked parent creation already establishes
+        // Staging. The scratch walk below still checks it before the exclusive open.
         temporary = Path.Combine(Staging, Guid.NewGuid().ToString("N"));
         CheckPath(temporary, "Staging/" + Path.GetFileName(temporary));
         success = true;

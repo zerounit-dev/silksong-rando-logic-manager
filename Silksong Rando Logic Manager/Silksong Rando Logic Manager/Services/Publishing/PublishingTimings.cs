@@ -12,6 +12,8 @@ public sealed record PublishingTiming(Guid Operation, long Sequence, string Stag
     public double? LayoutMs { get; init; }
     public double? FontMetricsMs { get; init; }
     public double? ResizeMs { get; init; }
+    public double? SharedBackgroundDrawMs { get; init; }
+    public double? SharedFrameDrawMs { get; init; }
     public double? SceneDrawMs { get; init; }
     public double? ConnectionsDrawMs { get; init; }
     public double? ChecksDrawMs { get; init; }
@@ -48,6 +50,10 @@ public sealed record PublishingTiming(Guid Operation, long Sequence, string Stag
     public double? AfterReadMs { get; init; }
     public double? ResponseBuildMs { get; init; }
     public double? ProjectionMs { get; init; }
+    public double? RoomLoadMs { get; init; }
+    public double? GroupLoadMs { get; init; }
+    public double? AreaMapLoadMs { get; init; }
+    public double? JsonSerializationMs { get; init; }
     public long? Attempts { get; init; }
     public long? Labels { get; init; }
     public long? Candidates { get; init; }
@@ -63,11 +69,13 @@ public sealed record PublishingTiming(Guid Operation, long Sequence, string Stag
 
 internal enum PublishingMetric
 {
-    Font, Decode, Geometry, Layout, FontMetrics, Resize, SceneDraw, ConnectionsDraw, ChecksDraw,
+    Font, Decode, Geometry, Layout, FontMetrics, Resize, SharedBackgroundDraw, SharedFrameDraw,
+    SceneDraw, ConnectionsDraw, ChecksDraw,
     SceneEncode, ConnectionsEncode, ChecksEncode, RawRead, Markdown, Master, TextEncoding,
     AtomicPrepare, Write, Flush, Close, Recheck, Move, LifecycleWait, PublicationWait, Backup,
     CaptureCopy, CaptureFlush, CaptureValidation, Load, Validation, Hashing, Inventory, Review,
-    Save, Cleanup, Authorization, GateWait, GitOpen, BeforeRead, AfterRead, ResponseBuild, Projection
+    Save, Cleanup, Authorization, GateWait, GitOpen, BeforeRead, AfterRead, ResponseBuild, Projection,
+    RoomLoad, GroupLoad, AreaMapLoad, JsonSerialization
 }
 
 public sealed class PublishingTimings
@@ -177,6 +185,7 @@ internal sealed class PublishingTimingScope : IDisposable
         {
             FontMs = M(PublishingMetric.Font), DecodeMs = M(PublishingMetric.Decode), GeometryMs = M(PublishingMetric.Geometry),
             LayoutMs = M(PublishingMetric.Layout), FontMetricsMs = M(PublishingMetric.FontMetrics), ResizeMs = M(PublishingMetric.Resize),
+            SharedBackgroundDrawMs = M(PublishingMetric.SharedBackgroundDraw), SharedFrameDrawMs = M(PublishingMetric.SharedFrameDraw),
             SceneDrawMs = M(PublishingMetric.SceneDraw), ConnectionsDrawMs = M(PublishingMetric.ConnectionsDraw), ChecksDrawMs = M(PublishingMetric.ChecksDraw),
             SceneEncodeMs = M(PublishingMetric.SceneEncode), ConnectionsEncodeMs = M(PublishingMetric.ConnectionsEncode), ChecksEncodeMs = M(PublishingMetric.ChecksEncode),
             RawReadMs = M(PublishingMetric.RawRead), MarkdownMs = M(PublishingMetric.Markdown), MasterMs = M(PublishingMetric.Master), TextEncodingMs = M(PublishingMetric.TextEncoding),
@@ -186,6 +195,8 @@ internal sealed class PublishingTimingScope : IDisposable
             LoadMs = M(PublishingMetric.Load), ValidationMs = M(PublishingMetric.Validation), HashingMs = M(PublishingMetric.Hashing), InventoryMs = M(PublishingMetric.Inventory), ReviewMs = M(PublishingMetric.Review),
             SaveMs = M(PublishingMetric.Save), CleanupMs = M(PublishingMetric.Cleanup), AuthorizationMs = M(PublishingMetric.Authorization), GateWaitMs = M(PublishingMetric.GateWait),
             GitOpenMs = M(PublishingMetric.GitOpen), BeforeReadMs = M(PublishingMetric.BeforeRead), AfterReadMs = M(PublishingMetric.AfterRead), ResponseBuildMs = M(PublishingMetric.ResponseBuild), ProjectionMs = M(PublishingMetric.Projection),
+            RoomLoadMs = M(PublishingMetric.RoomLoad), GroupLoadMs = M(PublishingMetric.GroupLoad),
+            AreaMapLoadMs = M(PublishingMetric.AreaMapLoad), JsonSerializationMs = M(PublishingMetric.JsonSerialization),
             Attempts = Attempts, Labels = Labels, Candidates = Candidates, Files = Files, Bytes = Bytes, InputBytes = InputBytes, OutputBytes = OutputBytes,
             BeforeLines = BeforeLines, AfterLines = AfterLines, FailedSpans = FailedSpans, SkipReason = SkipReason
         };
