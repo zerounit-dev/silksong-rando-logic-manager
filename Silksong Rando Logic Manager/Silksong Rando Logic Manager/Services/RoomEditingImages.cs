@@ -220,7 +220,7 @@ internal sealed class RoomEditingImages(SceneImageCaptureService captures, Scene
         return new(entry.Identity.RoomId, [entry.Identity.RoomId], admission.SharedPlan!.Advances, RoomProjectionFamilies.None,
             (admission.BoundsChanged ? Wire.RoomSceneConcerns.Canvas | Wire.RoomSceneConcerns.Viewport : Wire.RoomSceneConcerns.None)
                 | Wire.RoomSceneConcerns.BoundsImageAction | Wire.RoomSceneConcerns.ImageDisplay,
-            new([], [], [], [])) { SharedPlan = admission.SharedPlan };
+            new([], [], [], [], [])) { SharedPlan = admission.SharedPlan };
     }
 
     public async Task CollectAsync(RoomEditingTracker.Entry entry)

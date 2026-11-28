@@ -73,9 +73,9 @@ public partial class RoomWorkspaceEditor
             for (var i = 0; i < numbers.Length; i++) coordinateDraft[MetadataFields[i + 1]] = Number(numbers[i]);
         }
         coordinateInitial.Clear(); foreach (var pair in coordinateDraft) coordinateInitial.Add(pair.Key, pair.Value);
-        var kind = row switch { RoomSubroomRow => "subroom", RoomTransitionRow => "transition", RoomConnectionRow => "connection", RoomCheckRow => "check", _ => throw new InvalidOperationException() };
+        var kind = row switch { RoomSubroomRow => "subroom", RoomExplanationRow => "explanation", RoomTransitionRow => "transition", RoomConnectionRow => "connection", RoomCheckRow => "check", _ => throw new InvalidOperationException() };
         localReturnFocus = $"v2-{kind}-{(action == RoomRowAction.Geometry ? "geometry" : action == RoomRowAction.Metadata ? "metadata" : "open-delete")}-{row.EntityId:D}";
-        localModal = new(action, row, null, row switch { RoomSubroomRow r => r.Values.FriendlyName, RoomTransitionRow r => r.Values.FriendlyName, RoomConnectionRow r => r.Values.FriendlyName, RoomCheckRow r => r.Values.FriendlyName, _ => throw new InvalidOperationException() }); localModalPending = true; StateHasChanged();
+        localModal = new(action, row, null, row switch { RoomSubroomRow r => r.Values.FriendlyName, RoomExplanationRow r => r.Values.FriendlyName, RoomTransitionRow r => r.Values.FriendlyName, RoomConnectionRow r => r.Values.FriendlyName, RoomCheckRow r => r.Values.FriendlyName, _ => throw new InvalidOperationException() }); localModalPending = true; StateHasChanged();
         return Task.CompletedTask;
     }
     private void OpenRoomDelete()
@@ -128,6 +128,7 @@ public partial class RoomWorkspaceEditor
             operation = row switch
             {
                 RoomSubroomRow r when r.LastConfirmed is { IsArchived: true } observation => new DeleteRoomSubroom(observation),
+                RoomExplanationRow r when r.LastConfirmed is { IsArchived: true } observation => new DeleteRoomExplanation(observation),
                 RoomTransitionRow r when r.LastConfirmed is { IsArchived: true } observation => new DeleteRoomTransition(observation),
                 RoomConnectionRow r when r.LastConfirmed is { IsArchived: true } observation => new DeleteRoomConnection(observation),
                 RoomCheckRow r when r.LastConfirmed is { IsArchived: true } observation => new DeleteRoomCheck(observation),
@@ -181,7 +182,7 @@ public partial class RoomWorkspaceEditor
         StateHasChanged(); await DrainAsync();
     }
     private static string Number(double? value) => value?.ToString("R", CultureInfo.InvariantCulture) ?? "";
-    private static string ModalKind(LocalModal modal) => modal.Row switch { RoomSubroomRow => "subroom", RoomTransitionRow => "transition", RoomConnectionRow => "connection", RoomCheckRow => "check", _ => "room" };
+    private static string ModalKind(LocalModal modal) => modal.Row switch { RoomSubroomRow => "subroom", RoomExplanationRow => "explanation", RoomTransitionRow => "transition", RoomConnectionRow => "connection", RoomCheckRow => "check", _ => "room" };
     private string MetadataGameClass => localModal?.Row is RoomTransitionRow row && Silksong_Rando_Logic_Manager.Services.RoomPresentationRules.Text(row.Metadata.InGameId)
         && workspace.Transitions.Any(other => other.EntityId != row.EntityId && !other.IsArchived && Silksong_Rando_Logic_Manager.Services.RoomPresentationRules.Same(other.Metadata.InGameId, row.Metadata.InGameId)) ? "danger" : "";
     private void QueueLocalReturnFocus()

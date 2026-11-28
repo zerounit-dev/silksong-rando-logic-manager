@@ -21,11 +21,13 @@ internal sealed class PublishingMapPreflight(PreparedGraphEvidence evidence)
     private const string Rejected = "The canonical room graph was rejected; a complete graph is required.";
     private const string NoStarts = "No valid unconditional Spawn is assigned to a playable node.";
     private const string NoTranslation = "The shared requirement catalogue is invalid; canonical translation could not run.";
+    private const int UnusedExplanationRow = 3;
     internal static MapCheck[] NewChecks() =>
     [
         new("Invalid or incomplete logic", "Invalid Subroom Assignment", AssignmentDescription),
         new("Invalid or incomplete logic", "Unknown Prerequisite", "A rule asks the player to complete a check that isn’t defined in the map."),
         new("Invalid or incomplete logic", "Unreadable Rule", "A route or check has a blank or unreadable requirement, so we can’t tell when it’s usable."),
+        new("Invalid or incomplete logic", "Unused Explanation", "An explanation isn’t referenced by any requirement."),
         new("Progression and reachability", "Orphaned Node", "We mapped a spot but gave it no incoming link, and it isn’t a starting point or story arrival."),
         new("Progression and reachability", "Disconnected Island", "A group of spots links together, but there’s no way to reach the group from a starting point or story arrival, even with the locks ignored. The individual spots may all have incoming links, so Orphaned Node would miss them."),
         new("Progression and reachability", "Self-Lock", "A switch is behind its own lock. An alternate route that doesn’t require the switch is enough for this check to pass."),
@@ -100,10 +102,13 @@ internal sealed class PublishingMapPreflight(PreparedGraphEvidence evidence)
         void Add(FindingTitle title, string detail, Guid owner, IEnumerable<Guid>? related = null) =>
             findings.Add(Finding(evidence, title, detail, related is null ? [owner] : related.Prepend(owner)));
         static IEnumerable<Guid>? Related(Guid? id) => id is { } value ? [value] : null;
-        void Begin(int row) { findings.Clear(); publish(row, MapCheckStatus.Checking, null, null); }
-        void End(int row, string? unavailable = null) => publish(row,
+        // Keep the existing analysis slots stable across the extra advisory row.
+        static int ChecklistRow(int analysisSlot) => analysisSlot < UnusedExplanationRow ? analysisSlot : analysisSlot + 1;
+        void Begin(int row) { findings.Clear(); publish(ChecklistRow(row), MapCheckStatus.Checking, null, null); }
+        void Complete(int row, string? unavailable) => publish(row,
             findings.Count == 0 && unavailable is null ? MapCheckStatus.Pass : MapCheckStatus.Fail,
             findings.Count == 0 ? null : GroupFindings(findings), unavailable);
+        void End(int row, string? unavailable = null) => Complete(ChecklistRow(row), unavailable);
 
         Begin(0);
         foreach (var r in evidence.References.Where(r => r.Kind == PreparedReferenceKind.Node && r.HardFailure is null))
@@ -134,6 +139,22 @@ internal sealed class PublishingMapPreflight(PreparedGraphEvidence evidence)
                     Add(RecordTitle(rule.Kind, rule.RecordId, rule.RoomRecordId), $"Exact prerequisite '{id}' is not unique.", rule.RoomRecordId, identities[id].Select(l => l.Room.RoomRecordId));
         }
         End(2, evidence.TranslationAvailable ? null : NoTranslation);
+
+        findings.Clear();
+        publish(UnusedExplanationRow, MapCheckStatus.Checking, null, null);
+        if (evidence.TranslationAvailable)
+        {
+            foreach (var explanation in evidence.Explanations)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (evidence.UsedExplanationRecordIds.Contains(explanation.RecordId)) continue;
+                var name = string.IsNullOrWhiteSpace(explanation.Name) ? "(blank name)" : explanation.Name;
+                var reference = string.IsNullOrWhiteSpace(explanation.Reference) ? "(blank)" : explanation.Reference;
+                Add(new(new($"{name} (Reference: {reference})"), "explanation", explanation.RecordId),
+                    "No requirement in this room has a recognized SEE attachment to this explanation.", explanation.RoomRecordId);
+            }
+        }
+        Complete(UnusedExplanationRow, evidence.TranslationAvailable ? null : NoTranslation);
 
         Begin(3);
         var seeds = new HashSet<string>(StringComparer.Ordinal);

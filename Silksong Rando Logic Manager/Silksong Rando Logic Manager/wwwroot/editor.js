@@ -1302,11 +1302,36 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
                }
                 return {space,normalize,roomsByReference,checksByName,checksByRoom,itemAliases,countableAliases,soulAliases,crestAliases,methodAliases,predicateAliasesByFirstToken,predicateAliases,sq1Predicates};
          };
-         const compileRequirementsLookups = context => ({
-             ...compileRequirementView(context,legacySpace,identify),
-             server:(context.predicates||[]).some(predicate=>predicate.inputSyntax===sq1Syntax)
-                 ?compileRequirementView(context,serverSpace,identifyServer):null
-         });
+          // Match the server's trimmed ordinal-ignore-case policy, not the
+          // requirement vocabulary's punctuation-insensitive identification.
+          const explanationKey = text => {
+              const {start,end}=trimRange(text,0,text.length,serverSpace);
+              let key="";
+              for(const rune of text.slice(start,end)){
+                  const code=rune.codePointAt(0),upper=rune.toUpperCase();
+                  if((code>=0x1f80&&code<=0x1f87)||(code>=0x1f90&&code<=0x1f97)||(code>=0x1fa0&&code<=0x1fa7))
+                      key+=String.fromCodePoint(code+8);
+                  else if(code===0x1fb3||code===0x1fc3||code===0x1ff3)key+=String.fromCodePoint(code+9);
+                  else key+=[...upper].length!==1||(code>127&&upper.codePointAt(0)<128)?rune:upper;
+              }
+              return key;
+          };
+          const compileRequirementsLookups = context => {
+              const server=(context.predicates||[]).some(predicate=>predicate.inputSyntax===sq1Syntax)
+                  ?compileRequirementView(context,serverSpace,identifyServer):null;
+              let postfixView=server;
+              return {
+                  ...compileRequirementView(context,legacySpace,identify),
+                  explanationRoom:context.explanationRoomId?.toLowerCase(),
+                  explanationCounts:(context.explanationReferences||[]).reduce((counts,reference)=>{
+                      const key=explanationKey(reference);
+                      if(key)counts.set(key,(counts.get(key)||0)+1);
+                      return counts;
+                  },new Map()),
+                  server,
+                  postfixView:()=>postfixView??=compileRequirementView(context,serverSpace,identifyServer)
+              };
+          };
        let requirementsLookups=compileRequirementsLookups(requirementsContext);
         const friendlyNameEditor = field => field instanceof HTMLTextAreaElement && field.matches("[data-v2-friendly-name-space]");
         const renderFriendlyName = field => {
@@ -1350,23 +1375,46 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
         };
         const reconcileFriendlyNames = () => { if(!disposed)root.querySelectorAll("textarea[data-v2-friendly-name-space]").forEach(renderFriendlyName); };
       const setText = (node, text, cls = "") => { const span = document.createElement("span"); span.textContent = text; if (cls) span.className = cls; node.append(span); };
-        const parseRequirementsV2 = (source, roomId) => {
-            const ordinary=parseRequirementsV2WithSpace(source,roomId,legacySpace);
-            if(!ordinary.boundaryDifference)return ordinary;
-            // Only an actual divergent expression boundary can require another walk.
-            // If neither walk finds SQ1, retain the legacy expression result.
-            const server=parseRequirementsV2WithSpace(source,roomId,serverSpace);
-            return ordinary.usedSq1||server.usedSq1?server:ordinary;
-        };
-        const parseRequirementsV2WithSpace = (source, roomId, expressionSpace) => {
-          const spans=[], add=(text,cls="")=>spans.push([text,cls]); let danger=false, at=0;
-          const serverView=requirementsLookups.server,hasSq1=!!serverView?.sq1Predicates.length;
-          let usedSq1=false,boundaryDifference=false;
-         const mark=(text,cls="requirements-malformed")=>{danger=true;add(text,cls);};
           const codePointBefore=(text,index)=>{if(index<=0)return "";const trailing=text.charCodeAt(index-1),leading=index>1?text.charCodeAt(index-2):0,start=trailing>=0xDC00&&trailing<=0xDFFF&&leading>=0xD800&&leading<=0xDBFF?index-2:index-1;return text.slice(start,index);};
           const codePointAt=(text,index)=>index>=text.length?"":String.fromCodePoint(text.codePointAt(index));
           const identifierCodePoint=value=>/[\p{L}\p{Nd}]/u.test(value);
-          const wordAt=(word,index)=>source.slice(index,index+word.length)===word&&!identifierCodePoint(codePointBefore(source,index))&&!identifierCodePoint(codePointAt(source,index+word.length));
+          const wordAtIn=(text,word,index)=>text.slice(index,index+word.length)===word&&!identifierCodePoint(codePointBefore(text,index))&&!identifierCodePoint(codePointAt(text,index+word.length));
+         const parseRequirementsV2 = (source, roomId, archivedLookups=null) => {
+             const seePositions=[];
+             for(let at=source.indexOf("SEE");at>=0;at=source.indexOf("SEE",at+3))
+                 if(wordAtIn(source,"SEE",at))seePositions.push(at);
+             let ordinary,postfix;
+             const exposesSee = ({opaque}) => {
+                 let range=0;
+                 return seePositions.some(at=>{
+                     while(range<opaque.length&&opaque[range].end<=at)range++;
+                     return range===opaque.length||opaque[range].start>at||opaque[range].end<at+3;
+                 });
+             };
+             if(seePositions.length){
+                 postfix=parseRequirementsV2WithSpace(source,roomId,serverSpace,true,true,archivedLookups);
+                 if(exposesSee(postfix)){
+                     if(!postfix.sawSee)postfix.danger=true;
+                     return postfix;
+                 }
+                 ordinary=parseRequirementsV2WithSpace(source,roomId,legacySpace,false,true,archivedLookups);
+                 // A plausible legacy dependency name is not proof of an
+                 // opaque keyword. A disagreement cannot authorize fallback.
+                 if(exposesSee(ordinary))return {...postfix,danger:true};
+             }else ordinary=parseRequirementsV2WithSpace(source,roomId,legacySpace);
+            if(!ordinary.boundaryDifference)return ordinary;
+            // Only an actual divergent expression boundary can require another walk.
+            // If neither walk finds SQ1, retain the legacy expression result.
+             const server=parseRequirementsV2WithSpace(source,roomId,serverSpace,false,seePositions.length>0,archivedLookups);
+             if(!ordinary.usedSq1&&!server.usedSq1)return ordinary;
+             return postfix&&exposesSee(server)?{...postfix,danger:true}:server;
+        };
+         const parseRequirementsV2WithSpace = (source, roomId, expressionSpace, seeMode=false, trackOpaque=false, archivedLookups=null) => {
+           const spans=[], attachments=[], opaque=[], add=(text,cls="")=>spans.push([text,cls]); let danger=false, at=0, stopped=false;
+          const serverView=requirementsLookups.server,hasSq1=!!serverView?.sq1Predicates.length;
+          let usedSq1=false,boundaryDifference=false,sawSee=false;
+         const mark=(text,cls="requirements-malformed")=>{danger=true;add(text,cls);};
+          const wordAt=(word,index)=>wordAtIn(source,word,index);
                 const syntax = { only:"{predicate}", optional:"{difficulty?} {predicate}", required:"{difficulty} {predicate}", direction:"{predicate} [{direction}]", optionalDirection:"{predicate} [{direction?}]", item:"{predicate} {item}", check:"{predicate} {check}", quantity:"{predicate} {quantity}", difficultySoul:"{difficulty} {predicate} [{soul}]", soul:"{predicate} [{soul}]", countable:"{predicate} {quantity} {countable}", countableFirst:"{predicate} {countable} {quantity}", crestDirection:"[{crest}] {predicate} {direction}", difficultyCrest:"{difficulty} [{crest}] {predicate}", optionalCrestDirection:"[{crest?}] {predicate} {direction}", difficultyOptionalCrest:"{difficulty} [{crest?}] {predicate}", difficultyMethod:"{difficulty} [{method}] {predicate}" };
              const quantityShapes = ["{predicate} {quantity?}", "{predicate} [{direction}] {quantity?}", "{difficulty} {predicate} {quantity?}", "{difficulty} {predicate} {quantity}", "{difficulty} [{method}] {predicate} {quantity?}", "{predicate} [{direction?}] {quantity?}", "{difficulty} [{crest}] {predicate} {quantity?}", sq1Syntax];
             const requiredOperandShapes = ["{predicate} [{method}]", "{difficulty} {predicate} [{direction}]"];
@@ -1402,7 +1450,6 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
             const trimText = (text,space) => {const range=trimRange(text,0,text.length,space);return text.slice(range.start,range.end);};
             const argumentStart = (text,prefixEnd,space) => {while(prefixEnd<text.length&&space(text[prefixEnd]))prefixEnd++;return prefixEnd;};
           const scoped = (raw,prefixEnd,space) => { const rest=raw.slice(argumentStart(raw,prefixEnd,space)), words=[]; for(let index=0;index<rest.length;){const word=wordAtIn(rest,"IN",index)?"IN":wordAtIn(rest,"THE",index)?"THE":wordAtIn(rest,"GLOBAL",index)?"GLOBAL":null;if(word){words.push({word,index});index+=word.length;}else index++;} if(words.some(x=>x.word==="GLOBAL"))return { state:"unknown" }; if(words.length===0)return { state:"local", name:rest }; if(words.length!==1)return { state:"malformed" }; const qualifier=words[0]; if(qualifier.word==="THE"&&qualifier.index===0)return trimText(rest.slice(3),space)?{state:"the",name:rest.slice(argumentStart(rest,3,space)),qualifier}:{state:"malformed"}; if(qualifier.word==="IN"&&qualifier.index>0&&trimText(rest.slice(qualifier.index+2),space))return {state:"in",name:rest.slice(0,trimRange(rest,0,qualifier.index,space).end),room:rest.slice(argumentStart(rest,qualifier.index+2,space)),qualifier}; return {state:"malformed"}; };
-          const wordAtIn=(text,word,index)=>text.slice(index,index+word.length)===word&&!identifierCodePoint(codePointBefore(text,index))&&!identifierCodePoint(codePointAt(text,index+word.length));
            const validListStructure = (text,space=legacySpace) => {
               let opening=-1;
               for(let index=0;index<text.length;index++){
@@ -1414,7 +1461,7 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
                        if(entries.some(entry=>space===legacySpace?!entry.trim():trimRange(entry,0,entry.length,space).start===entry.length))return false;
                       opening=-1;
                   }else if(character===","&&opening<0)return false;
-                  else if(opening>=0&&(character==="("||character===")"||wordAtIn(text,"AND",index)||wordAtIn(text,"OR",index)))return false;
+                   else if(opening>=0&&(character==="("||character===")"||wordAtIn(text,"AND",index)||wordAtIn(text,"OR",index)||wordAtIn(text,"SEE",index)))return false;
               }
               return opening<0;
           };
@@ -1664,14 +1711,30 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
                  }
                  return false;
              };
-             const atom = original => {
-                 const legacyView=requirementsLookups;
-                 const render = ({range},outcome,view,diagnosis) => {
+                const canAttach = ({complete}) => complete.length===1
+                    &&(complete[0].type!=="dependency"||complete[0].resolved);
+                let atomCanAnnotate=false;
+                const atom = original => {
+                  const legacyView=requirementsLookups;
+                  const render = (analysis,outcome,view,diagnosis,sq1=null) => {
+                     if(trackOpaque){
+                         // Archived legacy paint intentionally lacks dependency
+                         // facts, but proving opacity still requires a real atom.
+                         const actual=view.space===legacySpace?archivedLookups:archivedLookups?.server;
+                         atomCanAnnotate=canAttach(!seeMode&&actual
+                             ?describeAtom(analysis,actual,sq1):outcome);
+                     }
+                     const {range}=analysis;
                     if(range.start)add(original.slice(0,range.start));
                     const raw=original.slice(range.start),{complete}=outcome;
-                    if(complete.length===1){
-                        const candidate=complete[0];
-                        if(candidate.type==="dependency")renderDependency(raw,candidate,view.space);
+                     if(complete.length===1){
+                         const candidate=complete[0];
+                         if(candidate.type==="dependency"){
+                             // Clearing both room and check lookups makes every
+                             // dependency argument unresolved for archive paint.
+                             renderDependency(raw,seeMode&&archivedLookups
+                                 ?{...candidate,className:"requirements-unresolved"}:candidate,view.space);
+                         }
                         else if(candidate.type==="non-check")renderNonCheck(raw,candidate);
                         else add(raw);
                         return true;
@@ -1680,13 +1743,24 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
                      mark(raw,diagnosis);
                      return false;
                  };
-                 const sharedDiagnosis = (outcome,pair,guidance) => {
+                  const sharedDiagnosis = (outcome,pair,guidance) => {
                      if(outcome.structuralFailure||outcome.malformedScope)return "requirements-malformed";
                      if(outcome.forbiddenGlobal)return "requirements-unknown";
                      if(pair)return "requirements-malformed";
                      if(guidance||outcome.incomplete)return "requirements-incomplete";
-                     return outcome.rejectedAllocation?"requirements-malformed":"requirements-unknown";
-                 };
+                      return outcome.rejectedAllocation?"requirements-malformed":"requirements-unknown";
+                  };
+                  if(seeMode){
+                      // Use one server-space assessment for both operand
+                      // completion and paint. Legacy guidance cannot veto it.
+                      const view=requirementsLookups.postfixView(),analysis=analyzeAtom(original,view);
+                      const sq1=analysis.cuts.length>=minSoulQuantityCuts
+                          ?operandCandidates(analysis,view,view.sq1Predicates,false):null;
+                      const outcome=describeAtom(analysis,view,sq1);
+                      render(analysis,outcome,view,sharedDiagnosis(outcome,
+                          !outcome.complete.length&&adjacentCompleteOperands(analysis,view),false));
+                       return canAttach(outcome);
+                  }
                  const server=hasSq1?analyzeAtom(original,serverView):null;
                  const sq1=server?.cuts.length>=minSoulQuantityCuts?operandCandidates(server,serverView,serverView.sq1Predicates,false):null;
                  // Eligibility is independent of the winning diagnostic. A proven
@@ -1695,7 +1769,7 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
                  if(sq1?.complete.length||pair){
                      usedSq1=true;
                      const outcome=describeAtom(server,serverView,sq1);
-                     return render(server,outcome,serverView,sharedDiagnosis(outcome,pair,false));
+                      return render(server,outcome,serverView,sharedDiagnosis(outcome,pair,false),sq1);
                  }
                  const legacy=analyzeAtom(original,legacyView);
                  const outcome=describeAtom(legacy,legacyView,null);
@@ -1704,7 +1778,7 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
                      const diagnosis=sharedDiagnosis(shared,false,true);
                      if(!shared.complete.length&&diagnosis==="requirements-incomplete"){
                          usedSq1=true;
-                         return render(server,shared,serverView,diagnosis);
+                          return render(server,shared,serverView,diagnosis,sq1);
                      }
                  }
                  // Preserve the historical precedence for standalone older forms.
@@ -1713,8 +1787,10 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
                      !outcome.complete.length&&adjacentCompleteOperands(legacy,legacyView)?"requirements-malformed":"requirements-unknown";
                  return render(legacy,outcome,legacyView,diagnosis);
              };
-        const expression=(end=false,depth=0)=>{let expect=true, operators=new Set(), lastKnown=false, saw=false, lastOperator=null;
-           while(at<source.length){
+         const expression=(end=false,depth=0,recognition={})=>{
+            let expect=true, operators=new Set(), lastKnown=false, saw=false, lastOperator=null, attachable=false, attached=false, annotated=false, complete=true;
+            let operandStart=0, operandEnd=0;
+            while(at<source.length){
              const gapStart=at;
              if(hasSq1&&expressionSpace===legacySpace&&!boundaryDifference&&(legacySpace(source[at])||serverSpace(source[at]))){
                  let next=at,different=false;
@@ -1722,19 +1798,111 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
                      if(legacySpace(source[next])!==serverSpace(source[next]))different=true;
                      next++;
                  }
-                 boundaryDifference=different&&(next===source.length||source[next]==="("||source[next]===")"||wordAt("AND",next)||wordAt("OR",next));
-             }
-             while(at<source.length&&expressionSpace(source[at]))at++;
+                  boundaryDifference=different&&(next===source.length||source[next]==="("||source[next]===")"||wordAt("AND",next)||wordAt("OR",next));
+              }
+               while(at<source.length&&expressionSpace(source[at]))at++;
              const gap=source.slice(gapStart,at);
              if(at===source.length){if(gap)add(gap);break;}
              const operator=wordAt("AND",at)?"AND":wordAt("OR",at)?"OR":null;
-             if(gap&&(operator||source[at]==="("||source[at]===")"))add(gap);
-             if(end&&source[at]===")"){if(expect){if(lastOperator!==null)spans[lastOperator][1]="requirements-malformed";mark(")");}else add(")",`requirements-paren-depth-${(depth - 1) % 4}`);at++;return !expect;} if(!end&&source[at]===")"){mark(")");at++;expect=false;continue;}
-            if(source[at]==="("){if(!expect&&lastKnown){const start=at++;let escaped=false,nested=false;while(at<source.length&&source[at]!==")"){if(source[at]==="\\")escaped=true;if(source[at]==="(")nested=true;at++;}if(at>=source.length||escaped||nested){mark(source.slice(start,at));return false;}add(source.slice(start,++at),"requirements-annotation");lastKnown=false;continue;}if(!expect){mark("(");at++;continue;}const opening=spans.length;add("(",`requirements-paren-depth-${depth % 4}`);at++;if(!expression(true,depth+1))spans[opening][1]="requirements-malformed";lastKnown=false;expect=false;saw=true;continue;}
-               if(operator){if(expect)mark(operator);else{operators.add(operator);lastOperator=spans.length;add(operator,operators.size>1?"requirements-malformed":"requirements-syntax");if(operators.size>1)danger=true;expect=true;}at+=operator.length;lastKnown=false;continue;}
-             const start=at;let bracketDepth=0;while(at<source.length){const character=source[at];if(bracketDepth===0&&(character==="("||character===")"||wordAt("AND",at)||wordAt("OR",at)))break;if(character==="[")bracketDepth++;if(character==="]")bracketDepth--;at++;}const raw=source.slice(start,at);if(!raw){if(gap)add(gap);at++;continue;}if(!expect){if(gap)add(gap);mark(raw);continue;}lastKnown=atom(source.slice(gapStart,at));expect=false;saw=true;}
+               const see=seeMode&&wordAt("SEE",at);
+              if(gap&&(operator||see||source[at]==="("||source[at]===")"))add(gap);
+               if(end&&source[at]===")"){if(expect){if(lastOperator!==null)spans[lastOperator][1]="requirements-malformed";mark(")");}else add(")",`requirements-paren-depth-${(depth - 1) % 4}`);at++;recognition.complete=!expect&&complete;return !expect;} if(!end&&source[at]===")"){mark(")");at++;expect=false;attachable=complete=false;if(seeMode)lastKnown=false;else atomCanAnnotate=false;continue;}
+              if(source[at]==="("){
+                   if(!expect&&!annotated&&(seeMode?attachable:lastKnown)){
+                      const start=at++;
+                      let escaped=false,nested=false;
+                      while(at<source.length&&source[at]!==")"){
+                          if(source[at]==="\\")escaped=true;
+                          if(source[at]==="(")nested=true;
+                          at++;
+                      }
+                       if(at>=source.length||escaped||nested){
+                           mark(source.slice(start,at));stopped=seeMode;return false;
+                       }
+                       const text=source.slice(start,++at);
+                       if(trackOpaque&&atomCanAnnotate)opaque.push({start,end:at});
+                       add(text,"requirements-annotation");
+                      operandEnd=at;lastKnown=false;annotated=true;continue;
+                  }
+                   if(!expect){
+                       mark("(");at++;attachable=complete=atomCanAnnotate=false;
+                       if(seeMode){stopped=true;return false;}
+                       continue;
+                   }
+                  const opening=spans.length,group={};operandStart=at;
+                  add("(",`requirements-paren-depth-${depth % 4}`);at++;
+                   if(!expression(true,depth+1,group))spans[opening][1]="requirements-malformed";
+                   if(stopped)return false;
+                  operandEnd=at;lastKnown=false;expect=false;saw=true;attachable=!!group.complete;
+                  annotated=true;complete&&=attachable;attached=false;continue;
+              }
+                if(operator){if(expect){mark(operator);complete=false;}else{operators.add(operator);lastOperator=spans.length;add(operator,operators.size>1?"requirements-malformed":"requirements-syntax");if(operators.size>1){danger=true;complete=false;}expect=true;}at+=operator.length;lastKnown=attachable=attached=false;continue;}
+               if(see){
+                   sawSee=true;
+                  at+=3;
+                  const start=at;
+                  let repeated=false, referenceDepth=0;
+                  while(at<source.length){
+                      const character=source[at];
+                      if(referenceDepth===0){
+                          if(character===")"||wordAt("AND",at)||wordAt("OR",at))break;
+                          if(wordAt("SEE",at))repeated=true;
+                      }
+                      if(character==="(")referenceDepth++;
+                      else if(character===")")referenceDepth--;
+                      at++;
+                  }
+                   const raw=source.slice(start,at),key=explanationKey(raw);
+                   if(expect||!attachable||attached||repeated||referenceDepth!==0||!key){mark("SEE"+raw);complete=false;}
+                   else{
+                       opaque.push({start,end:at});
+                      add("SEE","requirements-syntax");
+                      if(roomId?.toLowerCase()===requirementsLookups.explanationRoom&&requirementsLookups.explanationCounts.get(key)===1){
+                          const reference=trimRange(source,start,at,serverSpace);
+                          attachments.push({operandStart,operandEnd,suffixStart:start-3,reference});
+                          if(start<reference.start)add(source.slice(start,reference.start));
+                          for(let from=reference.start;from<reference.end;){
+                              const space=serverSpace(source[from]);
+                              let to=from+1;
+                              while(to<reference.end&&serverSpace(source[to])===space)to++;
+                              add(source.slice(from,to),space?"":"requirements-explanation-reference");
+                              from=to;
+                          }
+                          if(reference.end<at)add(source.slice(reference.end,at));
+                      }
+                      else{mark(raw,"requirements-unresolved");complete=false;}
+                  }
+                   expect=lastKnown=attachable=false;annotated=attached=saw=true;
+                  continue;
+              }
+               const start=at;let bracketDepth=0;
+               while(at<source.length){
+                   const character=source[at],suffix=seeMode&&wordAt("SEE",at);
+                   if(bracketDepth===0&&(character==="("||character===")"||wordAt("AND",at)||wordAt("OR",at)||suffix))break;
+                   if(suffix)sawSee=true; // Invalid list-entry attachment; the atom rejects it.
+                   if(character==="[")bracketDepth++;if(character==="]")bracketDepth--;at++;
+               }
+              const raw=source.slice(start,at);
+              if(!raw){if(gap)add(gap);at++;continue;}
+               if(!expect){if(gap)add(gap);mark(raw);attachable=complete=atomCanAnnotate=false;continue;}
+               lastKnown=atom(source.slice(gapStart,at));
+               attachable=seeMode&&lastKnown;
+               operandStart=start;operandEnd=trimRange(source,start,at,expressionSpace).end;
+              complete&&=attachable;annotated=attached=false;expect=false;saw=true;}
            if(end){if(lastOperator!==null)spans[lastOperator][1]="requirements-malformed";mark("", "requirements-malformed");return false;}if(expect&&saw){danger=true;if(lastOperator!==null)spans[lastOperator][1]="requirements-malformed";}return !expect;};
-          try { if(!source.trim()){add(source);return {spans,danger:false};} expression(); return {spans,danger,usedSq1,boundaryDifference}; } catch { throw new Error("Requirements highlighter failed."); }
+            try {
+                if(!source.trim()){add(source);return {spans,attachments,danger:false};}
+                expression();
+                // A malformed annotation may stop recognition. Keep the unwalked
+                // source visible without inventing further spans or eligibility.
+                 if(seeMode&&at<source.length)add(source.slice(at));
+                 // Candidate-mode paint is a partition of the original source.
+                 // If a renderer cannot preserve it, show the source, not a
+                 // broken overlay or attachment offsets for the broken paint.
+                 if(trackOpaque&&spans.map(([text])=>text).join("")!==source)
+                     return {spans:[[source,"requirements-malformed"]],attachments:[],opaque,danger:true,usedSq1,boundaryDifference,sawSee};
+                 return {spans,attachments,opaque,danger,usedSq1,boundaryDifference,sawSee};
+            } catch { throw new Error("Requirements highlighter failed."); }
       };
         const rawRequirements = (layer,value) => { const target=layer?.querySelector?.("[data-v2-requirements-highlight]");if(target){target.replaceChildren();target.textContent=value;}layer?.removeAttribute?.("data-v2-requirements-highlight-ready");layer?.classList?.remove("requirements-parser-danger");if(layer?.matches?.(".requirements-inline-layer"))layer.closest("td")?.classList.remove("requirements-parser-danger"); };
          // Successful presentation applicability only: no parse results or diagnostics
@@ -1759,11 +1927,14 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
              const source=target.textContent||"",savedContext=requirementsContext,savedLookups=requirementsLookups;
              try{
                  requirementsContext={...savedContext,rooms:[],checks:[]};
-                 const withoutChecks = view => ({...view,roomsByReference:new Map(),checksByName:new Map(),checksByRoom:new Map()});
-                 requirementsLookups={...withoutChecks(savedLookups),server:savedLookups.server&&withoutChecks(savedLookups.server)};
-                 target.replaceChildren();const result=parseRequirementsV2(source,null);
-                 for(const [text,cls] of result.spans)setText(target,text,cls);
-                 rememberRequirementPaint(target,target,source,null,savedLookups,true);
+                  const withoutChecks = view => ({...view,roomsByReference:new Map(),checksByName:new Map(),checksByRoom:new Map()});
+                  // Archived paint keeps its legacy cleared dependency lookups;
+                  // the retained postfix view still assesses actual candidates.
+                  requirementsLookups={...withoutChecks(savedLookups),server:savedLookups.server&&withoutChecks(savedLookups.server)};
+                  const roomId=target.dataset.v2RequirementsRoom??null;
+                    target.replaceChildren();const result=parseRequirementsV2(source,roomId,savedLookups);
+                  for(const [text,cls] of result.spans)setText(target,text,cls);
+                  rememberRequirementPaint(target,target,source,roomId,savedLookups,true);
              }catch{
                  target.replaceChildren();target.textContent=source;target.removeAttribute("data-v2-requirements-highlight-ready");target.classList.remove("requirements-parser-danger");target.closest("td")?.classList.remove("requirements-parser-danger");
              }finally{requirementsContext=savedContext;requirementsLookups=savedLookups;}
@@ -1793,7 +1964,7 @@ window.createV2ChildInteractionOwner = (root, initialRequirementsContext) => {
              });
              root.querySelectorAll(".requirements-preview").forEach(element=>{
                  const target=element.matches("[data-v2-requirements-highlight]")?element:element.querySelector("[data-v2-requirements-highlight]");
-                 if(target&&!requirementPaintApplies(target,target,target.textContent||"",null,true))renderArchivedRequirements(element);
+                  if(target&&!requirementPaintApplies(target,target,target.textContent||"",target.dataset.v2RequirementsRoom??null,true))renderArchivedRequirements(element);
              });
              root.querySelectorAll("textarea[data-v2-friendly-name-space]").forEach(field=>{
                  const paint=mountedPaint.get(field);

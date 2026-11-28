@@ -41,6 +41,9 @@ public sealed class RoomGraphExportService(IDbContextFactory<LogicDbContext> con
             .Select(x => new ItemRow(x.Id, x.Name, x.Category, x.OutputValue, x.Aliases, x.Notes, x.SortOrder)).ToListAsync(cancellationToken);
         var methods = await db.RequirementMethods.AsNoTracking().OrderBy(x => x.SortOrder).ThenBy(x => x.Id)
             .Select(x => new ItemRow(x.Id, x.Name, x.Category, x.OutputValue, x.Aliases, x.Notes, x.SortOrder)).ToListAsync(cancellationToken);
+        var explanationRows = await ExplanationReferenceReader.ActiveRows(db).OrderBy(x => x.SortOrder).ThenBy(x => x.Id)
+            .Select(x => new { x.Id, x.RoomId, Definition = new RoomGraphExplanation(x.ReferenceId, x.FriendlyName, x.Link, x.Notes) })
+            .ToArrayAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         publication?.Dispose();
 
@@ -48,13 +51,22 @@ public sealed class RoomGraphExportService(IDbContextFactory<LogicDbContext> con
         var typeLegend = RoomExportStructure.BuildTypeLegend(globalFailures, evidence);
         var catalogue = BuildCatalogue(predicates, items, countables, souls, crests, methods, globalFailures, evidence);
         var structure = RoomExportStructure.Project(snapshot, globalFailures, evidence);
+        var explanationsByRoom = explanationRows.ToLookup(x => x.RoomId, x => x.Definition);
         var context = catalogue is null ? null : new RoomGraphTranslationContext(catalogue.Predicates, catalogue.Items,
             structure.Rooms.Select(x => new RoomGraphRequirementRoom(x.Row.Id, x.Row.ReferenceId)).ToArray(),
             structure.Rooms.SelectMany(room => room.Locations.OrderBy(x => x.Row.SortOrder)
                 .ThenBy(x => CanonicalValue(x.Row.Name), StringComparer.Ordinal).ThenBy(x => x.Row.Id))
                 .Select(x => new RoomGraphRequirementCheck(x.Row.Id, x.Row.RoomId, x.Row.Name, string.IsNullOrEmpty(x.Id) ? null : x.Id)).ToArray(),
-            catalogue.Countables, catalogue.Souls, catalogue.Crests, catalogue.Methods);
-        if (evidence is not null) evidence.TranslationAvailable = context is not null;
+            catalogue.Countables, catalogue.Souls, catalogue.Crests, catalogue.Methods,
+            explanationRows.ToLookup(x => x.RoomId, x => x.Definition.Reference));
+        ILookup<(Guid RoomRecordId, string Reference), PreparedGraphExplanation>? preparedExplanations = null;
+        if (evidence is not null)
+        {
+            evidence.TranslationAvailable = context is not null;
+            evidence.Explanations = explanationRows.Select(x =>
+                new PreparedGraphExplanation(x.Id, x.RoomId, x.Definition.Name, x.Definition.Reference)).ToArray();
+            preparedExplanations = evidence.Explanations.ToLookup(x => (x.RoomRecordId, x.Reference));
+        }
         var groupsById = structure.Groups.ToDictionary(x => x.Row.Id);
         var preparedRooms = evidence is null ? null : new List<PreparedGraphRoom>();
         var rooms = structure.Rooms.Select(room =>
@@ -64,6 +76,15 @@ public sealed class RoomGraphExportService(IDbContextFactory<LogicDbContext> con
                 if (evidence is null || context is null) return Translate(raw, room.Row.Id, context);
                 var rule = new PreparedRuleEvidence();
                 var result = RoomGraphRequirementTranslator.Translate(raw, room.Row.Id, context, rule);
+                if (rule.RecognizedExplanationSuffixes.Count != 0)
+                {
+                    evidence.ExplanationSpans.Add((kind, id), rule.RecognizedExplanationSuffixes.Select(x => x.MaskSpan).ToArray());
+                    evidence.ExplanationSuffixes.Add((kind, id), rule.RecognizedExplanationSuffixes);
+                    // Recognition returns the exact authored Reference of the unique
+                    // match from these same frozen rows, even on an unreadable rule.
+                    foreach (var suffix in rule.RecognizedExplanationSuffixes)
+                        evidence.UsedExplanationRecordIds.Add(preparedExplanations![(room.Row.Id, suffix.Reference)].Single().RecordId);
+                }
                 if (rule.MissingChecks.Count != 0 || rule.ResolvedIds.Count != 0 || rule.UnreadableReasons.Count != 0)
                     evidence.Rules.Add(new(room.Row.Name, kind, name, id, rule, room.Row.Id));
                 return result;
@@ -92,7 +113,8 @@ public sealed class RoomGraphExportService(IDbContextFactory<LogicDbContext> con
             var group = room.Row.GroupId is { } groupId ? groupsById.GetValueOrDefault(groupId) : null;
             var projected = new RoomGraphRoom(room.Id, room.Row.Id.ToString("D", CultureInfo.InvariantCulture).ToLowerInvariant(), group?.Id ?? "",
                 room.Row.Name, room.Row.InGameId, room.Row.Contributors ?? "", room.Row.Comments ?? "",
-                room.Nodes.Select(x => new RoomGraphNode(x.Id, x.Name, x.Row?.Notes ?? "")).ToArray(), transitions, connections, locations);
+                room.Nodes.Select(x => new RoomGraphNode(x.Id, x.Name, x.Row?.Notes ?? "")).ToArray(),
+                explanationsByRoom[room.Row.Id].ToArray(), transitions, connections, locations);
             preparedRooms?.Add(new(projected, group is null ? null : !group.Row.IsVirtual,
                 room.Nodes.Where(x => x.Row is not null || x.Name == "room").Select(x => x.Id).ToHashSet(StringComparer.Ordinal),
                 room.Locations.Select(x => x.Row.Id).ToArray(), room.Row.Id));
@@ -100,13 +122,14 @@ public sealed class RoomGraphExportService(IDbContextFactory<LogicDbContext> con
         }).ToArray();
         if (evidence is not null) evidence.Rooms = preparedRooms!;
         if (structure.Failures.Count != 0) return RoomGraphExportResult.Failed(structure.Failures, structure.Warnings);
-        var document = new RoomGraphDocument(3, new("silksong-logic-manager-export", rooms.Length),
+        var document = new RoomGraphDocument(4, new("silksong-logic-manager-export", rooms.Length),
             structure.Groups.Select(x => x.Id!).ToArray(),
             structure.Groups.Where(x => !x.Row.IsVirtual).Select(x => x.Id!).ToArray(),
             structure.Groups.Where(x => x.Row.IsVirtual).Select(x => x.Id!).ToArray(),
             predicates.Select(x => new RoomGraphTranslationPredicate(x.Name, x.Category, x.InputSyntax, x.OutputSyntax, RequirementCatalogueLanguage.ParseAliases(x.Aliases), x.Notes)).ToArray(),
             items.Select(x => new RoomGraphTranslationItem(x.Name, x.Category, RequirementCatalogueLanguage.ParseAliases(x.Aliases), x.OutputValue, x.Notes)).ToArray(), typeLegend, rooms);
-        var content = RoomExportStructure.Serialize(document);
+        // JSON container depth is not a limit on the authored grammar.
+        var content = RoomExportStructure.Serialize(document, maxDepth: int.MaxValue);
         if (evidence is not null) evidence.Document = document;
         return RoomGraphExportResult.Success(content, structure.Warnings);
     }
@@ -117,7 +140,7 @@ public sealed class RoomGraphExportService(IDbContextFactory<LogicDbContext> con
         requirement.Mode == "unresolved" ? [.. structuralReasons, "requirement is unresolved"] : structuralReasons;
 
     private static RoomGraphRequirement Translate(string raw, Guid roomId, RoomGraphTranslationContext? context) => context is null
-        ? new(raw, "unresolved", [], ["requirement translation is unavailable because the shared catalogue configuration is invalid"])
+        ? new(raw, "unresolved", [], ["requirement translation is unavailable because the shared catalogue configuration is invalid"], null)
         : RoomGraphRequirementTranslator.Translate(raw, roomId, context);
 
     private static Catalogue? BuildCatalogue(IReadOnlyList<PredicateRow> predicateRows, IReadOnlyList<ItemRow> itemRows,

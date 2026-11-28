@@ -1,6 +1,7 @@
 /* Existing 4.5rem action column plus one existing-width 1.35rem slot. Only
    these client Room tables receive this scope, including their archived bands. */
 .logic-table.subroom-table .actions-column,
+.logic-table.explanation-table .actions-column,
 .logic-table.transition-table .actions-column,
 .logic-table.connection-table .actions-column,
 .logic-table.check-table:not(.v2-read-only-table) th.actions-heading,
@@ -9,4 +10,24 @@
 .logic-table td.row-actions {
     width: 5.85rem;
     min-width: 5.85rem;
+}
+
+.logic-table.explanation-table { --explanation-text-width: calc(100% - 7.30rem); }
+.explanation-table .row-actions .action-slot > a.icon-button {
+    border: 0;
+    font-size: .62rem;
+    text-decoration: none;
+}
+.logic-table.explanation-table .reorder-column { width: 1.45rem; }
+.logic-table.explanation-table .explanation-name-column { width: calc(.23 * var(--explanation-text-width)); }
+.logic-table.explanation-table .explanation-reference-column { width: calc(.16 * var(--explanation-text-width)); }
+.logic-table.explanation-table .explanation-link-column { width: calc(.25 * var(--explanation-text-width)); }
+.explanation-table [data-v2-explanation-grip] { cursor: grab; }
+.explanation-table [data-v2-explanation-grip]:active { cursor: grabbing; }
+.explanation-table tr.v2-explanation-drop-before > td { border-top: 2px solid var(--ui-drop-indicator); }
+.explanation-table.v2-explanation-drop-tail tbody::after {
+    display: table-row;
+    height: 0;
+    content: "";
+    box-shadow: inset 0 2px var(--ui-drop-indicator);
 }

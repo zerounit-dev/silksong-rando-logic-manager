@@ -104,14 +104,19 @@ internal static class LocalNamedReadReader
         {
             // The old missing path consumes child identity/owner, not child bodies,
             // referenced Groups or full document/order context. Preserve that boundary.
-            foreach (var family in new[] { "subrooms", "transitions", "connections", "checks" })
+            foreach (var family in new[] { "subrooms", "transitions", "connections", "checks", "explanations" })
                 _ = List(value, family, x => { Owner(x); return G(x, "id"); }, id => id);
-            return new(rooms, [], [], [], [], [], [], []);
+            return new(rooms, [], [], [], [], [], [], [], []);
         }
         var subrooms = List(value, "subrooms", x => {
             var owner = Owner(x); var s = P(x, "snapshot"); var v = P(s, "values"); var g = P(s, "geometry");
             return new LocalSubroomSource(owner, new(Row(P(s, "observation")), I(s, "sortOrder"), new(S(v, "friendlyName"), S(v, "referenceId"), N(v, "notes")),
                 new(ND(g, "x"), ND(g, "y"), ND(g, "width"), ND(g, "height"), B(g, "enableAnnotation"))));
+        }, x => x.Snapshot.Observation.EntityId);
+        var explanations = List(value, "explanations", x => {
+            var owner = Owner(x); var s = P(x, "snapshot"); var v = P(s, "values");
+            return new LocalExplanationSource(owner, new(Row(P(s, "observation")), I(s, "sortOrder"),
+                new(S(v, "friendlyName"), S(v, "referenceId"), S(v, "link"), S(v, "notes"))));
         }, x => x.Snapshot.Observation.EntityId);
         var transitions = List(value, "transitions", x => {
             var owner = Owner(x); var s = P(x, "snapshot"); var v = P(s, "values");
@@ -139,6 +144,6 @@ internal static class LocalNamedReadReader
         var groupId = rooms.Single().RoomGroupId;
         if (groups.Length != (groupId is null ? 0 : 1) || groups.SingleOrDefault()?.Id != groupId) throw Invalid();
         return new(rooms, subrooms, transitions, connections, checks, groups,
-            List(value, "roomOrder", x => x.GetGuid()), List(value, "groupOrder", x => x.GetGuid()));
+            List(value, "roomOrder", x => x.GetGuid()), List(value, "groupOrder", x => x.GetGuid()), explanations);
     }
 }

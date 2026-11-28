@@ -4,7 +4,7 @@ namespace SilksongRandoLogicManager.Contracts;
 
 // Receiver coverage only. Neither an existence assertion nor permission to write.
 public sealed record RoomReceiverInventory(ImmutableArray<Guid> Subrooms, ImmutableArray<Guid> Transitions,
-    ImmutableArray<Guid> Connections, ImmutableArray<Guid> Checks);
+    ImmutableArray<Guid> Connections, ImmutableArray<Guid> Checks, ImmutableArray<Guid> Explanations);
 public sealed record RoomAdmissionBaseline(RoomDocumentObservation Observation, RoomReceiverInventory Inventory);
 // Null Document is an authoritative targeted absence, not a retired client read.
 public sealed record RoomDocumentReadResponse(Guid RoomId, RoomCompleteDocument? Document);
@@ -26,7 +26,8 @@ public static class RoomEntryProtocol
             Ids(document.Subrooms.Select(x => x.Observation.EntityId)),
             Ids(document.Transitions.Select(x => x.Observation.EntityId)),
             Ids(document.Connections.Select(x => x.Observation.EntityId)),
-            Ids(document.Checks.Select(x => x.Observation.EntityId))));
+            Ids(document.Checks.Select(x => x.Observation.EntityId)),
+            Ids(document.Explanations.Select(x => x.Observation.EntityId))));
     }
 
     private static ImmutableArray<Guid> Ids(IEnumerable<Guid> ids) => ids.OrderBy(x => x).ToImmutableArray();
@@ -35,7 +36,7 @@ public static class RoomEntryProtocol
     {
         if (roomId == Guid.Empty || baseline is null || !RoomEditingIdentity.ValidObservation(baseline.Observation, roomId)
             || baseline.Inventory is not { } inventory) return false;
-        var families = new[] { inventory.Subrooms, inventory.Transitions, inventory.Connections, inventory.Checks };
+        var families = new[] { inventory.Subrooms, inventory.Transitions, inventory.Connections, inventory.Checks, inventory.Explanations };
         if (families.Any(x => x.IsDefault)) return false;
         var ids = families.SelectMany(x => x).ToArray();
         return ids.All(x => x != Guid.Empty && x != roomId) && ids.Distinct().Count() == ids.Length;
@@ -46,7 +47,8 @@ public static class RoomEntryProtocol
         && left.Inventory.Subrooms.SequenceEqual(right.Inventory.Subrooms)
         && left.Inventory.Transitions.SequenceEqual(right.Inventory.Transitions)
         && left.Inventory.Connections.SequenceEqual(right.Inventory.Connections)
-        && left.Inventory.Checks.SequenceEqual(right.Inventory.Checks);
+        && left.Inventory.Checks.SequenceEqual(right.Inventory.Checks)
+        && left.Inventory.Explanations.SequenceEqual(right.Inventory.Explanations);
 
     public static bool SameOpen(RoomOpenRequest left, RoomOpenRequest right) => left.Owner == right.Owner && ((left, right) switch
     {

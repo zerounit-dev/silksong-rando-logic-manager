@@ -15,9 +15,24 @@ public sealed partial class RoomWorkspace
         restored ??= revertedCreations;
         var document = confirmed.Document;
         if (document is null) return Materialize(Header, []);
+        var blockedIntent = blocked is null ? null : pending.SingleOrDefault(x => x.OperationId == blocked.OperationId);
+        // A blocked command keeps its draft and may leave an older confirmed
+        // snapshot in place. Missing evidence only withdraws the named receiver's action.
+        var blockedExplanationReceiver = blockedIntent?.Operation switch
+        {
+            SaveRoomExplanation x => x.EntityId,
+            SetRoomExplanationArchive x => x.EntityId,
+            ReorderRoomExplanation x => x.EntityId,
+            DeleteRoomExplanation x => x.ConfirmedArchivedRow.EntityId,
+            _ => (Guid?)null
+        };
+        var missingExplanation = blocked is { Disposition: RoomBlockedDisposition.MissingBlocked,
+            Evidence: RoomReloadRequiredEvidence { EntityId: { } missingId } } && missingId == blockedExplanationReceiver
+            ? (Guid?)missingId : null;
         var next = new List<RoomTableRow>();
         var header = document.Header.Values;
         var priorSubrooms = rows.OfType<RoomSubroomRow>().Where(x => x.EntityId is not null).ToDictionary(x => x.EntityId!.Value);
+        var priorExplanations = rows.OfType<RoomExplanationRow>().Where(x => x.EntityId is not null).ToDictionary(x => x.EntityId!.Value);
         var priorTransitions = rows.OfType<RoomTransitionRow>().Where(x => x.EntityId is not null).ToDictionary(x => x.EntityId!.Value);
         var priorConnections = rows.OfType<RoomConnectionRow>().Where(x => x.EntityId is not null).ToDictionary(x => x.EntityId!.Value);
         var priorChecks = rows.OfType<RoomCheckRow>().Where(x => x.EntityId is not null).ToDictionary(x => x.EntityId!.Value);
@@ -28,6 +43,14 @@ public sealed partial class RoomWorkspace
             var row = new RoomSubroomRow(prior?.ClientId ?? value.Observation.EntityId, prior?.Initial ?? value.Values)
             { EntityId = value.Observation.EntityId, LastConfirmed = value.Observation, IsArchived = value.Observation.IsArchived, Values = value.Values, Geometry = value.Geometry };
             next.Add(row);
+        }
+        foreach (var value in document.Explanations)
+        {
+            var prior = priorExplanations.GetValueOrDefault(value.Observation.EntityId);
+            next.Add(new RoomExplanationRow(prior?.ClientId ?? value.Observation.EntityId, prior?.Initial ?? value.Values)
+            { EntityId = value.Observation.EntityId, LastConfirmed = value.Observation, IsArchived = value.Observation.IsArchived,
+                Values = value.Values, ConfirmedLinkHref = value.Observation.EntityId == missingExplanation
+                    ? null : ExplanationRules.ParseLink(value.Values.Link)?.AbsoluteUri });
         }
         foreach (var value in document.Transitions)
         {
@@ -77,6 +100,7 @@ public sealed partial class RoomWorkspace
             {
                 case SaveRoomHeader x: header = RoomEditingMerge.Header(x.Origin.Original, x.Submitted, header, new(header, RoomConflictChoice.KeepSubmitted)).Values; break;
                 case CreateRoomSubroom x: Create(x.EntityId, RoomOrderSection.Subrooms, row => ((RoomSubroomRow)row).Values = x.Submitted, item); break;
+                case CreateRoomExplanation x: Create(x.EntityId, RoomOrderSection.Explanations, row => ((RoomExplanationRow)row).Values = x.Submitted, item); break;
                 case CreateRoomTransition x: Create(x.EntityId, RoomOrderSection.Transitions, row => ((RoomTransitionRow)row).Values = x.Submitted, item); break;
                 case CreateRoomConnection x: Create(x.EntityId, RoomOrderSection.Connections, row => ((RoomConnectionRow)row).Values = x.Submitted, item); break;
                 case ScaffoldRoomConnectionInverse x when Find<RoomConnectionRow>(x.SourceEntityId) is { } source:
@@ -87,6 +111,8 @@ public sealed partial class RoomWorkspace
                     Create(x.EntityId, original is { Enemies: true } ? RoomOrderSection.Enemies : RoomOrderSection.Checks, row => ((RoomCheckRow)row).Values = x.Submitted, item); break;
                 case SaveRoomSubroom x when Find<RoomSubroomRow>(x.EntityId) is { } r:
                     r.Values = RoomEditingMerge.Subroom(x.Origin.Original, x.Submitted, r.Values, new(r.Values, RoomConflictChoice.KeepSubmitted)).Values; break;
+                case SaveRoomExplanation x when Find<RoomExplanationRow>(x.EntityId) is { } r:
+                    r.Values = RoomEditingMerge.Explanation(x.Origin.Original, x.Submitted, r.Values, new(r.Values, RoomConflictChoice.KeepSubmitted)).Values; break;
                 case SaveRoomTransition x when Find<RoomTransitionRow>(x.EntityId) is { } r:
                     r.Values = RoomEditingMerge.Transition(x.Origin.Original, x.Submitted, r.Values, new(r.Values, RoomConflictChoice.KeepSubmitted)).Values; break;
                 case SaveRoomConnection x when Find<RoomConnectionRow>(x.EntityId) is { } r:
@@ -126,20 +152,23 @@ public sealed partial class RoomWorkspace
                     }
                     break;
                 case SetRoomSubroomArchive x: Archive(x.EntityId, x.Archived); break;
+                case SetRoomExplanationArchive x: Archive(x.EntityId, x.Archived); break;
                 case SetRoomTransitionArchive x: Archive(x.EntityId, x.Archived); break;
                 case SetRoomConnectionArchive x: Archive(x.EntityId, x.Archived); break;
                 case SetRoomCheckArchive x: Archive(x.EntityId, x.Archived); break;
                 case DeleteRoomSubroom x: Remove(x.ConfirmedArchivedRow.EntityId); break;
+                case DeleteRoomExplanation x: Remove(x.ConfirmedArchivedRow.EntityId); break;
                 case DeleteRoomTransition x: Remove(x.ConfirmedArchivedRow.EntityId); break;
                 case DeleteRoomConnection x: Remove(x.ConfirmedArchivedRow.EntityId); break;
                 case DeleteRoomCheck x: Remove(x.ConfirmedArchivedRow.EntityId); break;
                 case ReorderRoomSubroom x: Reorder(x.EntityId, x.TargetIndex); break;
+                case ReorderRoomExplanation x: Reorder(x.EntityId, x.TargetIndex); break;
                 case ReorderRoomTransition x: Reorder(x.EntityId, x.TargetIndex); break;
                 case ReorderRoomConnection x: Reorder(x.EntityId, x.TargetIndex); break;
                 case ReorderRoomCheck x: Reorder(x.EntityId, x.TargetIndex); break;
             }
         }
-        if (blocked is not null && pending.SingleOrDefault(x => x.OperationId == blocked.OperationId) is { } blockedIntent)
+        if (blockedIntent is not null)
         {
             var attentionIds = OperationRows(blockedIntent.Operation).ToHashSet();
             foreach (var row in next.Where(x => x.EntityId is { } id && attentionIds.Contains(id))) { row.Attention = true; row.Pending = false; }
@@ -215,6 +244,7 @@ public sealed partial class RoomWorkspace
     private static IEnumerable<Guid> OperationRows(RoomEditOperation operation) => operation switch
     {
         CreateRoomSubroom x => [x.EntityId], SaveRoomSubroom x => [x.EntityId], ReorderRoomSubroom x => [x.EntityId], SetRoomSubroomArchive x => [x.EntityId], DeleteRoomSubroom x => [x.ConfirmedArchivedRow.EntityId], SaveRoomSubroomGeometry x => [x.EntityId], ChangeRoomSubroomAnnotation x => [x.EntityId],
+        CreateRoomExplanation x => [x.EntityId], SaveRoomExplanation x => [x.EntityId], ReorderRoomExplanation x => [x.EntityId], SetRoomExplanationArchive x => [x.EntityId], DeleteRoomExplanation x => [x.ConfirmedArchivedRow.EntityId],
         CreateRoomTransition x => [x.EntityId], SaveRoomTransition x => [x.EntityId], RequestRoomTransitionInverse x => [x.EntityId], SaveRoomTransitionMetadata x => [x.EntityId], ReorderRoomTransition x => [x.EntityId], SetRoomTransitionArchive x => [x.EntityId], DeleteRoomTransition x => [x.ConfirmedArchivedRow.EntityId], ChangeRoomTransitionAnnotation x => [x.EntityId],
         CreateRoomConnection x => [x.EntityId], SaveRoomConnection x => [x.EntityId], ScaffoldRoomConnectionInverse x => [x.SourceEntityId, x.NewEntityId], ReorderRoomConnection x => [x.EntityId], SetRoomConnectionArchive x => [x.EntityId], DeleteRoomConnection x => [x.ConfirmedArchivedRow.EntityId], ChangeRoomConnectionAnnotation x => x.Origin.Members.Select(r => r.EntityId),
         CreateRoomCheck x => [x.EntityId], SaveRoomCheck x => [x.EntityId], SaveRoomCheckMetadata x => [x.EntityId], ReorderRoomCheck x => [x.EntityId], SetRoomCheckArchive x => [x.EntityId], DeleteRoomCheck x => [x.ConfirmedArchivedRow.EntityId], ChangeRoomCheckAnnotation x => [x.EntityId], _ => []

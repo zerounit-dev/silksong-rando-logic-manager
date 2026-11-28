@@ -72,7 +72,7 @@ public sealed class SharedCatalogueService(IDbContextFactory<LogicDbContext> con
         // even when all requested documents happened to remain at their old flags.
         return Task.FromResult<Wire.SharedMutationSegment?>(new(new(timestamps.Rooms, false,
             documents.Select(x => new Wire.RoomFactChange(original.GetValueOrDefault(x.Observation.RoomId),
-                new(x.Observation, x.Header, x.Subrooms, x.Transitions, x.Connections, x.Checks))).ToArray(),
+                new(x.Observation, x.Header, x.Subrooms, x.Transitions, x.Connections, x.Checks, x.Explanations))).ToArray(),
             deleted.Where(original.ContainsKey).Select(id => new Wire.RoomFactRemoval(original[id])).ToArray(),
             groups.Values.Select(x => new Wire.GroupFactChange(null, x)).ToArray(),
             [], ordering?.GroupOrder.ToArray()) { ReadPresentationOrder = ordering?.RoomOrder.ToArray() }, null));

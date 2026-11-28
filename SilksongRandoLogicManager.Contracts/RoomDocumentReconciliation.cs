@@ -39,6 +39,8 @@ public static class RoomDocumentReconciliation
         var header = delta.Header ?? old.Header;
         var subrooms = delta.SubroomOrder is not null ? delta.Subrooms
             : Replace(old.Subrooms, delta.Subrooms, delta.Removed.Subrooms, x => x.Observation.EntityId);
+        var explanations = delta.ExplanationOrder is not null ? delta.Explanations
+            : Replace(old.Explanations, delta.Explanations, delta.Removed.Explanations, x => x.Observation.EntityId);
         var transitions = delta.TransitionOrder is not null ? delta.Transitions
             : Replace(old.Transitions, delta.Transitions, delta.Removed.Transitions, x => x.Observation.EntityId);
         var connections = delta.ConnectionOrder is not null ? delta.Connections
@@ -47,6 +49,7 @@ public static class RoomDocumentReconciliation
         var checks = delta.CheckOrder is not null ? delta.Checks
             : Replace(old.Checks, delta.Checks, delta.Removed.Checks, x => x.Observation.EntityId);
         if (delta.SubroomOrder is { } so) subrooms = Order(subrooms, so, x => x.Observation);
+        if (delta.ExplanationOrder is { } eo) explanations = Order(explanations, eo, x => x.Observation);
         if (delta.TransitionOrder is { } to) transitions = Order(transitions, to, x => x.Observation);
         if (delta.ConnectionOrder is { } co) connections = Order(connections, co, x => x.Observation);
         if (delta.CheckOrder is { } pair)
@@ -83,7 +86,7 @@ public static class RoomDocumentReconciliation
 
         var covers = delta.CoversFrom == old.Observation;
         var next = new RoomCompleteDocument(covers ? delta.Observed : old.Observation,
-            header, subrooms, transitions, connections, checks, scene);
+            header, subrooms, transitions, connections, checks, scene, explanations);
         Validate(next);
         return new(next, !covers);
     }
@@ -96,7 +99,7 @@ public static class RoomDocumentReconciliation
         if (document is null || document.Header?.Observation is null || !document.Header.Observation.IsArchived && document.Scene is null)
             throw Invalid("Incomplete confirmed room document.");
         Validate(new RoomScalarSnapshot(document.Observation, document.Header, document.Subrooms,
-            document.Transitions, document.Connections, document.Checks));
+            document.Transitions, document.Connections, document.Checks, document.Explanations));
     }
 
     public static void Validate(RoomScalarSnapshot document)
@@ -106,7 +109,7 @@ public static class RoomDocumentReconciliation
             || !RoomEditingIdentity.ValidOperation(new SaveRoomHeader(Observed(document.Header.Values, document.Header.Observation), document.Header.Values), document.Observation.RoomId)
             || document.Header.SceneImage is null || document.Header.Metadata is null || !Enum.IsDefined(document.Header.CompletionStatus))
             throw Invalid("Incomplete confirmed room document.");
-        ValidateRows(document.Observation.RoomId, document.Subrooms, document.Transitions, document.Connections, document.Checks);
+        ValidateRows(document.Observation.RoomId, document.Subrooms, document.Transitions, document.Connections, document.Checks, document.Explanations);
     }
 
     /// <summary>
@@ -127,13 +130,15 @@ public static class RoomDocumentReconciliation
             || delta.SceneConcerns == RoomSceneConcerns.None && delta.Scene is not null
             || delta.SceneConcerns != RoomSceneConcerns.None && delta.Header?.Observation.IsArchived != true && delta.Scene is null)
             throw Invalid("Unusable affected room projection.");
-        ValidateRows(delta.Observed.RoomId, delta.Subrooms, delta.Transitions, delta.Connections, delta.Checks);
+        ValidateRows(delta.Observed.RoomId, delta.Subrooms, delta.Transitions, delta.Connections, delta.Checks, delta.Explanations);
         // Replace performs the same disjoint-removal validation used by incorporation.
         _ = Replace<RoomSubroomSnapshot>([], delta.Subrooms, delta.Removed.Subrooms, x => x.Observation.EntityId);
+        _ = Replace<RoomExplanationSnapshot>([], delta.Explanations, delta.Removed.Explanations, x => x.Observation.EntityId);
         _ = Replace<RoomTransitionSnapshot>([], delta.Transitions, delta.Removed.Transitions, x => x.Observation.EntityId);
         _ = Replace<RoomConnectionSnapshot>([], delta.Connections, delta.Removed.Connections, x => x.Observation.EntityId);
         _ = Replace<RoomCheckSnapshot>([], delta.Checks, delta.Removed.Checks, x => x.Observation.EntityId);
         if (delta.SubroomOrder is { } so) _ = Order(delta.Subrooms, so, x => x.Observation);
+        if (delta.ExplanationOrder is { } eo) _ = Order(delta.Explanations, eo, x => x.Observation);
         if (delta.TransitionOrder is { } to) _ = Order(delta.Transitions, to, x => x.Observation);
         if (delta.ConnectionOrder is { } co) _ = Order(delta.Connections, co, x => x.Observation);
         if (delta.CheckOrder is { } pair)
@@ -145,12 +150,17 @@ public static class RoomDocumentReconciliation
 
     private static void ValidateRows(Guid roomId, ImmutableArray<RoomSubroomSnapshot> subrooms,
         ImmutableArray<RoomTransitionSnapshot> transitions, ImmutableArray<RoomConnectionSnapshot> connections,
-        ImmutableArray<RoomCheckSnapshot> checks)
+         ImmutableArray<RoomCheckSnapshot> checks, ImmutableArray<RoomExplanationSnapshot> explanations)
     {
         Unique(subrooms, x => x.Observation?.EntityId ?? Guid.Empty);
         Unique(transitions, x => x.Observation?.EntityId ?? Guid.Empty);
         Unique(connections, x => x.Observation?.EntityId ?? Guid.Empty);
         Unique(checks, x => x.Observation?.EntityId ?? Guid.Empty);
+        Unique(explanations, x => x.Observation?.EntityId ?? Guid.Empty);
+        foreach (var row in explanations)
+            if (!RoomEditingIdentity.ValidOperation(new SaveRoomExplanation(row.Observation.EntityId,
+                Observed(row.Values, row.Observation), row.Values), roomId))
+                throw Invalid("Unusable explanation snapshot.");
         foreach (var row in subrooms)
             if (!RoomEditingIdentity.ValidOperation(new SaveRoomSubroom(row.Observation.EntityId,
                 Observed(row.Values, row.Observation), row.Values), roomId)

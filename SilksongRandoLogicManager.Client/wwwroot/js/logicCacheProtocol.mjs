@@ -7,7 +7,7 @@ export const vocabularyTables = Object.freeze(['RequirementPredicates', 'Require
     'RequirementCrests', 'RequirementMethods', 'RequirementCountables', 'RequirementSouls']);
 // Parent-first for inserts, reversed for transaction-private deletion staging.
 // Self-referencing transition edges are checked after the complete final graph exists.
-export const tables = Object.freeze(['Maps', 'MapZones', 'RoomGroups', 'Rooms', 'Subrooms',
+export const tables = Object.freeze(['Maps', 'MapZones', 'RoomGroups', 'Rooms', 'Subrooms', 'RequirementExplanations',
     'RoomTransitions', 'SubroomConnections', 'CheckLocations', 'MapScenes', 'MapChunks',
     'MapOverlays', ...vocabularyTables]);
 const audit = 'Id CreatedUtc UpdatedUtc';
@@ -22,6 +22,7 @@ export const fields = Object.freeze(Object.fromEntries(Object.entries({
     RoomGroups: `${audit} FriendlyName ZoneReferenceText ResolvedMapZoneId IsVirtual SortOrder`,
     Rooms: `${archive} CacheFlagUtc CompletionStatus RoomGroupId ReferenceId FriendlyName InGameId Contributors Comments SceneMinX SceneMinY SceneMaxX SceneMaxY SceneImagePixelsPerUnitX SceneImagePixelsPerUnitY SceneImagePixelOffsetX SceneImagePixelOffsetY UseSceneImage UseUploadedSceneImage SceneImageOriginalHash SceneImageCropHash IsSceneImageStale SortOrder`,
     Subrooms: `${archive} RoomId ReferenceId FriendlyName Notes SceneUnitX SceneUnitY SceneUnitWidth SceneUnitHeight EnableAnnotation SortOrder`,
+    RequirementExplanations: `${archive} RoomId ReferenceId FriendlyName Link Notes SortOrder`,
     RoomTransitions: `${archive} RoomId Alias FriendlyName InGameId IsUnsafeArrival ${position} EnableAnnotation SourceSubroomReferenceText DestinationRoomReferenceText DestinationTransitionAliasText ResolvedSourceSubroomId ResolvedDestinationRoomId ResolvedDestinationTransitionId ${logic}`,
     SubroomConnections: `${archive} RoomId Alias FriendlyName SourceSubroomReferenceText DestinationSubroomReferenceText EnableAnnotation SceneUnitX SceneUnitY ResolvedSourceSubroomId ResolvedDestinationSubroomId ${logic}`,
     CheckLocations: `${archive} RoomId FriendlyName InGameId ${position} SubroomReferenceText LocationType EnableAnnotation ResolvedSubroomId ${logic}`,

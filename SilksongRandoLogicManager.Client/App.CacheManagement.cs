@@ -216,6 +216,7 @@ public partial class App
         "Maps" => "Maps", "MapZones" => "Map zones", "MapScenes" => "Map scenes", "MapChunks" => "Map chunks", "MapOverlays" => "Map overlays",
         "RequirementPredicates" => "Requirement predicates", "RequirementItems" => "Requirement items", "RequirementCrests" => "Requirement crests",
         "RequirementMethods" => "Requirement methods", "RequirementCountables" => "Requirement countables", "RequirementSouls" => "Requirement souls",
+        "RequirementExplanations" => "Requirement explanations",
         _ => "Unknown table"
     };
 }

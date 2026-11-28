@@ -36,7 +36,7 @@ internal sealed class RoomEditingDocumentLoader(IDbContextFactory<LogicDbContext
             .Select(x => x.Id).ToArrayAsync(token);
         var groupOrder = await db.RoomGroups.AsNoTracking().OrderBy(x => x.SortOrder).ThenBy(x => x.FriendlyName).ThenBy(x => x.Id)
             .Select(x => x.Id).ToArrayAsync(token);
-        return new(room.Observation, room.Header, room.Subrooms, room.Transitions, room.Connections, room.Checks, scene)
+        return new(room.Observation, room.Header, room.Subrooms, room.Transitions, room.Connections, room.Checks, scene, room.Explanations)
         { ReadContext = new(group is null ? null : group with { UpdatedUtc = DateTime.SpecifyKind(group.UpdatedUtc, DateTimeKind.Utc) },
             roomOrder.ToImmutableArray(), groupOrder.ToImmutableArray()) };
     }
@@ -88,11 +88,21 @@ internal sealed class RoomEditingDocumentLoader(IDbContextFactory<LogicDbContext
                     x.LocalPositionX, x.LocalPositionY, x.LocalPositionZ, x.AnnotationSceneUnitX, x.AnnotationSceneUnitY),
                 x.EnableAnnotation, x.RequirementsParseSucceeded, x.ResolvedSubroomId) }).ToListAsync(token);
         var subroomsByRoom = subrooms.ToLookup(x => x.RoomId, x => x.Value);
+        var explanationsByRoom = (await ReadExplanationsAsync(db, ids, token)).ToLookup(x => x.RoomId, x => x.Row);
         var transitionsByRoom = transitions.ToLookup(x => x.RoomId, x => x.Value);
         var connectionsByRoom = connections.ToLookup(x => x.RoomId, x => x.Value);
         var checksByRoom = checks.ToLookup(x => x.RoomId, x => x.Value);
         return rooms.Select(room => new Wire.RoomScalarSnapshot(room.Observation, RoomBundleAssembly.Complete(room.Header, images),
             subroomsByRoom[room.Observation.RoomId].ToImmutableArray(), transitionsByRoom[room.Observation.RoomId].ToImmutableArray(),
-            connectionsByRoom[room.Observation.RoomId].ToImmutableArray(), checksByRoom[room.Observation.RoomId].ToImmutableArray())).ToArray();
+            connectionsByRoom[room.Observation.RoomId].ToImmutableArray(), checksByRoom[room.Observation.RoomId].ToImmutableArray(),
+            explanationsByRoom[room.Observation.RoomId].ToImmutableArray())).ToArray();
     }
+
+    internal sealed record OwnedExplanation(Guid RoomId, Wire.RoomExplanationSnapshot Row);
+
+    internal static Task<OwnedExplanation[]> ReadExplanationsAsync(LogicDbContext db, Guid[] ids, CancellationToken token) =>
+        db.RequirementExplanations.AsNoTracking().Where(x => ids.Contains(x.RoomId)).OrderBy(x => x.SortOrder).ThenBy(x => x.Id)
+            .Select(x => new OwnedExplanation(x.RoomId,
+                new(new(x.Id, DateTime.SpecifyKind(x.UpdatedUtc, DateTimeKind.Utc), x.IsArchived), x.SortOrder,
+                    new(x.FriendlyName, x.ReferenceId, x.Link, x.Notes)))).ToArrayAsync(token);
 }

@@ -93,7 +93,7 @@ public sealed partial class DocumentationPublishingService
             throw new PublishingBlock("Graph integrity failed. Correct the identified records or definitions before preparing again.");
 
         // Advisory validation is never invoked on rejected integrity.
-        var rules = taskTiming.Measure(PublishingMetric.Validation, () => preflight.RuleChecks(documents.Validate()));
+        var rules = taskTiming.Measure(PublishingMetric.Validation, () => preflight.RuleChecks(documents.Validate(prepared.Evidence)));
         var rows = integrity.Concat(rules).Concat(PublishingMapPreflight.NewChecks()).ToArray();
         var advisoryStart = integrity.Length + rules.Length;
         lock (gate) mapPreflight = new(rows.ToArray());

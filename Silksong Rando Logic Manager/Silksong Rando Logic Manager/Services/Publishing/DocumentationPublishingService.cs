@@ -616,7 +616,7 @@ public sealed partial class DocumentationPublishingService : IDisposable, IAsync
         storage.Atomic(Path.Combine(storage.Candidate, "room_graph_data.json"), preparedGraph.Export.Content!);
         storage.Atomic(Path.Combine(storage.Candidate, "room_geometry_data.json"), geometry.Content);
         BeginTask(PreparationStep(9));
-        documents.Write(storage, storage.Candidate, captures, font, (room, count, maximum) =>
+        documents.Write(storage, storage.Candidate, captures, font, preparedGraph.Evidence, (room, count, maximum) =>
             Progress(PreparationStep(9) with { RoomsCompleted = count, RoomsTotal = maximum, CurrentRoom = room,
                 Detail = room is null ? "Write README, MASTER and documentation indexes." : null }), timings);
         BeginTask(PreparationStep(10));

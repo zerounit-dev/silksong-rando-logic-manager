@@ -86,7 +86,7 @@ public sealed partial class SceneImportService
         db.AddRange(createdTransitions); db.AddRange(createdChecks);
         await db.SaveChangesAsync();
         await new LogicReferenceResolver(db).ResolveAsync();
-        var context = await requirementStatus.LoadContextAsync(db, CancellationToken.None);
+        var context = await requirementStatus.LoadContextAsync(db, room.Id, CancellationToken.None);
         foreach (var t in createdTransitions) t.RequirementsParseSucceeded = requirementStatus.ValidateSafely(context, room.Id, t.Id, RequirementBearingRowKind.Transition, t.Requirements);
         foreach (var c in createdChecks.Concat(validateChecks)) c.RequirementsParseSucceeded = requirementStatus.ValidateSafely(context, room.Id, c.Id, RequirementBearingRowKind.Check, c.Requirements);
         using (db.SuppressAuditMetadata()) await db.SaveChangesAsync();

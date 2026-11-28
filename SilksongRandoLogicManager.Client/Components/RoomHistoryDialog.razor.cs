@@ -207,6 +207,7 @@ public partial class RoomHistoryDialog
     private static readonly Dictionary<EditorHistoryFamily, Column[]> Fields = new()
     {
         [EditorHistoryFamily.Subroom] = [NameColumn, Text("Reference", v => v.Reference, 12), Notes, Enabled, State, RectangleColumn],
+        [EditorHistoryFamily.Explanation] = [NameColumn, Text("Reference", v => v.Reference, 12), Text("Link", v => v.Link, 24), Notes, State],
         [EditorHistoryFamily.Transition] = [Alias, NameColumn, Text("From subroom", v => v.Source, 12), Text("Destination room", v => v.Destination, 12),
             Text("Destination alias", v => v.DestinationAlias, 11), Flag("Unsafe arrival", v => v.UnsafeArrival, "Unsafe arrival", "Not marked unsafe", "fa-triangle-exclamation"), Requirements, Notes, Todo, Verify,
             GameId, GameCoordinates, Enabled, State, PointColumn],

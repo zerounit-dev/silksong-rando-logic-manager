@@ -19,6 +19,7 @@ public static class RoomEditingIdentity
     {
         SaveRoomHeader x => x.Origin.PrecedingOperationIds,
         SaveRoomSubroom x => x.Origin.PrecedingOperationIds,
+        SaveRoomExplanation x => x.Origin.PrecedingOperationIds,
         SaveRoomSubroomGeometry x => x.Origin.PrecedingOperationIds,
         ChangeRoomSubroomAnnotation x => x.Origin.PrecedingOperationIds,
         SaveRoomTransition x => x.Origin.PrecedingOperationIds,
@@ -49,6 +50,11 @@ public static class RoomEditingIdentity
         ReorderRoomSubroom x => Id(x.EntityId) && Placement(x.Original, RoomOrderSection.Subrooms),
         SetRoomSubroomArchive x => Id(x.EntityId),
         DeleteRoomSubroom x => Observation(x.ConfirmedArchivedRow),
+        CreateRoomExplanation x => Id(x.EntityId) && Explanation(x.Submitted),
+        SaveRoomExplanation x => Id(x.EntityId) && Origin(x.Origin, x.EntityId, Explanation) && Explanation(x.Submitted),
+        ReorderRoomExplanation x => Id(x.EntityId) && Placement(x.Original, RoomOrderSection.Explanations),
+        SetRoomExplanationArchive x => Id(x.EntityId),
+        DeleteRoomExplanation x => Observation(x.ConfirmedArchivedRow),
         SaveRoomSubroomGeometry x => Id(x.EntityId) && Origin(x.Origin, x.EntityId, Geometry)
             && x.Submitted is not null && Finite(x.Submitted.X, x.Submitted.Y, x.Submitted.Width, x.Submitted.Height),
         ChangeRoomSubroomAnnotation x => Id(x.EntityId) && Origin(x.Origin, x.EntityId, Geometry) && Enum.IsDefined(x.Action),
@@ -106,6 +112,8 @@ public static class RoomEditingIdentity
 
     private static bool Header(RoomHeaderValues? x) => x is not null && x.FriendlyName is not null && x.ReferenceId is not null;
     private static bool Subroom(RoomSubroomValues? x) => x is not null && x.FriendlyName is not null && x.ReferenceId is not null;
+    private static bool Explanation(RoomExplanationValues? x) => x is not null && x.FriendlyName is not null
+        && x.ReferenceId is not null && x.Link is not null && x.Notes is not null;
     private static bool Transition(RoomTransitionValues? x) => x is not null && x.Alias is not null
         && x.FriendlyName is not null && x.Requirements is not null && x.Notes is not null;
     private static bool Connection(RoomConnectionValues? x) => x is not null && x.Alias is not null

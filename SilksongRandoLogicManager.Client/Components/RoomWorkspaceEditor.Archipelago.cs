@@ -60,10 +60,11 @@ public partial class RoomWorkspaceEditor
         if (!OwnsFollow(token, page) || !FollowReady) return false;
         if (native is null) return true;
         if (native.Kind == "header") return native.Field is "name" or "reference" or "game" or "contributors" or "comments";
-        if (native.Kind is not ("subroom" or "transition" or "connection" or "check") || !Guid.TryParse(native.Client, out var client)) return false;
+        if (native.Kind is not ("subroom" or "explanation" or "transition" or "connection" or "check") || !Guid.TryParse(native.Client, out var client)) return false;
         var fields = native.Kind switch
         {
             "subroom" => new[] { "name", "reference", "notes" },
+            "explanation" => new[] { "name", "reference", "link", "notes" },
             "transition" => ["alias", "name", "source", "destination-room", "destination-alias", "unsafe-arrival", "requirements", "notes", "todo", "verification"],
             "connection" => ["alias", "name", "source", "destination", "requirements", "notes", "todo", "verification"],
             _ => ["type", "name", "subroom", "requirements", "notes", "todo", "verification"]

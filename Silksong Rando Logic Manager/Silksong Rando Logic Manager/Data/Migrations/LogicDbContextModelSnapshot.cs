@@ -7,5 +7,5 @@ namespace Silksong_Rando_Logic_Manager.Data.Migrations;
 partial class LogicDbContextModelSnapshot : ModelSnapshot
 {
     // The target model is frozen in the self-contained migration designer.
-    protected override void BuildModel(ModelBuilder modelBuilder) => AddRoomCompletionStatus.BuildFrozenModel(modelBuilder);
+    protected override void BuildModel(ModelBuilder modelBuilder) => AddRequirementExplanations.BuildFrozenModel(modelBuilder);
 }

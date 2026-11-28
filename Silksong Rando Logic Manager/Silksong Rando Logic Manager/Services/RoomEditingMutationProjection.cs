@@ -60,6 +60,8 @@ internal sealed class RoomEditingMutationProjection(IDbContextFactory<LogicDbCon
                     new(x.InGameId, x.InGamePositionX, x.InGamePositionY, x.InGamePositionZ,
                         x.LocalPositionX, x.LocalPositionY, x.LocalPositionZ, x.AnnotationSceneUnitX, x.AnnotationSceneUnitY),
                     x.EnableAnnotation, x.RequirementsParseSucceeded, x.ResolvedSubroomId) }).ToListAsync() : null;
+        var explanations = effect.Families.HasFlag(RoomProjectionFamilies.Explanations)
+            ? await RoomEditingDocumentLoader.ReadExplanationsAsync(db, ids, CancellationToken.None) : null;
         var result = ImmutableArray.CreateBuilder<Wire.RoomDocumentDelta>();
         foreach (var header in headers)
         {
@@ -71,6 +73,7 @@ internal sealed class RoomEditingMutationProjection(IDbContextFactory<LogicDbCon
             var transitionRows = transitions?.Where(x => x.RoomId == id).Select(x => x.Row).ToImmutableArray() ?? [];
             var connectionRows = connections?.Where(x => x.RoomId == id).Select(x => x.Row).ToImmutableArray() ?? [];
             var checkRows = checks?.Where(x => x.RoomId == id).Select(x => x.Row).ToImmutableArray() ?? [];
+            var explanationRows = explanations?.Where(x => x.RoomId == id).Select(x => x.Row).ToImmutableArray() ?? [];
             var concerns = effect.SceneConcerns;
             var scene = concerns != Wire.RoomSceneConcerns.None && !header.Header.Observation.IsArchived
                 ? await scenes.LoadAsync(db, id, CancellationToken.None) : null;
@@ -78,7 +81,7 @@ internal sealed class RoomEditingMutationProjection(IDbContextFactory<LogicDbCon
                 throw new InvalidOperationException("The affected scene could not join its scalar projection snapshot.");
             // Removals belong to the source room. Cross-room resolver snapshots
             // cannot accidentally remove an unrelated local row with the same role.
-            var removed = id == effect.SourceRoomId ? effect.Removed : new Wire.RoomRemovedRows([], [], [], []);
+            var removed = id == effect.SourceRoomId ? effect.Removed : new Wire.RoomRemovedRows([], [], [], [], []);
             result.Add(new(header.Observation, covers, RoomBundleAssembly.Complete(header.Header, images), subroomRows, transitionRows, connectionRows, checkRows,
                 removed,
                 subrooms is null ? null : Order(subroomRows.Select(x => (x.Observation.EntityId, x.Observation.IsArchived))),
@@ -87,7 +90,8 @@ internal sealed class RoomEditingMutationProjection(IDbContextFactory<LogicDbCon
                 checks is null ? null : new(
                     Order(checkRows.Where(x => !CheckLocationTypeCatalogue.IsEnemy(x.Values.LocationType)).Select(x => (x.Observation.EntityId, x.Observation.IsArchived))),
                     Order(checkRows.Where(x => CheckLocationTypeCatalogue.IsEnemy(x.Values.LocationType)).Select(x => (x.Observation.EntityId, x.Observation.IsArchived)))),
-                concerns, scene));
+                 concerns, scene, explanationRows,
+                 explanations is null ? null : Order(explanationRows.Select(x => (x.Observation.EntityId, x.Observation.IsArchived)))));
         }
         return result.ToImmutable();
     }

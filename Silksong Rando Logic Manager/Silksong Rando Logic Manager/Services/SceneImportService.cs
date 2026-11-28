@@ -290,7 +290,7 @@ public sealed partial class SceneImportService
         db.AddRange(importedChecks);
         await db.SaveChangesAsync(cancellationToken);
         await new LogicReferenceResolver(db).ResolveAsync(cancellationToken);
-        var requirementContext = await requirementStatus.LoadContextAsync(db, cancellationToken);
+        var requirementContext = await requirementStatus.LoadContextAsync(db, targetRoom.Id, cancellationToken);
         foreach (var transition in importedTransitions)
             transition.RequirementsParseSucceeded = requirementStatus.ValidateSafely(requirementContext, transition.RoomId,
                 transition.Id, RequirementBearingRowKind.Transition, transition.Requirements);

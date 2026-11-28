@@ -63,11 +63,11 @@ internal sealed class RoomEditingHeaderProjection(IDbContextFactory<LogicDbConte
                 ? new(advance.RoomId, advance.Before) : null;
             var rows = transitions?.Where(x => x.RoomId == room.Observation.RoomId).Select(x => x.Row).ToImmutableArray() ?? [];
             deltas.Add(new(room.Observation, covers, RoomBundleAssembly.Complete(room.Header, images),
-                [], rows, [], [], new([], [], [], []), null,
+                [], rows, [], [], new([], [], [], [], []), null,
                 transitions is null ? null : new(
                     rows.Where(x => !x.Observation.IsArchived).Select(x => x.Observation.EntityId).ToImmutableArray(),
                     rows.Where(x => x.Observation.IsArchived).Select(x => x.Observation.EntityId).ToImmutableArray()),
-                null, null, Wire.RoomSceneConcerns.None, null));
+                null, null, Wire.RoomSceneConcerns.None, null, [], null));
         }
         return deltas.ToImmutable();
     }

@@ -158,6 +158,7 @@ public sealed class RoomEditQueue
             var createdId = operations[(int)receipt.Sequence - 1].Operation switch
             {
                 CreateRoomSubroom x => (Guid?)x.EntityId,
+                CreateRoomExplanation x => (Guid?)x.EntityId,
                 CreateRoomTransition x => x.EntityId,
                 CreateRoomConnection x => x.EntityId,
                 ScaffoldRoomConnectionInverse x => x.NewEntityId,

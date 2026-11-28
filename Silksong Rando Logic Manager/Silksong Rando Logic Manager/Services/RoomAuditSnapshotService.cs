@@ -51,6 +51,7 @@ public sealed class RoomAuditSnapshotService(IDbContextFactory<LogicDbContext> c
             .Select(x => new Value(x.Id, x.Name, x.OutputValue, x.Aliases)).ToArrayAsync(token);
         var methods = await db.RequirementMethods.AsNoTracking().OrderBy(x => x.SortOrder).ThenBy(x => x.Id)
             .Select(x => new Value(x.Id, x.Name, x.OutputValue, x.Aliases)).ToArrayAsync(token);
+        var explanations = await ExplanationReferenceReader.LoadAsync(db, roomId, token);
         var scene = await scenes.LoadAsync(db, roomId, token);
         // Only read transactions and scalar DTOs. No resolver, validator, exporter or SaveChanges call.
         var predicateMetadata = predicates.Select(x => new AuditPredicateDefinition(x.Id, x.Name, x.Input, x.Output,
@@ -60,7 +61,7 @@ public sealed class RoomAuditSnapshotService(IDbContextFactory<LogicDbContext> c
                 x.First.Output, RequirementCatalogueLanguage.ParseAliases(x.First.Aliases))).ToArray();
         var context = new RoomGraphTranslationContext(definitions, Definitions(items), rooms,
             identities.Select(x => new RoomGraphRequirementCheck(x.Id, x.RoomId, x.Name, x.Id.ToString("D"))).ToArray(),
-            Definitions(countables), Definitions(souls), Definitions(crests), Definitions(methods));
+            Definitions(countables), Definitions(souls), Definitions(crests), Definitions(methods), explanations);
         var rows = exits.Concat(connections).Concat(checks).Select(x =>
         {
             token.ThrowIfCancellationRequested();

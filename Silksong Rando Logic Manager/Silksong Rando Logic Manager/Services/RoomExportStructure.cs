@@ -542,14 +542,15 @@ internal static class RoomExportStructure
     private static string Display(string? primary, string? secondary) => !string.IsNullOrWhiteSpace(primary) ? primary : !string.IsNullOrWhiteSpace(secondary) ? secondary : "unnamed row";
     private static IReadOnlyList<T> Get<T>(IReadOnlyDictionary<Guid, T[]> source, Guid roomId) => source.TryGetValue(roomId, out var values) ? values : [];
 
-    internal static byte[] Serialize<T>(T document)
+    internal static byte[] Serialize<T>(T document, int maxDepth = 0)
     {
         var options = new JsonSerializerOptions
         {
             PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
             WriteIndented = true,
             Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-            NewLine = "\n"
+            NewLine = "\n",
+            MaxDepth = maxDepth
         };
         var json = JsonSerializer.Serialize(document, options) + "\n";
         return new UTF8Encoding(false).GetBytes(json);

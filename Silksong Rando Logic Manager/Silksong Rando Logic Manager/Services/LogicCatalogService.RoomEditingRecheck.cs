@@ -27,7 +27,7 @@ public sealed partial class LogicCatalogService
         // One fresh recognition/dependency context for the whole operation, with
         // the retained safe false/null policy. No browser-derived validation and
         // no per-row vocabulary query or validation of other rooms' authored rows.
-        var context = await requirementStatus.LoadContextAsync(db, CancellationToken.None);
+        var context = await requirementStatus.LoadContextAsync(db, roomId, CancellationToken.None);
         var transitions = await db.RoomTransitions.Where(x => x.RoomId == roomId && !x.IsArchived).ToListAsync();
         var connections = await db.SubroomConnections.Where(x => x.RoomId == roomId && !x.IsArchived).ToListAsync();
         var checks = await db.CheckLocations.Where(x => x.RoomId == roomId && !x.IsArchived).ToListAsync();

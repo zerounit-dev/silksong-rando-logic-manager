@@ -1,11 +1,13 @@
 using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 using Microsoft.Data.Sqlite;
+using SilksongRandoLogicManager.Contracts;
 
 namespace Silksong_Rando_Logic_Manager.Services;
 
 internal sealed partial class RecordHistoryStore
 {
+    private const string ExplanationTable = nameof(LogicCacheTable.RequirementExplanations);
     // These DDL statements are recognition-only evidence of the one replaced store.
     // No legacy data is converted or read by normal history consumers.
     private static readonly IReadOnlyDictionary<string, string> LegacyDdl = new Dictionary<string, string>(StringComparer.Ordinal)
@@ -29,6 +31,7 @@ internal sealed partial class RecordHistoryStore
             InitializeProjection(manifest);
             var legacy = false;
             var allColumn = false;
+            var priorRefined = false;
             if (File.Exists(path))
             {
                 // Probe read-only and dispose ALL SQLite handles before filesystem cutover.
@@ -56,10 +59,11 @@ internal sealed partial class RecordHistoryStore
                 else
                 {
                     allColumn = SameDdl(objects, AllColumnDdl());
-                    if (!allColumn) await CheckMirrorsAsync(probe, snapshot);
+                    priorRefined = SameMirrorDdl(objects, PriorRefinedDdl());
+                    if (!allColumn && !priorRefined) await CheckMirrorsAsync(probe, snapshot);
                 }
             }
-            if (allColumn) await RefineMirrorsAsync();
+            if (allColumn || priorRefined) await ExtendMirrorsAsync(allColumn);
             if (legacy) PreserveLegacyGroup();
             if (!File.Exists(path))
             {
@@ -82,7 +86,10 @@ internal sealed partial class RecordHistoryStore
     private Dictionary<string, string> MirrorDdl() => MirrorDdl(schema ?? throw new InvalidOperationException("Missing retained schema."));
 
     private Dictionary<string, string> AllColumnDdl() => MirrorDdl(
-        (schema ?? throw new InvalidOperationException("Missing retained schema.")).Select(t => projections![t.Name].Source));
+        (schema ?? throw new InvalidOperationException("Missing retained schema."))
+            .Where(t => t.Name != ExplanationTable).Select(t => projections![t.Name].Source));
+
+    private Dictionary<string, string> PriorRefinedDdl() => MirrorDdl(schema!.Where(t => t.Name != ExplanationTable));
 
     private static Dictionary<string, string> MirrorDdl(IEnumerable<LogicCacheSql.TableSchema> tables)
     {
@@ -103,7 +110,7 @@ internal sealed partial class RecordHistoryStore
             throw new InvalidDataException("Unsupported history schema; no automatic repair or replacement is allowed.");
     }
 
-    private async Task RefineMirrorsAsync()
+    private async Task ExtendMirrorsAsync(bool allColumn)
     {
         await using var connection = Connection(false);
         await connection.OpenAsync(CancellationToken.None);
@@ -111,11 +118,15 @@ internal sealed partial class RecordHistoryStore
         // under the write lock. DROP preserves rows, rowids, retained cells and indexes;
         // do not rebuild/reinsert, requalify, deduplicate or prune existing versions.
         await using var transaction = connection.BeginTransaction();
-        if (!SameDdl(await ObjectsAsync(connection, transaction), AllColumnDdl()))
-            throw new InvalidDataException("Prior all-column history changed before refinement.");
-        foreach (var table in schema!)
-        foreach (var column in RetentionByTable[table.Name].Excluded.Split(' ', StringSplitOptions.RemoveEmptyEntries))
-            await ExecuteAsync(connection, transaction, $"ALTER TABLE {Quote(Mirror(table.Name))} DROP COLUMN {Quote(column)}");
+        var objects = await ObjectsAsync(connection, transaction);
+        if (allColumn ? !SameDdl(objects, AllColumnDdl()) : !SameMirrorDdl(objects, PriorRefinedDdl()))
+            throw new InvalidDataException("Prior history schema changed before extension.");
+        if (allColumn)
+            foreach (var table in schema!.Where(t => t.Name != ExplanationTable))
+            foreach (var column in RetentionByTable[table.Name].Excluded.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+                await ExecuteAsync(connection, transaction, $"ALTER TABLE {Quote(Mirror(table.Name))} DROP COLUMN {Quote(column)}");
+        foreach (var sql in MirrorDdl(schema!.Where(t => t.Name == ExplanationTable)).Values)
+            await ExecuteAsync(connection, transaction, sql);
         await CheckMirrorsAsync(connection, transaction);
         await transaction.CommitAsync(CancellationToken.None);
     }

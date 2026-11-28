@@ -10,7 +10,7 @@ public enum LogicCacheTable
     RoomGroups, Rooms, Subrooms, RoomTransitions, SubroomConnections, CheckLocations,
     Maps, MapZones, MapScenes, MapChunks, MapOverlays,
     RequirementPredicates, RequirementItems, RequirementCrests, RequirementMethods,
-    RequirementCountables, RequirementSouls
+    RequirementCountables, RequirementSouls, RequirementExplanations
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter<LogicCacheCellType>))]

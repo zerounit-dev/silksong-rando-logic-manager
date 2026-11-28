@@ -85,7 +85,7 @@ internal static class LogicCacheSql
         }
 
         // The migration history is infrastructure, included in the prepared file and
-        // compatibility fingerprint but not the seventeen-table row patch allowlist.
+        // compatibility fingerprint but not the domain row patch allowlist.
         var migrations = new List<Migration>();
         await using (var command = connection.CreateCommand())
         {

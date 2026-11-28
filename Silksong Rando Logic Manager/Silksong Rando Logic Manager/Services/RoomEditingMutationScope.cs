@@ -6,7 +6,7 @@ using Wire = SilksongRandoLogicManager.Contracts;
 namespace Silksong_Rando_Logic_Manager.Services;
 
 [Flags]
-internal enum RoomProjectionFamilies { None = 0, Subrooms = 1, Transitions = 2, Connections = 4, Checks = 8, All = 15 }
+internal enum RoomProjectionFamilies { None = 0, Subrooms = 1, Transitions = 2, Connections = 4, Checks = 8, All = 15, Explanations = 16 }
 
 internal sealed record RoomMutationEffect(Guid SourceRoomId, ImmutableArray<Guid> AffectedRoomIds,
     ImmutableArray<RoomDocumentAdvance> Advances, RoomProjectionFamilies Families,
@@ -55,7 +55,7 @@ internal sealed class RoomEditingMutationScope
             createdId, affected, null) { SharedTimestamps = prepared.Timestamps,
                 SharedOriginalRooms = plan.OriginalRooms };
         var effect = new RoomMutationEffect(entry.Identity.RoomId, affected, plan.Advances, families,
-            changed.IsEmpty ? Wire.RoomSceneConcerns.None : sceneConcerns, removed ?? new([], [], [], []))
+            changed.IsEmpty ? Wire.RoomSceneConcerns.None : sceneConcerns, removed ?? new([], [], [], [], []))
         { SharedPlan = plan, DeletedRoomIds = effects.Rooms.Where(x => x.Value.Final is null).Select(x => x.Key).ToImmutableArray() };
         // Everything needed for the receipt is prepared before Commit. No read,
         // notification or projection can intervene after a known successful commit.

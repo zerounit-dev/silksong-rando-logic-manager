@@ -42,6 +42,7 @@ internal sealed class RoomEditingWorkflow(LogicCatalogService catalogue, RoomEdi
             case Wire.CreateRoomConnection: return Created(entry, await creations.CreateConnectionAsync(entry), RoomProjectionFamilies.Connections);
             case Wire.CreateRoomCheck: return Created(entry, await creations.CreateCheckAsync(entry), RoomProjectionFamilies.Checks);
             case Wire.SaveRoomSubroom: return await subrooms.ExecuteAsync(entry);
+            case Wire.CreateRoomExplanation or Wire.SaveRoomExplanation: return await catalogue.WriteTrackedExplanationAsync(entry);
             case Wire.CreateRoomTransition or Wire.SaveRoomTransition or Wire.RequestRoomTransitionInverse:
                 return await catalogue.ExecuteTrackedTransitionAsync(entry);
             case Wire.SaveRoomConnection: return await catalogue.SaveTrackedConnectionAsync(entry);
@@ -52,11 +53,11 @@ internal sealed class RoomEditingWorkflow(LogicCatalogService catalogue, RoomEdi
             case Wire.ChangeRoomTransitionAnnotation or Wire.ChangeRoomCheckAnnotation: return await catalogue.ChangeTrackedDirectAnnotationAsync(entry);
             case Wire.ChangeRoomConnectionAnnotation: return await catalogue.ChangeTrackedConnectionAnnotationAsync(entry);
             case Wire.ScaffoldRoomConnectionInverse: return await catalogue.ScaffoldTrackedConnectionAsync(entry);
-            case Wire.SetRoomArchive or Wire.SetRoomSubroomArchive or Wire.SetRoomTransitionArchive or Wire.SetRoomConnectionArchive or Wire.SetRoomCheckArchive:
+            case Wire.SetRoomArchive or Wire.SetRoomSubroomArchive or Wire.SetRoomTransitionArchive or Wire.SetRoomConnectionArchive or Wire.SetRoomCheckArchive or Wire.SetRoomExplanationArchive:
                 return await catalogue.SetTrackedArchiveAsync(entry);
-            case Wire.ReorderRoomSubroom or Wire.ReorderRoomTransition or Wire.ReorderRoomConnection or Wire.ReorderRoomCheck:
+            case Wire.ReorderRoomSubroom or Wire.ReorderRoomTransition or Wire.ReorderRoomConnection or Wire.ReorderRoomCheck or Wire.ReorderRoomExplanation:
                 return await catalogue.ReorderTrackedChildAsync(entry);
-            case Wire.DeleteRoomSubroom or Wire.DeleteRoomTransition or Wire.DeleteRoomConnection or Wire.DeleteRoomCheck:
+            case Wire.DeleteRoomSubroom or Wire.DeleteRoomTransition or Wire.DeleteRoomConnection or Wire.DeleteRoomCheck or Wire.DeleteRoomExplanation:
                 return await catalogue.DeleteTrackedChildAsync(entry);
             case Wire.DeleteRoom: return await catalogue.DeleteTrackedRoomAsync(entry);
             case Wire.RecheckRoomRequirements: return await catalogue.RecheckTrackedRoomAsync(entry);
@@ -75,6 +76,7 @@ internal sealed class RoomEditingWorkflow(LogicCatalogService catalogue, RoomEdi
             throw new RoomTrackingProtocolException("This resolution has no matching room workflow.");
         switch (entry.Blocked?.Evidence)
         {
+            case Wire.RoomExplanationConflictEvidence x: entry.ExplanationReview = new(x.Reviewed, choice.Choice); break;
             case Wire.RoomConnectionConflictEvidence x: entry.ConnectionReview = new(x.Reviewed, choice.Choice); break;
             case Wire.RoomCheckConflictEvidence x: entry.CheckReview = new(x.Reviewed, choice.Choice); break;
             case Wire.RoomMetadataConflictEvidence x: entry.MetadataReview = new(x.Reviewed, choice.Choice); break;
@@ -88,7 +90,7 @@ internal sealed class RoomEditingWorkflow(LogicCatalogService catalogue, RoomEdi
 
     private static RoomMutationEffect? Created(RoomEditingTracker.Entry entry, RoomCreationAdmission? admission, RoomProjectionFamilies family) =>
         admission is null ? null : new(entry.Identity.RoomId, admission.AffectedRoomIds, admission.Advances, family,
-            Wire.RoomSceneConcerns.Canvas | Wire.RoomSceneConcerns.Viewport, new([], [], [], [])) { SharedPlan = admission.SharedPlan };
+            Wire.RoomSceneConcerns.Canvas | Wire.RoomSceneConcerns.Viewport, new([], [], [], [], [])) { SharedPlan = admission.SharedPlan };
 
     private async Task ExecuteAndProjectAsync(RoomEditingTracker.Entry entry, long sequence, Func<Task<RoomMutationEffect?>> execute)
     {

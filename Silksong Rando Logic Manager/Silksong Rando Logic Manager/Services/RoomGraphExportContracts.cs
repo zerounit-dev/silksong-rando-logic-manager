@@ -49,8 +49,9 @@ public sealed record RoomGraphTranslationPredicate(string Name, string? Category
 public sealed record RoomGraphTranslationItem(string Name, string? Category, IReadOnlyList<string> Aliases, string OutputValue, string Notes);
 public sealed record RoomGraphLocationType(bool? HasPersistedState, string Description);
 public sealed record RoomGraphNode(string Id, string Name, string Notes);
-public sealed record RoomGraphRequirement(string Raw, string Mode, IReadOnlyList<IReadOnlyList<string>> Dnf, IReadOnlyList<string> UnresolvedReasons);
+public sealed record RoomGraphExplanation(string Reference, string Name, string Link, string Notes);
+public sealed record RoomGraphRequirement(string Raw, string Mode, IReadOnlyList<IReadOnlyList<string>> Dnf, IReadOnlyList<string> UnresolvedReasons, RoomGraphRule? Rule);
 public sealed record RoomGraphTransition(string Id, string Alias, string Name, string? InGameId, bool IsUnsafeArrival, string SourceNodeId, string? Target, RoomGraphRequirement Requirement, string Notes, bool IsTodo, bool? IsVerified, string LogicStatus, IReadOnlyList<string> UnresolvedReasons);
 public sealed record RoomGraphConnection(string Id, string Alias, string Name, string SourceNodeId, string TargetNodeId, RoomGraphRequirement Requirement, string Notes, bool IsTodo, bool? IsVerified, string LogicStatus, IReadOnlyList<string> UnresolvedReasons);
 public sealed record RoomGraphLocation(string Id, string Name, string? InGameId, string LocationType, bool? HasPersistedState, string NodeId, RoomGraphRequirement Requirement, string Notes, bool IsTodo, bool? IsVerified, string LogicStatus, IReadOnlyList<string> UnresolvedReasons);
-public sealed record RoomGraphRoom(string Id, string SourceRecord, string AreaId, string Name, string? InGameId, string Contributors, string Notes, IReadOnlyList<RoomGraphNode> Nodes, IReadOnlyList<RoomGraphTransition> Transitions, IReadOnlyList<RoomGraphConnection> Connections, IReadOnlyList<RoomGraphLocation> Locations);
+public sealed record RoomGraphRoom(string Id, string SourceRecord, string AreaId, string Name, string? InGameId, string Contributors, string Notes, IReadOnlyList<RoomGraphNode> Nodes, IReadOnlyList<RoomGraphExplanation> Explanations, IReadOnlyList<RoomGraphTransition> Transitions, IReadOnlyList<RoomGraphConnection> Connections, IReadOnlyList<RoomGraphLocation> Locations);

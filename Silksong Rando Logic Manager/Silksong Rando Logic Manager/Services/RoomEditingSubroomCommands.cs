@@ -25,7 +25,7 @@ internal sealed class RoomEditingSubroomCommands(IDbContextFactory<LogicDbContex
                     var head = Head(entry);
                     entry.RecordReceipt(new(head.Sequence, head.OperationId, Wire.RoomTerminalDisposition.UserReverted, null, [], null));
                     return Task.FromResult<RoomMutationEffect?>(new(entry.Identity.RoomId, [], [],
-                        RoomProjectionFamilies.None, Wire.RoomSceneConcerns.None, new([], [], [], [])));
+                        RoomProjectionFamilies.None, Wire.RoomSceneConcerns.None, new([], [], [], [], [])));
                 }
                 return ExecuteCoreAsync(entry, choice.Choice);
             case Wire.PrepareRoomProposalAgain when entry.Blocked is

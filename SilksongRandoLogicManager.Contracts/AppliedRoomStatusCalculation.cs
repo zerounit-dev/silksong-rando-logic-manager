@@ -18,7 +18,8 @@ public static class AppliedRoomStatusCalculation
         // Preserve the retained reader's exclusion of checks owned by archived rooms.
         var checks = facts.Where(room => !room.Header.Observation.IsArchived)
             .SelectMany(room => room.Checks.Select(x => ProjectCheck(room.Observation.RoomId, x))).ToArray();
-        return Calculate(rooms, subrooms, transitions, connections, checks);
+        var explanations = facts.SelectMany(room => room.Explanations.Select(x => ProjectExplanation(room.Observation.RoomId, x))).ToArray();
+        return Calculate(rooms, subrooms, transitions, connections, checks, explanations);
     }
 
     /// <summary>Invocation-local dependency selection before scalar row allocation.
@@ -73,7 +74,8 @@ public static class AppliedRoomStatusCalculation
         }
         var connections = owners.SelectMany(room => room.Connections.Select(x => ProjectConnection(room.Observation.RoomId, x))).ToArray();
         var checks = owners.SelectMany(room => room.Checks.Select(x => ProjectCheck(room.Observation.RoomId, x))).ToArray();
-        return Calculate(rooms, subrooms, transitions, connections, checks, requestedOwnerIds);
+        var explanations = owners.SelectMany(room => room.Explanations.Select(x => ProjectExplanation(room.Observation.RoomId, x))).ToArray();
+        return Calculate(rooms, subrooms, transitions, connections, checks, explanations, requestedOwnerIds);
     }
 
     private static StatusRoom ProjectRoom(RoomScalarSnapshot x) => new(x.Observation.RoomId, x.Header.Values.FriendlyName,
@@ -81,6 +83,8 @@ public static class AppliedRoomStatusCalculation
     private static StatusSubroom ProjectSubroom(Guid roomId, RoomSubroomSnapshot x) => new(
         x.Observation.EntityId, roomId, x.Values.FriendlyName, x.Values.ReferenceId,
         x.Geometry.X, x.Geometry.Y, x.Geometry.Width, x.Geometry.Height, x.Observation.IsArchived);
+    private static StatusExplanation ProjectExplanation(Guid roomId, RoomExplanationSnapshot x) => new(
+        x.Observation.EntityId, roomId, x.Values.FriendlyName, x.Values.ReferenceId, x.Values.Link, x.Observation.IsArchived);
     private static StatusTransition ProjectTransition(Guid roomId, RoomTransitionSnapshot x) => new(
         x.Observation.EntityId, roomId, x.Values.Alias, x.Values.FriendlyName, x.Metadata.InGameId,
         x.Values.SourceSubroomReferenceText, x.Values.DestinationRoomReferenceText, x.Values.DestinationTransitionAliasText,
@@ -111,6 +115,7 @@ public static class AppliedRoomStatusCalculation
         if (!transitions.ExternalEqual) return (false, false);
         var equal = oldRoom == room && transitions.InputsEqual
             && CompareRows(prior.Subrooms, next.Subrooms, x => ProjectSubroom(roomId, x), x => x.Id).InputsEqual
+            && CompareRows(prior.Explanations, next.Explanations, x => ProjectExplanation(roomId, x), x => x.Id).InputsEqual
             && CompareRows(prior.Connections, next.Connections, x => ProjectConnection(roomId, x), x => x.Id).InputsEqual
             && CompareRows(prior.Checks, next.Checks, x => ProjectCheck(roomId, x), x => x.Id).InputsEqual;
         return (equal, true);
@@ -151,7 +156,7 @@ public static class AppliedRoomStatusCalculation
     public static IReadOnlyDictionary<Guid, AppliedRoomStatus> Calculate(
         IReadOnlyList<StatusRoom> rooms, IReadOnlyList<StatusSubroom> subrooms,
         IReadOnlyList<StatusTransition> transitions, IReadOnlyList<StatusConnection> connections,
-        IReadOnlyList<StatusCheck> checks, IReadOnlyCollection<Guid>? requested = null)
+        IReadOnlyList<StatusCheck> checks, IReadOnlyList<StatusExplanation> explanations, IReadOnlyCollection<Guid>? requested = null)
     {
         var selectedIds = requested is null ? rooms.Select(x => x.Id).ToArray() : requested.ToArray();
         var roomById = rooms.ToDictionary(x => x.Id);
@@ -159,6 +164,7 @@ public static class AppliedRoomStatusCalculation
         var transitionsByRoom = transitions.ToLookup(x => x.RoomId);
         var connectionsByRoom = connections.ToLookup(x => x.RoomId);
         var checksByRoom = checks.ToLookup(x => x.RoomId);
+        var explanationsByRoom = explanations.ToLookup(x => x.RoomId);
         var indexes = new StatusIndexes(rooms, subrooms, transitions, connections, checks);
 
         var result = new Dictionary<Guid, AppliedRoomStatus>(selectedIds.Length);
@@ -168,14 +174,15 @@ public static class AppliedRoomStatusCalculation
             result[roomId] = room.Archived ? AppliedRoomStatus.Neutral : Calculate(
                 room, subroomsByRoom[roomId].ToArray(),
                 transitionsByRoom[roomId].ToArray(), connectionsByRoom[roomId].ToArray(),
-                checksByRoom[roomId].ToArray(), indexes);
+                checksByRoom[roomId].ToArray(), explanationsByRoom[roomId], indexes);
         }
 
         return result;
     }
 
     private static AppliedRoomStatus Calculate(StatusRoom room, IReadOnlyList<StatusSubroom> subrooms, IReadOnlyList<StatusTransition> transitions,
-        IReadOnlyList<StatusConnection> connections, IReadOnlyList<StatusCheck> checks, StatusIndexes indexes)
+        IReadOnlyList<StatusConnection> connections, IReadOnlyList<StatusCheck> checks,
+        IEnumerable<StatusExplanation> explanations, StatusIndexes indexes)
     {
         var worst = V2Severity.Neutral;
         void Add(V2Severity severity) => worst = MapperSupport.Max(worst, severity);
@@ -184,6 +191,16 @@ public static class AppliedRoomStatusCalculation
         Add(!MapperSupport.Text(room.ReferenceId) ? V2Severity.Warning : indexes.ActiveRoomReferenceCount(room.ReferenceId) > 1 ? V2Severity.Danger : V2Severity.Neutral);
         if (MapperSupport.Text(room.InGameId)) Add(indexes.ActiveRoomGameCount(room.InGameId!) > 1 ? V2Severity.Danger : V2Severity.Neutral);
         if (worst == V2Severity.Danger) return AppliedRoomStatus.Danger;
+
+        var activeExplanations = explanations.Where(x => !x.Archived).ToArray();
+        var referenceCounts = ExplanationRules.ReferenceCounts(activeExplanations.Select(x => x.ReferenceId));
+        foreach (var row in activeExplanations)
+        {
+            Add(MapperSupport.Required(row.FriendlyName));
+            Add(ExplanationRules.ReferenceSeverity(row.ReferenceId, referenceCounts));
+            Add(ExplanationRules.LinkSeverity(row.Link));
+            if (worst == V2Severity.Danger) return AppliedRoomStatus.Danger;
+        }
 
         var activeSubrooms = subrooms.Where(x => !x.Archived).ToArray();
         var usedSubroomIds = transitions.Where(x => !x.Archived).Select(x => x.SourceId)
@@ -439,6 +456,7 @@ public static class AppliedRoomStatusCalculation
 
     public sealed record StatusRoom(Guid Id, string FriendlyName, string ReferenceId, string? InGameId, bool Archived);
     public sealed record StatusSubroom(Guid Id, Guid RoomId, string FriendlyName, string ReferenceId, double? X, double? Y, double? Width, double? Height, bool Archived);
+    public sealed record StatusExplanation(Guid Id, Guid RoomId, string FriendlyName, string ReferenceId, string Link, bool Archived);
     public sealed record StatusTransition(Guid Id, Guid RoomId, string Alias, string FriendlyName, string? InGameId, string? Source,
         string? DestinationRoom, string? DestinationAlias, string Requirements, Guid? SourceId, Guid? DestinationRoomId,
         Guid? DestinationId, bool Todo, bool? Verified, bool Archived, bool? ParseSucceeded);

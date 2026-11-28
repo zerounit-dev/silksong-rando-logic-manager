@@ -25,7 +25,8 @@ public partial class RoomWorkspaceEditor
             vocabulary.Kinds[4].Select(x => new RequirementsParserCountableView(x.ParsedAliases)).ToArray(),
             vocabulary.Kinds[5].Select(x => new RequirementsParserSoulView(x.ParsedAliases)).ToArray(),
             vocabulary.Kinds[1].Select(x => new RequirementsParserCrestView(x.ParsedAliases)).ToArray(),
-            vocabulary.Kinds[2].Select(x => new RequirementsParserMethodView(x.ParsedAliases)).ToArray());
+            vocabulary.Kinds[2].Select(x => new RequirementsParserMethodView(x.ParsedAliases)).ToArray(),
+            Entry.RoomId, ActiveExplanationReferences().ToArray());
     }
     private void InstallParserContext()
     {
@@ -51,6 +52,8 @@ public partial class RoomWorkspaceEditor
         var rooms = Catalogue.PresentationRoomIds.Select(id => Catalogue.Rooms[id]).Where(x => !x.Header.Observation.IsArchived);
         return rooms.Select(x => (x.Observation.RoomId, x.Header.Values.ReferenceId))
                 .SequenceEqual(context.Rooms.Select(x => (x.RoomId, x.ReferenceId)))
+            && context.ExplanationRoomId == Entry.RoomId
+            && ActiveExplanationReferences().SequenceEqual(context.ExplanationReferences)
             && rooms.SelectMany(room => room.Checks.Where(x => !x.Observation.IsArchived).Select(x => (room.Observation.RoomId, x.Values.FriendlyName)))
                 .SequenceEqual(context.Checks.Select(x => (x.RoomId, x.FriendlyName)))
             && vocabulary.Kinds[0].Select(x => x.Value.InputSyntax).SequenceEqual(context.Predicates.Select(x => x.InputSyntax))
@@ -61,6 +64,10 @@ public partial class RoomWorkspaceEditor
             && ParserAliasesMatch(vocabulary.Kinds[1], context.Crests.Select(x => x.Aliases))
             && ParserAliasesMatch(vocabulary.Kinds[2], context.Methods.Select(x => x.Aliases));
     }
+    private IEnumerable<string> ActiveExplanationReferences() =>
+        workspace.Confirmed.Document is { Header.Observation.IsArchived: false } document
+            ? document.Explanations.Where(x => !x.Observation.IsArchived).Select(x => x.Values.ReferenceId).Order(StringComparer.Ordinal)
+            : [];
     private static bool ParserAliasesMatch(IEnumerable<ConfirmedDefinition> definitions, IEnumerable<IReadOnlyList<string>> installed)
     {
         using var aliases = installed.GetEnumerator();

@@ -10,7 +10,7 @@ public sealed partial class RoomWorkspace
     private static string Boolean(bool value) => value ? "true" : "false";
     private static string Verification(bool? value) => value is { } flag ? Boolean(flag) : "";
     private static bool? ParseVerification(string value) => value switch { "true" => true, "false" => false, "" => null, _ => throw new InvalidOperationException("Invalid verification control value.") };
-    private static string Kind(RoomTableRow row) => row switch { RoomSubroomRow => "subroom", RoomTransitionRow => "transition", RoomConnectionRow => "connection", RoomCheckRow => "check", _ => throw new InvalidOperationException() };
+    private static string Kind(RoomTableRow row) => row switch { RoomSubroomRow => "subroom", RoomTransitionRow => "transition", RoomConnectionRow => "connection", RoomCheckRow => "check", RoomExplanationRow => "explanation", _ => throw new InvalidOperationException() };
     private static Dictionary<string, string> Fields(RoomHeaderValues value) => new()
     {
         ["name"] = value.FriendlyName, ["reference"] = value.ReferenceId, ["game"] = value.InGameId ?? "",
@@ -19,6 +19,7 @@ public sealed partial class RoomWorkspace
     private static Dictionary<string, string> Fields(RoomTableRow row) => row switch
     {
         RoomSubroomRow r => new() { ["name"] = r.Values.FriendlyName, ["reference"] = r.Values.ReferenceId, ["notes"] = r.Values.Notes ?? "" },
+        RoomExplanationRow r => new() { ["name"] = r.Values.FriendlyName, ["reference"] = r.Values.ReferenceId, ["link"] = r.Values.Link, ["notes"] = r.Values.Notes },
         RoomTransitionRow r => new()
         {
             ["alias"] = r.Values.Alias, ["name"] = r.Values.FriendlyName, ["source"] = r.Values.SourceSubroomReferenceText ?? "",
@@ -56,6 +57,9 @@ public sealed partial class RoomWorkspace
     {
         switch (row)
         {
+            case RoomExplanationRow r:
+                r.Values = new(read("name", r.Values.FriendlyName), read("reference", r.Values.ReferenceId),
+                    read("link", r.Values.Link), read("notes", r.Values.Notes)); break;
             case RoomSubroomRow r:
                 r.Values = r.Values with { FriendlyName = read("name", r.Values.FriendlyName), ReferenceId = read("reference", r.Values.ReferenceId), Notes = NullableText("notes", r.Values.Notes, read) }; break;
             case RoomTransitionRow r:
@@ -89,6 +93,7 @@ public sealed partial class RoomWorkspace
     private static bool Meaningful(RoomTableRow row) => row switch
     {
         RoomSubroomRow r => !string.IsNullOrWhiteSpace(r.Values.FriendlyName) || !string.IsNullOrWhiteSpace(r.Values.ReferenceId) || !string.IsNullOrWhiteSpace(r.Values.Notes),
+        RoomExplanationRow r => new[] { r.Values.FriendlyName, r.Values.ReferenceId, r.Values.Link, r.Values.Notes }.Any(x => !string.IsNullOrWhiteSpace(x)),
         RoomTransitionRow r => new[] { r.Values.Alias, r.Values.FriendlyName, r.Values.SourceSubroomReferenceText, r.Values.DestinationRoomReferenceText, r.Values.DestinationTransitionAliasText, r.Values.Requirements, r.Values.Notes }.Any(x => !string.IsNullOrWhiteSpace(x)) || r.Values.IsTodo || r.Values.IsVerified is not null || r.Values.IsUnsafeArrival,
         RoomConnectionRow r => new[] { r.Values.Alias, r.Values.FriendlyName, r.Values.SourceSubroomReferenceText, r.Values.DestinationSubroomReferenceText, r.Values.Requirements, r.Values.Notes }.Any(x => !string.IsNullOrWhiteSpace(x)) || r.Values.IsTodo || r.Values.IsVerified is not null,
         RoomCheckRow r => new[] { r.Values.FriendlyName, r.Values.SubroomReferenceText, r.Values.Requirements, r.Values.Notes }.Any(x => !string.IsNullOrEmpty(x)) || r.Values.LocationType != (r.Enemies ? "enemy" : null) || r.Values.IsTodo || r.Values.IsVerified is not null,
@@ -97,12 +102,14 @@ public sealed partial class RoomWorkspace
     private static RoomOrderSection Section(RoomTableRow row) => row switch
     {
         RoomSubroomRow => RoomOrderSection.Subrooms, RoomTransitionRow => RoomOrderSection.Transitions,
+        RoomExplanationRow => RoomOrderSection.Explanations,
         RoomConnectionRow => RoomOrderSection.Connections, RoomCheckRow { Enemies: true } => RoomOrderSection.Enemies,
         RoomCheckRow => RoomOrderSection.Checks, _ => throw new InvalidOperationException()
     };
     private static RoomTableRow Empty(RoomOrderSection section, Guid id) => section switch
     {
         RoomOrderSection.Subrooms => new RoomSubroomRow(id, new("", "", null)),
+        RoomOrderSection.Explanations => new RoomExplanationRow(id, new("", "", "", "")),
         RoomOrderSection.Transitions => new RoomTransitionRow(id, new("", "", null, null, null, "", "", false, null, false)),
         RoomOrderSection.Connections => new RoomConnectionRow(id, new("", "", "", "", "", "", false, null)),
         _ => new RoomCheckRow(id, new("", null, "", "", section == RoomOrderSection.Enemies ? "enemy" : null, false, null), section == RoomOrderSection.Enemies)
@@ -114,6 +121,7 @@ public sealed partial class RoomWorkspace
         RoomTableRow copy = row switch
         {
             RoomSubroomRow r => new RoomSubroomRow(r.ClientId, r.Initial) { Values = r.Values, Geometry = r.Geometry },
+            RoomExplanationRow r => new RoomExplanationRow(r.ClientId, r.Initial) { Values = r.Values },
             RoomTransitionRow r => new RoomTransitionRow(r.ClientId, r.Initial) { Values = r.Values, Metadata = r.Metadata, EnableAnnotation = r.EnableAnnotation,
                 InverseIcon = r.InverseIcon, InverseClass = r.InverseClass, InverseTitle = r.InverseTitle, CanPrepareInverse = r.CanPrepareInverse, InverseRoomId = r.InverseRoomId, DestinationAliases = r.DestinationAliases },
             RoomConnectionRow r => new RoomConnectionRow(r.ClientId, r.Initial) { Values = r.Values, X = r.X, Y = r.Y, EnableAnnotation = r.EnableAnnotation,

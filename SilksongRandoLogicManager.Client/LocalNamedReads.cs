@@ -18,10 +18,12 @@ internal sealed record LocalRoomHeaderSource(RoomDocumentObservation Observation
     RoomHeaderValues Values, Guid? RoomGroupId, int SortOrder, RoomStatus CompletionStatus,
     RoomSceneImageBaseline SceneImage);
 internal sealed record LocalSubroomSource(Guid RoomId, RoomSubroomSnapshot Snapshot);
+internal sealed record LocalExplanationSource(Guid RoomId, RoomExplanationSnapshot Snapshot);
 internal sealed record LocalTransitionSource(Guid RoomId, RoomTransitionSnapshot Snapshot);
 internal sealed record LocalConnectionSource(Guid RoomId, RoomConnectionSnapshot Snapshot);
 internal sealed record LocalCheckSource(Guid RoomId, RoomCheckSnapshot Snapshot);
 internal sealed record LocalRoomSource(ImmutableArray<LocalRoomHeaderSource> Rooms,
     ImmutableArray<LocalSubroomSource> Subrooms, ImmutableArray<LocalTransitionSource> Transitions,
     ImmutableArray<LocalConnectionSource> Connections, ImmutableArray<LocalCheckSource> Checks,
-    ImmutableArray<CatalogueGroup> Groups, ImmutableArray<Guid> RoomOrder, ImmutableArray<Guid> GroupOrder);
+    ImmutableArray<CatalogueGroup> Groups, ImmutableArray<Guid> RoomOrder, ImmutableArray<Guid> GroupOrder,
+    ImmutableArray<LocalExplanationSource> Explanations);

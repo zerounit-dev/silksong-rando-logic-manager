@@ -97,6 +97,8 @@ button, input, textarea { font: inherit; }
 .requirement-syntax-guide .guide-token-soul { color: var(--requirement-color-soul); }
 .requirement-syntax-guide .guide-token-crest { color: var(--requirement-color-crest); }
 .requirement-syntax-guide .guide-token-method { color: var(--requirement-color-method); }
+.requirement-syntax-guide .guide-token-explanation-reference,
+.requirements-explanation-reference { color: var(--requirement-color-annotation); }
 .requirement-syntax-guide-backdrop { z-index: 2000; }
 .requirement-catalogue-table .reorder-handle { width: 100%; min-height: 1.35rem; padding: .1rem; border: 0; background: transparent; color: var(--ui-text-muted); cursor: grab; font-size: .7rem; line-height: normal; }
 .requirement-catalogue-table .reorder-handle:active { cursor: grabbing; }

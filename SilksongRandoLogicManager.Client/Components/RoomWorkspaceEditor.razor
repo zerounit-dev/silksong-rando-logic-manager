@@ -114,7 +114,7 @@ else
         else { <div class="markdown-preview">@((MarkupString)Markdown.ToHtml(workspace.Header.Comments ?? "", MarkdownPipeline))</div> }
     </div></section>
         @if (workspace.BoundaryFeedback is { } feedback) { <p class="warning" role="status">@feedback</p> }
-        <RoomTables @ref="tables" RoomId="Entry.RoomId" SceneActionsAvailable="SceneContextReady" SceneUnavailableReason="@SceneUnavailableReason" Subrooms="workspace.Subrooms" Transitions="workspace.Transitions" Connections="workspace.Connections" CheckLocations="workspace.CheckLocations" Enemies="workspace.Enemies"
+        <RoomTables @ref="tables" RoomId="Entry.RoomId" SceneActionsAvailable="SceneContextReady" SceneUnavailableReason="@SceneUnavailableReason" Subrooms="workspace.Subrooms" Explanations="workspace.Explanations" Transitions="workspace.Transitions" Connections="workspace.Connections" CheckLocations="workspace.CheckLocations" Enemies="workspace.Enemies"
                     BoundaryRequested="BoundaryAsync" LatentSuccessors="workspace.LatentSuccessors" CheckTypes="CheckTypes"
      ShowArchived="showArchived" Blocked="@(AuthoringBlocked || nativeOwner is null)" InspectionBlocked="@(InspectionBlocked || nativeOwner is null)" HistoryBlocked="HistoryLauncherBlocked" ActionRequested="RowActionAsync"
                       RoomReferences="RoomReferences" SubroomReferences="SubroomReferences" />

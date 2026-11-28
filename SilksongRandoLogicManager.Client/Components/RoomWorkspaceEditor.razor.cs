@@ -234,7 +234,7 @@ public partial class RoomWorkspaceEditor
             var previousRows = workspace.Subrooms;
             var previousFeedback = workspace.BoundaryFeedback;
             workspace.Observe(boundary.Fields);
-            var kind = boundary.Kind switch { RoomTableKind.Subroom => "subroom", RoomTableKind.Transition => "transition", RoomTableKind.Connection => "connection", RoomTableKind.Check => "check", _ => throw new InvalidOperationException() };
+            var kind = boundary.Kind switch { RoomTableKind.Subroom => "subroom", RoomTableKind.Explanation => "explanation", RoomTableKind.Transition => "transition", RoomTableKind.Connection => "connection", RoomTableKind.Check => "check", _ => throw new InvalidOperationException() };
             if (boundary is RoomDropBoundaryIntent drop)
             {
                 var row = workspace.Find(kind, drop.ClientId);
@@ -245,7 +245,8 @@ public partial class RoomWorkspaceEditor
                 var target = drop.TargetIndex;
                 workspace.Enqueue(row switch
                 {
-                    RoomSubroomRow => new ReorderRoomSubroom(id, original, target), RoomTransitionRow => new ReorderRoomTransition(id, original, target),
+                    RoomSubroomRow => new ReorderRoomSubroom(id, original, target), RoomExplanationRow => new ReorderRoomExplanation(id, original, target),
+                    RoomTransitionRow => new ReorderRoomTransition(id, original, target),
                     RoomConnectionRow => new ReorderRoomConnection(id, original, target), RoomCheckRow r => new ReorderRoomCheck(id, original, r.Enemies, target),
                     _ => throw new InvalidOperationException()
                 });
@@ -263,7 +264,7 @@ public partial class RoomWorkspaceEditor
                         RoomNativeColumn.Name => "name", RoomNativeColumn.Reference => "reference", RoomNativeColumn.Notes => "notes", RoomNativeColumn.Alias => "alias",
                         RoomNativeColumn.Source => "source", RoomNativeColumn.DestinationRoom => "destination-room", RoomNativeColumn.DestinationAlias => "destination-alias",
                         RoomNativeColumn.UnsafeArrival => "unsafe-arrival", RoomNativeColumn.Requirements => "requirements", RoomNativeColumn.Todo => "todo", RoomNativeColumn.Verification => "verification",
-                        RoomNativeColumn.Destination => "destination", RoomNativeColumn.Type => "type", RoomNativeColumn.Subroom => "subroom", _ => throw new InvalidOperationException()
+                        RoomNativeColumn.Destination => "destination", RoomNativeColumn.Type => "type", RoomNativeColumn.Subroom => "subroom", RoomNativeColumn.Link => "link", _ => throw new InvalidOperationException()
                     };
                     operationInitiators[operation.OperationId] = edit.FocusTarget ?? $"editor-row-{edit.ClientId}-{field}";
                     if (edit.FocusTarget is not null) operationFallbackInitiators[operation.OperationId] = $"editor-row-{edit.ClientId}-{field}";
@@ -495,7 +496,7 @@ public partial class RoomWorkspaceEditor
         // Durable lifecycle buttons use the same room queue as native boundaries.
         if (intent.Action == RoomRowAction.FollowInverse ? InspectionBlocked || nativeOwner is null : AuthoringBlocked) return Task.CompletedTask;
         if (intent.Action is not (RoomRowAction.Annotation or RoomRowAction.FollowInverse) && !TransferKeyboardBeforeAction()) return Task.CompletedTask;
-        var row = CurrentPresentationRow(intent.Section switch { RoomOrderSection.Subrooms => "subroom", RoomOrderSection.Transitions => "transition", RoomOrderSection.Connections => "connection", _ => "check" }, intent.ClientId);
+        var row = CurrentPresentationRow(intent.Section switch { RoomOrderSection.Subrooms => "subroom", RoomOrderSection.Explanations => "explanation", RoomOrderSection.Transitions => "transition", RoomOrderSection.Connections => "connection", _ => "check" }, intent.ClientId);
         if (row.EntityId is null || row.Attention) return Task.CompletedTask;
         if (intent.Action == RoomRowAction.FollowInverse && (intent.Section != RoomOrderSection.Transitions
             || row is not RoomTransitionRow { IsArchived: false, CanPrepareInverse: false, InverseRoomId: not null })) return Task.CompletedTask;
@@ -512,7 +513,8 @@ public partial class RoomWorkspaceEditor
             var id = row.EntityId ?? throw new InvalidOperationException();
             workspace.Enqueue(row switch
             {
-                RoomSubroomRow => new SetRoomSubroomArchive(id, row.IsArchived, archived), RoomTransitionRow => new SetRoomTransitionArchive(id, row.IsArchived, archived),
+                RoomSubroomRow => new SetRoomSubroomArchive(id, row.IsArchived, archived), RoomExplanationRow => new SetRoomExplanationArchive(id, row.IsArchived, archived),
+                RoomTransitionRow => new SetRoomTransitionArchive(id, row.IsArchived, archived),
                 RoomConnectionRow => new SetRoomConnectionArchive(id, row.IsArchived, archived), RoomCheckRow => new SetRoomCheckArchive(id, row.IsArchived, archived), _ => throw new InvalidOperationException()
             });
             StateHasChanged(); return DrainAsync();
@@ -543,6 +545,7 @@ public partial class RoomWorkspaceEditor
     private IReadOnlyList<ConflictField>? ConflictRows(RoomHeadEvidence evidence) => evidence switch
     {
         RoomHeaderConflictEvidence x => Review(x.Reviewed, x.Submitted, x.DivergentFields), RoomSubroomConflictEvidence x => Review(x.Reviewed, x.Submitted, x.DivergentFields),
+        RoomExplanationConflictEvidence x => Review(x.Reviewed, x.Submitted, x.DivergentFields),
         RoomTransitionConflictEvidence x => Review(x.Reviewed, x.Submitted, x.DivergentFields), RoomConnectionConflictEvidence x => Review(x.Reviewed, x.Submitted, x.DivergentFields),
         RoomCheckConflictEvidence x => Review(x.Reviewed, x.Submitted, x.DivergentFields), RoomMetadataConflictEvidence x => Review(x.Reviewed, x.Submitted, x.DivergentFields),
         RoomGeometryConflictEvidence x => GeometryConflictRows(x),

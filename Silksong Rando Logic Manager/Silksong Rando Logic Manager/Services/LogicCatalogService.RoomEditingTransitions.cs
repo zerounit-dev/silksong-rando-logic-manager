@@ -36,7 +36,7 @@ public sealed partial class LogicCatalogService
                         Wire.RoomTerminalDisposition.UserReverted,
                         null, [], null));
                     return Task.FromResult<RoomMutationEffect?>(new(tracker.Identity.RoomId, [], [],
-                        RoomProjectionFamilies.None, Wire.RoomSceneConcerns.None, new([], [], [], [])));
+                        RoomProjectionFamilies.None, Wire.RoomSceneConcerns.None, new([], [], [], [], [])));
                 }
                 return ExecuteTrackedTransitionCoreAsync(tracker, choice.Choice);
             default: throw new RoomTrackingProtocolException("The resolution does not match the transition workflow.");

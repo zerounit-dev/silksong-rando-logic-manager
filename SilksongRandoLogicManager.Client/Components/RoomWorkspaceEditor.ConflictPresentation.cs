@@ -37,6 +37,13 @@ public partial class RoomWorkspaceEditor
         Field("Comments", s.Comments, u.Comments, d, RoomHeaderField.Comments)
     ];
 
+    private static IReadOnlyList<ConflictField> Review(RoomExplanationValues s, RoomExplanationValues u, ImmutableArray<RoomExplanationField> d) =>
+    [
+        Field("Name", s.FriendlyName, u.FriendlyName, d, RoomExplanationField.FriendlyName),
+        Field("Reference", s.ReferenceId, u.ReferenceId, d, RoomExplanationField.ReferenceId),
+        Field("Link", s.Link, u.Link, d, RoomExplanationField.Link),
+        Field("Notes", s.Notes, u.Notes, d, RoomExplanationField.Notes)
+    ];
     private static IReadOnlyList<ConflictField> Review(RoomSubroomValues s, RoomSubroomValues u, ImmutableArray<RoomSubroomField> d) =>
     [
         Field("Name", s.FriendlyName, u.FriendlyName, d, RoomSubroomField.FriendlyName),

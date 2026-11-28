@@ -12,7 +12,7 @@ public sealed class AppliedCompletionIndex
 {
     public sealed record RoomFacts(StatusRoom Room, ImmutableArray<StatusSubroom> Subrooms,
         ImmutableArray<StatusTransition> Transitions, ImmutableArray<StatusConnection> Connections,
-        ImmutableArray<StatusCheck> Checks);
+        ImmutableArray<StatusCheck> Checks, ImmutableArray<StatusExplanation> Explanations);
 
     private readonly Dictionary<Guid, RoomFacts> owners = [];
     private readonly Dictionary<Guid, StatusTransition> transitions = [];
@@ -195,6 +195,7 @@ public sealed class AppliedCompletionIndex
             var rows = new Dictionary<Guid, StatusTransition>();
             var connections = new List<StatusConnection>();
             var checks = new List<StatusCheck>();
+            var explanations = new List<StatusExplanation>();
             foreach (var id in requested.Distinct())
             {
                 var facts = Owner(id);
@@ -208,6 +209,7 @@ public sealed class AppliedCompletionIndex
                 subrooms.AddRange(facts.Subrooms);
                 connections.AddRange(facts.Connections);
                 checks.AddRange(facts.Checks);
+                explanations.AddRange(facts.Explanations);
                 foreach (var row in facts.Transitions)
                 {
                     rows[row.Id] = row;
@@ -223,7 +225,7 @@ public sealed class AppliedCompletionIndex
                 }
             }
             return AppliedRoomStatusCalculation.Calculate(rooms.Values.ToArray(), subrooms, rows.Values.ToArray(),
-                connections, checks, requested);
+                connections, checks, explanations, requested);
 
             void AddRoom(Guid id)
             {

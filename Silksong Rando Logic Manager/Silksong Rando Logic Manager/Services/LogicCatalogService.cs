@@ -213,7 +213,7 @@ public sealed partial class LogicCatalogService(IDbContextFactory<LogicDbContext
     private async Task ValidateRequirementsAsync(LogicDbContext db, ArchivableEntity row, RequirementBearingRowKind kind,
         CancellationToken cancellationToken)
     {
-        var context = await requirementStatus.LoadContextAsync(db, cancellationToken);
+        var context = await requirementStatus.LoadContextAsync(db, RequirementOwner(row), cancellationToken);
         await ValidateRequirementsAsync(db, context, row, kind, cancellationToken);
     }
 
@@ -228,13 +228,7 @@ public sealed partial class LogicCatalogService(IDbContextFactory<LogicDbContext
         RequirementBearingRowKind kind)
     {
         if (row.IsArchived) return;
-        var roomId = row switch
-        {
-            RoomTransition value => value.RoomId,
-            SubroomConnection value => value.RoomId,
-            CheckLocation value => value.RoomId,
-            _ => throw new ArgumentOutOfRangeException(nameof(row))
-        };
+        var roomId = RequirementOwner(row);
         if (!context.Rooms.Any(room => room.Id == roomId)) return;
         var requirements = row switch
         {
@@ -251,6 +245,14 @@ public sealed partial class LogicCatalogService(IDbContextFactory<LogicDbContext
             case CheckLocation value: value.RequirementsParseSucceeded = status; break;
         }
     }
+
+    private static Guid RequirementOwner(ArchivableEntity row) => row switch
+    {
+        RoomTransition value => value.RoomId,
+        SubroomConnection value => value.RoomId,
+        CheckLocation value => value.RoomId,
+        _ => throw new ArgumentOutOfRangeException(nameof(row))
+    };
 
     private static bool TextMatches(string? left, string? right) =>
         !string.IsNullOrWhiteSpace(left) && !string.IsNullOrWhiteSpace(right) &&

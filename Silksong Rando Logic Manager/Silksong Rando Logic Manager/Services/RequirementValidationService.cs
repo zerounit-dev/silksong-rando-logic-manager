@@ -7,6 +7,7 @@ using System.Globalization;
 using System.Runtime.ExceptionServices;
 using System.Text;
 using Silksong_Rando_Logic_Manager.Authentication;
+using SilksongRandoLogicManager.Contracts;
 
 namespace Silksong_Rando_Logic_Manager.Services;
 
@@ -88,8 +89,9 @@ public sealed class RequirementValidationService : IRequirementValidationService
             var checks = await db.CheckLocations.Where(row => !row.IsArchived && activeRoomIds.Contains(row.RoomId)).ToListAsync(cancellationToken);
             var transitions = await db.RoomTransitions.Where(row => !row.IsArchived && activeRoomIds.Contains(row.RoomId)).ToListAsync(cancellationToken);
             var connections = await db.SubroomConnections.Where(row => !row.IsArchived && activeRoomIds.Contains(row.RoomId)).ToListAsync(cancellationToken);
+            var explanations = await ExplanationReferenceReader.LoadAsync(db, null, cancellationToken);
             var context = new RequirementValidationContext(predicates, items, rooms,
-                checks.Select(row => new RequirementValidationCheck(row.Id, row.RoomId, row.FriendlyName)).ToArray(), countables, souls, crests, methods);
+                checks.Select(row => new RequirementValidationCheck(row.Id, row.RoomId, row.FriendlyName)).ToArray(), countables, souls, crests, methods, explanations);
 
             var results = new List<RequirementValidationRowResult>(transitions.Count + connections.Count + checks.Count);
             foreach (var row in transitions)
@@ -171,7 +173,7 @@ public sealed class RequirementValidationService : IRequirementValidationService
                 return CreateResult([]) with { HistoryWarning = history.Warning };
             }
 
-            var context = await LoadContextAsync(db, cancellationToken);
+            var context = await LoadContextAsync(db, roomId, cancellationToken);
             var checks = await db.CheckLocations.Where(row => row.RoomId == roomId && !row.IsArchived && !row.Room.IsArchived).ToListAsync(cancellationToken);
             var transitions = await db.RoomTransitions.Where(row => row.RoomId == roomId && !row.IsArchived && !row.Room.IsArchived).ToListAsync(cancellationToken);
             var connections = await db.SubroomConnections.Where(row => row.RoomId == roomId && !row.IsArchived && !row.Room.IsArchived).ToListAsync(cancellationToken);
@@ -202,7 +204,7 @@ public sealed class RequirementValidationService : IRequirementValidationService
         }
     }
 
-    internal async Task<RequirementValidationContext> LoadContextAsync(LogicDbContext db, CancellationToken cancellationToken)
+    internal async Task<RequirementValidationContext> LoadContextAsync(LogicDbContext db, Guid owningRoomId, CancellationToken cancellationToken)
     {
         var predicates = await LoadPredicatesAsync(db, cancellationToken);
         var items = await LoadItemsAsync(db, cancellationToken);
@@ -214,7 +216,8 @@ public sealed class RequirementValidationService : IRequirementValidationService
             .Select(row => new RequirementValidationRoom(row.Id, row.ReferenceId)).ToListAsync(cancellationToken);
         var checks = await db.CheckLocations.AsNoTracking().Where(row => !row.IsArchived && !row.Room.IsArchived)
             .Select(row => new RequirementValidationCheck(row.Id, row.RoomId, row.FriendlyName)).ToListAsync(cancellationToken);
-        return new(predicates, items, rooms, checks, countables, souls, crests, methods);
+        var explanations = await ExplanationReferenceReader.LoadAsync(db, owningRoomId, cancellationToken);
+        return new(predicates, items, rooms, checks, countables, souls, crests, methods, explanations);
     }
 
     internal bool? ValidateSafely(RequirementValidationContext context, Guid roomId, Guid rowId,
@@ -289,7 +292,8 @@ internal sealed class RequirementValidationContext
         IEnumerable<RequirementValidationItem> countables,
         IEnumerable<RequirementValidationItem> souls,
         IEnumerable<RequirementValidationItem> crests,
-        IEnumerable<RequirementValidationItem> methods)
+        IEnumerable<RequirementValidationItem> methods,
+        ILookup<Guid, string> explanations)
     {
         Predicates = predicates.ToImmutableArray();
         Items = items.ToImmutableArray();
@@ -301,7 +305,7 @@ internal sealed class RequirementValidationContext
         Methods = methods.ToImmutableArray();
         try
         {
-            Prepared = ManagedRequirementValidator.Prepare(Predicates, Items, Rooms, Checks, Countables, Souls, Crests, Methods);
+            Prepared = ManagedRequirementValidator.Prepare(Predicates, Items, Rooms, Checks, Countables, Souls, Crests, Methods, explanations);
         }
         catch (Exception exception)
         {
@@ -343,7 +347,8 @@ internal static class ManagedRequirementValidator
         ImmutableArray<RequirementValidationItem> countableRows,
         ImmutableArray<RequirementValidationItem> soulRows,
         ImmutableArray<RequirementValidationItem> crestRows,
-        ImmutableArray<RequirementValidationItem> methodRows)
+        ImmutableArray<RequirementValidationItem> methodRows,
+        ILookup<Guid, string> explanations)
     {
         var predicates = predicateRows.SelectMany(predicate =>
         {
@@ -367,7 +372,7 @@ internal static class ManagedRequirementValidator
         var souls = PrepareTypedAliases(soulRows, "soul");
         var crests = PrepareTypedAliases(crestRows, "crest");
         var methods = PrepareTypedAliases(methodRows, "method");
-        return new(predicates, items, rooms, checks, countables, souls, crests, methods);
+        return new(predicates, items, rooms, checks, countables, souls, crests, methods, explanations);
     }
 
     private static ImmutableArray<string> PrepareTypedAliases(ImmutableArray<RequirementValidationItem> rows, string kind)
@@ -398,7 +403,8 @@ internal static class ManagedRequirementValidator
         ImmutableArray<string> Countables,
         ImmutableArray<string> Souls,
         ImmutableArray<string> Crests,
-        ImmutableArray<string> Methods);
+        ImmutableArray<string> Methods,
+        ILookup<Guid, string> Explanations);
 
     private sealed class Parser(string source, Guid owningRoomId, PreparedContext context)
     {
@@ -442,7 +448,8 @@ internal static class ManagedRequirementValidator
                     while (position < source.Length)
                     {
                         var character = source[position];
-                        if (bracketDepth == 0 && (character is '(' or ')' || WordAt("AND") || WordAt("OR"))) break;
+                        if (bracketDepth == 0 && (character is '(' or ')' || WordAt("AND") || WordAt("OR") || WordAt("SEE"))) break;
+                        if (bracketDepth > 0 && WordAt("SEE")) return false;
                         if (character == '[') bracketDepth++;
                         if (character == ']') bracketDepth--;
                         if (bracketDepth < 0) return false;
@@ -459,6 +466,17 @@ internal static class ManagedRequirementValidator
                 hasOperand = true;
                 SkipWhitespace();
                 if (atomic && position < source.Length && source[position] == '(' && !ParseAnnotation()) return false;
+                SkipWhitespace();
+                if (WordAt("SEE"))
+                {
+                    position += 3;
+                    var start = position;
+                    var suffix = ExplanationReferenceReader.ScanSuffix(source, start, WordAt);
+                    if (!suffix.Balanced || suffix.Repeated ||
+                        !ExplanationRules.Resolves(context.Explanations, owningRoomId, source[start..suffix.End]))
+                        return false;
+                    position = suffix.End;
+                }
             }
         }
 

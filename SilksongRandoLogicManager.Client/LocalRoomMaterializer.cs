@@ -42,6 +42,7 @@ internal static class LocalRoomMaterializer
         var transitions = await ChildrenAsync(read.Transitions, x => x.RoomId, roomId, yield, token);
         var connections = await ChildrenAsync(read.Connections, x => x.RoomId, roomId, yield, token);
         var checks = await ChildrenAsync(read.Checks, x => x.RoomId, roomId, yield, token);
+        var explanations = await ChildrenAsync(read.Explanations, x => x.RoomId, roomId, yield, token);
         if (read.Rooms.IsEmpty) return null;
         var source = read.Rooms.Single();
         token.ThrowIfCancellationRequested();
@@ -53,7 +54,8 @@ internal static class LocalRoomMaterializer
             await MapAsync(subrooms[roomId], x => x.Snapshot, yield, token),
             await MapAsync(transitions[roomId], x => x.Snapshot, yield, token),
             await MapAsync(connections[roomId], x => x.Snapshot, yield, token),
-            await MapAsync(checks[roomId], x => x.Snapshot, yield, token));
+             await MapAsync(checks[roomId], x => x.Snapshot, yield, token),
+             await MapAsync(explanations[roomId], x => x.Snapshot, yield, token));
         var groups = read.Groups;
         if (groups.Length != (header.RoomGroupId is null ? 0 : 1)
             || groups.SingleOrDefault()?.Id != header.RoomGroupId) throw new JsonException("Wrong demanded Room group context.");
@@ -79,6 +81,6 @@ internal static class LocalRoomMaterializer
                 x.Values.Alias, x.Values.FriendlyName, x.Values.SourceSubroomReferenceText, x.Values.DestinationSubroomReferenceText,
                 x.ResolvedSourceSubroomId, x.ResolvedDestinationSubroomId, x.EnableAnnotation, x.SceneUnitX, x.SceneUnitY)).ToArray(),
             h.Metadata.ImageExists);
-        return new(room.Observation, h, room.Subrooms, room.Transitions, room.Connections, room.Checks, scene) { ReadContext = context };
+        return new(room.Observation, h, room.Subrooms, room.Transitions, room.Connections, room.Checks, scene, room.Explanations) { ReadContext = context };
     }
 }

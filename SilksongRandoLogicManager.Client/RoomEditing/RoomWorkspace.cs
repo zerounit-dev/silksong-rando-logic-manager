@@ -18,6 +18,7 @@ public sealed partial class RoomWorkspace
     public RoomHeaderValues Header { get; private set; }
     public RoomHeaderValues InitialHeader { get; }
     public IReadOnlyList<RoomSubroomRow> Subrooms { get; private set; } = [];
+    public IReadOnlyList<RoomExplanationRow> Explanations { get; private set; } = [];
     public IReadOnlyList<RoomTransitionRow> Transitions { get; private set; } = [];
     public IReadOnlyList<RoomConnectionRow> Connections { get; private set; } = [];
     public RoomCheckSectionRows CheckLocations { get; private set; } = new([], []);
@@ -164,10 +165,12 @@ public sealed partial class RoomWorkspace
         RoomEditOperation? operation = (original, submitted) switch
         {
             (RoomSubroomRow a, RoomSubroomRow b) when a.EntityId is null && Meaningful(b) => new CreateRoomSubroom(a.ClientId, b.Values),
+            (RoomExplanationRow a, RoomExplanationRow b) when a.EntityId is null && Meaningful(b) => new CreateRoomExplanation(a.ClientId, b.Values),
             (RoomTransitionRow a, RoomTransitionRow b) when a.EntityId is null && Meaningful(b) => new CreateRoomTransition(a.ClientId, b.Values),
             (RoomConnectionRow a, RoomConnectionRow b) when a.EntityId is null && Meaningful(b) => new CreateRoomConnection(a.ClientId, b.Values),
             (RoomCheckRow a, RoomCheckRow b) when a.EntityId is null && Meaningful(b) => new CreateRoomCheck(a.ClientId, b.Values),
             (RoomSubroomRow a, RoomSubroomRow b) when a.EntityId is { } id && a.Values != b.Values => new SaveRoomSubroom(id, Origin(a, a.Values), b.Values),
+            (RoomExplanationRow a, RoomExplanationRow b) when a.EntityId is { } id && a.Values != b.Values => new SaveRoomExplanation(id, Origin(a, a.Values), b.Values),
             (RoomTransitionRow a, RoomTransitionRow b) when a.EntityId is { } id && a.Values != b.Values => new SaveRoomTransition(id, Origin(a, a.Values), b.Values),
             (RoomConnectionRow a, RoomConnectionRow b) when a.EntityId is { } id && a.Values != b.Values => new SaveRoomConnection(id, Origin(a, a.Values), b.Values),
             (RoomCheckRow a, RoomCheckRow b) when a.EntityId is { } id && a.Values != b.Values => new SaveRoomCheck(id, Origin(a, a.Values), b.Values),
@@ -353,15 +356,16 @@ public sealed partial class RoomWorkspace
     }
     private sealed record Installation(RoomHeaderValues Header, List<RoomTableRow> Rows,
         IReadOnlyList<RoomSubroomRow> Subrooms, IReadOnlyList<RoomTransitionRow> Transitions, IReadOnlyList<RoomConnectionRow> Connections,
-        RoomCheckSectionRows CheckLocations, RoomCheckSectionRows Enemies);
+        RoomCheckSectionRows CheckLocations, RoomCheckSectionRows Enemies, IReadOnlyList<RoomExplanationRow> Explanations);
     private static Installation Materialize(RoomHeaderValues header, List<RoomTableRow> rows) => new(header, rows,
         rows.OfType<RoomSubroomRow>().ToArray(), rows.OfType<RoomTransitionRow>().ToArray(), rows.OfType<RoomConnectionRow>().ToArray(),
         new(rows.OfType<RoomCheckRow>().Where(x => !x.Enemies && !x.IsArchived).ToArray(), rows.OfType<RoomCheckRow>().Where(x => !x.Enemies && x.IsArchived).ToArray()),
-        new(rows.OfType<RoomCheckRow>().Where(x => x.Enemies && !x.IsArchived).ToArray(), rows.OfType<RoomCheckRow>().Where(x => x.Enemies && x.IsArchived).ToArray()));
+        new(rows.OfType<RoomCheckRow>().Where(x => x.Enemies && !x.IsArchived).ToArray(), rows.OfType<RoomCheckRow>().Where(x => x.Enemies && x.IsArchived).ToArray()),
+        rows.OfType<RoomExplanationRow>().ToArray());
     private void Install(Installation value)
     {
         Header = value.Header; rows = value.Rows; Subrooms = value.Subrooms; Transitions = value.Transitions; Connections = value.Connections;
-        CheckLocations = value.CheckLocations; Enemies = value.Enemies;
+        CheckLocations = value.CheckLocations; Enemies = value.Enemies; Explanations = value.Explanations;
     }
     private RoomNativeField[] NativePatches(Installation projection, ImmutableArray<RoomNativeField> snapshot, IReadOnlyDictionary<FieldKey, long>? generations = null)
     {
@@ -380,7 +384,7 @@ public sealed partial class RoomWorkspace
     {
         var id = operation switch
         {
-            CreateRoomSubroom x => x.EntityId, CreateRoomTransition x => x.EntityId,
+            CreateRoomSubroom x => x.EntityId, CreateRoomTransition x => x.EntityId, CreateRoomExplanation x => x.EntityId,
             CreateRoomConnection x => x.EntityId, CreateRoomCheck x => x.EntityId, _ => Guid.Empty
         };
         if (id == Guid.Empty || rows.SingleOrDefault(x => x.ClientId == id) is not { } previous) return null;
@@ -389,6 +393,7 @@ public sealed partial class RoomWorkspace
         switch (operation)
         {
             case CreateRoomSubroom x: ((RoomSubroomRow)draft).Values = x.Submitted; break;
+            case CreateRoomExplanation x: ((RoomExplanationRow)draft).Values = x.Submitted; break;
             case CreateRoomTransition x: ((RoomTransitionRow)draft).Values = x.Submitted; break;
             case CreateRoomConnection x: ((RoomConnectionRow)draft).Values = x.Submitted; break;
             case CreateRoomCheck x: ((RoomCheckRow)draft).Values = x.Submitted; break;

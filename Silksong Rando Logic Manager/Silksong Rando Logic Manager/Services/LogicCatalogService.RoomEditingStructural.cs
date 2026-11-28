@@ -29,6 +29,7 @@ public sealed partial class LogicCatalogService
         var transitions = await db.RoomTransitions.Where(x => x.RoomId == roomId).ToListAsync();
         var transitionIds = transitions.Select(x => x.Id).ToArray();
         var subrooms = await db.Subrooms.Where(x => x.RoomId == roomId).ToListAsync();
+        var explanations = await db.RequirementExplanations.Where(x => x.RoomId == roomId).ToListAsync();
         var connections = await db.SubroomConnections.Where(x => x.RoomId == roomId).ToListAsync();
         var checks = await db.CheckLocations.Where(x => x.RoomId == roomId).ToListAsync();
         await db.RoomTransitions.Where(x => !transitionIds.Contains(x.Id) && x.ResolvedDestinationRoomId == roomId)
@@ -38,7 +39,8 @@ public sealed partial class LogicCatalogService
             .ExecuteUpdateAsync(s => s.SetProperty(x => x.ResolvedDestinationTransitionId, (Guid?)null));
         await db.MapScenes.Where(x => x.ResolvedRoomId == roomId)
             .ExecuteUpdateAsync(s => s.SetProperty(x => x.ResolvedRoomId, (Guid?)null));
-        db.RemoveRange(checks); db.RemoveRange(connections); db.RemoveRange(transitions); db.RemoveRange(subrooms); db.Remove(room);
+        db.RemoveRange(checks); db.RemoveRange(connections); db.RemoveRange(transitions); db.RemoveRange(subrooms);
+        db.RemoveRange(explanations); db.Remove(room);
         await db.SaveChangesAsync(CancellationToken.None);
         var effect = await scope.CompleteAsync(db, tx, RoomProjectionFamilies.Transitions, Wire.RoomSceneConcerns.None);
         if (sceneImages is not null)
@@ -65,6 +67,7 @@ public sealed partial class LogicCatalogService
         {
             Wire.SetRoomArchive x => (tracker.Identity.RoomId, x.Archived),
             Wire.SetRoomSubroomArchive x => (x.EntityId, x.Archived),
+            Wire.SetRoomExplanationArchive x => (x.EntityId, x.Archived),
             Wire.SetRoomTransitionArchive x => (x.EntityId, x.Archived),
             Wire.SetRoomConnectionArchive x => (x.EntityId, x.Archived),
             Wire.SetRoomCheckArchive x => (x.EntityId, x.Archived),
@@ -76,6 +79,7 @@ public sealed partial class LogicCatalogService
         {
             Wire.SetRoomArchive => await db.Rooms.SingleOrDefaultAsync(x => x.Id == id),
             Wire.SetRoomSubroomArchive => await db.Subrooms.SingleOrDefaultAsync(x => x.Id == id && x.RoomId == tracker.Identity.RoomId),
+            Wire.SetRoomExplanationArchive => await db.RequirementExplanations.SingleOrDefaultAsync(x => x.Id == id && x.RoomId == tracker.Identity.RoomId),
             Wire.SetRoomTransitionArchive => await db.RoomTransitions.SingleOrDefaultAsync(x => x.Id == id && x.RoomId == tracker.Identity.RoomId),
             Wire.SetRoomConnectionArchive => await db.SubroomConnections.SingleOrDefaultAsync(x => x.Id == id && x.RoomId == tracker.Identity.RoomId),
             Wire.SetRoomCheckArchive => await db.CheckLocations.SingleOrDefaultAsync(x => x.Id == id && x.RoomId == tracker.Identity.RoomId),
@@ -93,7 +97,7 @@ public sealed partial class LogicCatalogService
             switch (row)
             {
                 case Room room:
-                    var context = await requirementStatus.LoadContextAsync(db, CancellationToken.None);
+                    var context = await requirementStatus.LoadContextAsync(db, room.Id, CancellationToken.None);
                     var transitions = await db.RoomTransitions.Where(x => x.RoomId == room.Id && !x.IsArchived).ToListAsync();
                     var connections = await db.SubroomConnections.Where(x => x.RoomId == room.Id && !x.IsArchived).ToListAsync();
                     var checks = await db.CheckLocations.Where(x => x.RoomId == room.Id && !x.IsArchived).ToListAsync();
@@ -109,14 +113,16 @@ public sealed partial class LogicCatalogService
         }
         var family = row switch
         {
-            Room => RoomProjectionFamilies.All,
+            Room => RoomProjectionFamilies.All | RoomProjectionFamilies.Explanations,
             Subroom => RoomProjectionFamilies.Subrooms,
+            RequirementExplanation => RoomProjectionFamilies.Explanations,
             RoomTransition => RoomProjectionFamilies.Transitions,
             SubroomConnection => RoomProjectionFamilies.Connections,
             CheckLocation => RoomProjectionFamilies.Checks,
             _ => throw new ArgumentOutOfRangeException(nameof(row))
         };
-        var concerns = Wire.RoomSceneConcerns.Canvas | Wire.RoomSceneConcerns.Viewport;
+        var concerns = row is RequirementExplanation ? Wire.RoomSceneConcerns.None
+            : Wire.RoomSceneConcerns.Canvas | Wire.RoomSceneConcerns.Viewport;
         if (row is Room) concerns |= Wire.RoomSceneConcerns.BoundsImageAction | Wire.RoomSceneConcerns.ImageDisplay;
         return await scope.CompleteAsync(db, tx, family, concerns);
     }
@@ -129,6 +135,7 @@ public sealed partial class LogicCatalogService
         var (id, target) = operation switch
         {
             Wire.ReorderRoomSubroom x => (x.EntityId, x.TargetIndex),
+            Wire.ReorderRoomExplanation x => (x.EntityId, x.TargetIndex),
             Wire.ReorderRoomTransition x => (x.EntityId, x.TargetIndex),
             Wire.ReorderRoomConnection x => (x.EntityId, x.TargetIndex),
             Wire.ReorderRoomCheck x => (x.EntityId, x.TargetIndex),
@@ -152,6 +159,14 @@ public sealed partial class LogicCatalogService
                 if (!MoveTrackedRows(transitions, id, target, x => x.Id, (x, order) => x.SortOrder = order))
                 { RoomEditingMutationScope.Missing(tracker, id); return null; }
                 family = RoomProjectionFamilies.Transitions;
+                break;
+            case Wire.ReorderRoomExplanation:
+                var explanations = await db.RequirementExplanations.Where(x => x.RoomId == tracker.Identity.RoomId && !x.IsArchived)
+                    .OrderBy(x => x.SortOrder).ThenBy(x => x.Id).ToListAsync();
+                if (!MoveTrackedRows(explanations, id, target, x => x.Id, (x, order) => x.SortOrder = order,
+                    preserveUnchangedPlacement: true))
+                { RoomEditingMutationScope.Missing(tracker, id); return null; }
+                family = RoomProjectionFamilies.Explanations;
                 break;
             case Wire.ReorderRoomConnection:
                 var connections = await db.SubroomConnections.Where(x => x.RoomId == tracker.Identity.RoomId && !x.IsArchived).OrderBy(x => x.SortOrder).ThenBy(x => x.Id).ToListAsync();
@@ -189,10 +204,14 @@ public sealed partial class LogicCatalogService
         return await scope.CompleteAsync(db, tx, family, concerns);
     }
 
-    private static bool MoveTrackedRows<T>(List<T> rows, Guid id, int target, Func<T, Guid> identity, Action<T, int> setOrder)
+    private static bool MoveTrackedRows<T>(List<T> rows, Guid id, int target, Func<T, Guid> identity, Action<T, int> setOrder,
+        bool preserveUnchangedPlacement = false)
     {
         var index = rows.FindIndex(x => identity(x) == id);
         if (index < 0) return false;
+        // An effective no-op must not compact gaps occupied by archived Explanations.
+        if (preserveUnchangedPlacement && Math.Clamp(target > index ? target - 1 : target, 0, rows.Count - 1) == index)
+            return true;
         var moving = rows[index]; rows.RemoveAt(index);
         if (index < target) target--;
         rows.Insert(Math.Clamp(target, 0, rows.Count), moving);
@@ -208,6 +227,7 @@ public sealed partial class LogicCatalogService
         var id = operation switch
         {
             Wire.DeleteRoomSubroom x => x.ConfirmedArchivedRow.EntityId,
+            Wire.DeleteRoomExplanation x => x.ConfirmedArchivedRow.EntityId,
             Wire.DeleteRoomTransition x => x.ConfirmedArchivedRow.EntityId,
             Wire.DeleteRoomConnection x => x.ConfirmedArchivedRow.EntityId,
             Wire.DeleteRoomCheck x => x.ConfirmedArchivedRow.EntityId,
@@ -218,6 +238,7 @@ public sealed partial class LogicCatalogService
         ArchivableEntity? row = operation switch
         {
             Wire.DeleteRoomSubroom => await db.Subrooms.SingleOrDefaultAsync(x => x.Id == id && x.RoomId == tracker.Identity.RoomId),
+            Wire.DeleteRoomExplanation => await db.RequirementExplanations.SingleOrDefaultAsync(x => x.Id == id && x.RoomId == tracker.Identity.RoomId),
             Wire.DeleteRoomTransition => await db.RoomTransitions.SingleOrDefaultAsync(x => x.Id == id && x.RoomId == tracker.Identity.RoomId),
             Wire.DeleteRoomConnection => await db.SubroomConnections.SingleOrDefaultAsync(x => x.Id == id && x.RoomId == tracker.Identity.RoomId),
             Wire.DeleteRoomCheck => await db.CheckLocations.SingleOrDefaultAsync(x => x.Id == id && x.RoomId == tracker.Identity.RoomId),
@@ -231,7 +252,7 @@ public sealed partial class LogicCatalogService
         }
         var scope = await RoomEditingMutationScope.CaptureAsync(db, tracker, publication);
         var family = RoomProjectionFamilies.None;
-        var removed = new Wire.RoomRemovedRows([], [], [], []);
+        var removed = new Wire.RoomRemovedRows([], [], [], [], []);
         switch (row)
         {
             case Subroom:
@@ -251,10 +272,13 @@ public sealed partial class LogicCatalogService
                 family = RoomProjectionFamilies.Transitions; removed = removed with { Transitions = [id] };
                 break;
             case SubroomConnection: family = RoomProjectionFamilies.Connections; removed = removed with { Connections = [id] }; break;
+            case RequirementExplanation: family = RoomProjectionFamilies.Explanations; removed = removed with { Explanations = [id] }; break;
             case CheckLocation: family = RoomProjectionFamilies.Checks; removed = removed with { Checks = [id] }; break;
         }
         db.Remove(row);
         await db.SaveChangesAsync(CancellationToken.None);
-        return await scope.CompleteAsync(db, tx, family, Wire.RoomSceneConcerns.Canvas | Wire.RoomSceneConcerns.Viewport, removed);
+        var concerns = row is RequirementExplanation ? Wire.RoomSceneConcerns.None
+            : Wire.RoomSceneConcerns.Canvas | Wire.RoomSceneConcerns.Viewport;
+        return await scope.CompleteAsync(db, tx, family, concerns, removed);
     }
 }

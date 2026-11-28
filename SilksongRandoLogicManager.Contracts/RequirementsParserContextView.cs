@@ -13,7 +13,8 @@ public sealed record RequirementsParserContextView(IReadOnlyList<RequirementsPar
     IReadOnlyList<RequirementsParserCountableView> Countables,
     IReadOnlyList<RequirementsParserSoulView> Souls,
     IReadOnlyList<RequirementsParserCrestView> Crests,
-    IReadOnlyList<RequirementsParserMethodView> Methods);
+    IReadOnlyList<RequirementsParserMethodView> Methods,
+    Guid ExplanationRoomId, IReadOnlyList<string> ExplanationReferences);
 
 public sealed record RequirementsParserCountableView(IReadOnlyList<string> Aliases);
 public sealed record RequirementsParserSoulView(IReadOnlyList<string> Aliases);

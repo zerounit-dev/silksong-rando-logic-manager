@@ -20,6 +20,11 @@ namespace SilksongRandoLogicManager.Contracts;
 [JsonDerivedType(typeof(DeleteRoomSubroom), "delete-subroom")]
 [JsonDerivedType(typeof(SaveRoomSubroomGeometry), "subroom-geometry")]
 [JsonDerivedType(typeof(ChangeRoomSubroomAnnotation), "subroom-annotation")]
+[JsonDerivedType(typeof(CreateRoomExplanation), "create-explanation")]
+[JsonDerivedType(typeof(SaveRoomExplanation), "save-explanation")]
+[JsonDerivedType(typeof(ReorderRoomExplanation), "reorder-explanation")]
+[JsonDerivedType(typeof(SetRoomExplanationArchive), "explanation-archive")]
+[JsonDerivedType(typeof(DeleteRoomExplanation), "delete-explanation")]
 [JsonDerivedType(typeof(CreateRoomTransition), "create-transition")]
 [JsonDerivedType(typeof(SaveRoomTransition), "save-transition")]
 [JsonDerivedType(typeof(RequestRoomTransitionInverse), "transition-inverse")]
@@ -60,6 +65,11 @@ public sealed record DeleteRoomSubroom(RoomRowObservation ConfirmedArchivedRow) 
 public sealed record SaveRoomSubroomGeometry(Guid EntityId, RoomRowOrigin<RoomSubroomGeometry> Origin,
     RoomSubroomRectangle Submitted) : RoomEditOperation;
 public enum RoomSubroomAnnotationAction { Clear, Show, Hide }
+public sealed record CreateRoomExplanation(Guid EntityId, RoomExplanationValues Submitted) : RoomEditOperation;
+public sealed record SaveRoomExplanation(Guid EntityId, RoomRowOrigin<RoomExplanationValues> Origin, RoomExplanationValues Submitted) : RoomEditOperation;
+public sealed record ReorderRoomExplanation(Guid EntityId, RoomOriginalPlacement Original, int TargetIndex) : RoomEditOperation;
+public sealed record SetRoomExplanationArchive(Guid EntityId, bool OriginalArchived, bool Archived) : RoomEditOperation;
+public sealed record DeleteRoomExplanation(RoomRowObservation ConfirmedArchivedRow) : RoomEditOperation;
 public sealed record ChangeRoomSubroomAnnotation(Guid EntityId, RoomRowOrigin<RoomSubroomGeometry> Origin,
     RoomSubroomAnnotationAction Action) : RoomEditOperation;
 
@@ -106,7 +116,7 @@ public sealed record RecheckRoomRequirements : RoomEditOperation;
 
 // Placement is captured evidence, not an expected-order rejection policy. Existing
 // domain ordering interprets the target index and preserves the other check section.
-public enum RoomOrderSection { Subrooms, Transitions, Connections, Checks, Enemies }
+public enum RoomOrderSection { Subrooms, Transitions, Connections, Checks, Enemies, Explanations }
 public sealed record RoomOriginalPlacement(RoomOrderSection Section, int Index, ImmutableArray<Guid> Membership);
 public sealed record RoomSubroomGeometry(double? X, double? Y, double? Width, double? Height, bool EnableAnnotation);
 public sealed record RoomSubroomRectangle(double? X, double? Y, double? Width, double? Height);

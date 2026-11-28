@@ -38,6 +38,7 @@ public partial class RoomWorkspaceEditor
         IEnumerable<RoomTableRow> rows = intent.Section switch
         {
             RoomOrderSection.Subrooms => workspace.Subrooms,
+            RoomOrderSection.Explanations => workspace.Explanations,
             RoomOrderSection.Transitions => workspace.Transitions,
             RoomOrderSection.Connections => workspace.Connections,
             RoomOrderSection.Checks => workspace.CheckLocations.Active.Concat(workspace.CheckLocations.Archived),
@@ -69,6 +70,7 @@ public partial class RoomWorkspaceEditor
         var (family, kind, name) = row switch
         {
             RoomSubroomRow r => (EditorHistoryFamily.Subroom, "Subroom", r.Values.FriendlyName),
+            RoomExplanationRow r => (EditorHistoryFamily.Explanation, "Explanation", r.Values.FriendlyName),
             RoomTransitionRow r => (EditorHistoryFamily.Transition, "Transition", r.Values.FriendlyName),
             RoomConnectionRow r => (EditorHistoryFamily.Connection, "Connection", r.Values.FriendlyName),
             RoomCheckRow r => (EditorHistoryFamily.Check, r.Enemies ? "Enemy" : "Check location", r.Values.FriendlyName),

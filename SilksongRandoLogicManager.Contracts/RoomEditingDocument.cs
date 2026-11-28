@@ -16,6 +16,7 @@ public sealed record RoomHeaderSnapshot(RoomRowObservation Observation, RoomHead
 }
 public sealed record RoomSubroomSnapshot(RoomRowObservation Observation, int SortOrder,
     RoomSubroomValues Values, RoomSubroomGeometry Geometry);
+public sealed record RoomExplanationSnapshot(RoomRowObservation Observation, int SortOrder, RoomExplanationValues Values);
 public sealed record RoomTransitionSnapshot(RoomRowObservation Observation, int SortOrder,
     RoomTransitionValues Values, RoomInGameMetadata Metadata, bool EnableAnnotation,
     bool? RequirementsParseSucceeded, Guid? ResolvedSourceSubroomId, Guid? ResolvedDestinationRoomId,
@@ -30,7 +31,8 @@ public sealed record RoomCheckSnapshot(RoomRowObservation Observation, int SortO
 /// <summary>Complete scalar room facts; scene preparation belongs to the feature read.</summary>
 public sealed record RoomScalarSnapshot(RoomDocumentObservation Observation, RoomHeaderSnapshot Header,
     ImmutableArray<RoomSubroomSnapshot> Subrooms, ImmutableArray<RoomTransitionSnapshot> Transitions,
-    ImmutableArray<RoomConnectionSnapshot> Connections, ImmutableArray<RoomCheckSnapshot> Checks);
+    ImmutableArray<RoomConnectionSnapshot> Connections, ImmutableArray<RoomCheckSnapshot> Checks,
+    ImmutableArray<RoomExplanationSnapshot> Explanations);
 
 /// <summary>
 /// One coherent logic/scene read. Map context has its own sampled loader boundary;
@@ -39,7 +41,7 @@ public sealed record RoomScalarSnapshot(RoomDocumentObservation Observation, Roo
 public sealed record RoomCompleteDocument(RoomDocumentObservation Observation, RoomHeaderSnapshot Header,
     ImmutableArray<RoomSubroomSnapshot> Subrooms, ImmutableArray<RoomTransitionSnapshot> Transitions,
     ImmutableArray<RoomConnectionSnapshot> Connections, ImmutableArray<RoomCheckSnapshot> Checks,
-    SceneLayoutView? Scene)
+    SceneLayoutView? Scene, ImmutableArray<RoomExplanationSnapshot> Explanations)
 {
     // Targeted page-read dependencies/order, not a global inventory certificate.
     public RoomReadContext? ReadContext { get; init; }
@@ -53,7 +55,7 @@ public sealed record RoomOrderReplacement(ImmutableArray<Guid> Active, Immutable
 /// <summary>Both sections replace atomically, never as independently published lists.</summary>
 public sealed record RoomCheckOrderReplacement(RoomOrderReplacement Checks, RoomOrderReplacement Enemies);
 public sealed record RoomRemovedRows(ImmutableArray<Guid> Subrooms, ImmutableArray<Guid> Transitions,
-    ImmutableArray<Guid> Connections, ImmutableArray<Guid> Checks);
+    ImmutableArray<Guid> Connections, ImmutableArray<Guid> Checks, ImmutableArray<Guid> Explanations);
 
 /// <summary>
 /// Complete affected row values from one fresh scalar observation, with disjoint
@@ -68,4 +70,5 @@ public sealed record RoomDocumentDelta(RoomDocumentObservation Observed, RoomDoc
     ImmutableArray<RoomCheckSnapshot> Checks, RoomRemovedRows Removed,
     RoomOrderReplacement? SubroomOrder, RoomOrderReplacement? TransitionOrder,
     RoomOrderReplacement? ConnectionOrder, RoomCheckOrderReplacement? CheckOrder,
-    RoomSceneConcerns SceneConcerns, SceneLayoutView? Scene);
+    RoomSceneConcerns SceneConcerns, SceneLayoutView? Scene,
+    ImmutableArray<RoomExplanationSnapshot> Explanations, RoomOrderReplacement? ExplanationOrder);

@@ -11,10 +11,27 @@ public static class RoomTableDiagnostics
 {
     public static void Apply(RoomCompleteDocument document, RoomDiagnosticIndex.Facts global,
         IReadOnlyList<RoomSubroomRow> subrooms, IReadOnlyList<RoomTransitionRow> transitions,
-        IReadOnlyList<RoomConnectionRow> connections, IReadOnlyList<RoomCheckRow> checks)
+         IReadOnlyList<RoomConnectionRow> connections, IReadOnlyList<RoomCheckRow> checks,
+         IReadOnlyList<RoomExplanationRow> explanations)
     {
         var roomId = document.Observation.RoomId;
         var archived = document.Header.Observation.IsArchived;
+        var explanationReferences = ExplanationRules.ReferenceCounts(explanations
+            .Where(x => x.EntityId is not null && !x.IsArchived).Select(x => x.Values.ReferenceId));
+        foreach (var row in explanations)
+        {
+            var values = row.Values;
+            var reference = ExplanationRules.ReferenceSeverity(values.ReferenceId, explanationReferences);
+            var link = ExplanationRules.LinkSeverity(values.Link);
+            Set(row, ("name", Required(values.FriendlyName)), ("reference", reference), ("link", link));
+            var titles = ImmutableDictionary<string, string>.Empty;
+            if (row.EntityId is not null && !row.IsArchived)
+            {
+                if (reference == V2Severity.Danger) titles = titles.Add("reference", "Another active Explanation in this room uses this Reference.");
+                if (link == V2Severity.Danger) titles = titles.Add("link", "Enter an absolute HTTP or HTTPS URL with a host.");
+            }
+            row.FieldTitles = titles;
+        }
         var subs = subrooms.Where(x => x.EntityId is not null).ToArray();
         var activeSubs = subs.Where(x => !x.IsArchived).ToArray();
         var exits = transitions.Where(x => x.EntityId is not null && !x.IsArchived).ToArray();

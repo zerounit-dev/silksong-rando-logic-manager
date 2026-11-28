@@ -6,10 +6,10 @@ namespace SilksongRandoLogicManager.Client.RoomEditing;
 public enum RoomRowAction { Geometry, Metadata, Annotation, Archive, Restore, Delete, Inverse, FollowInverse, History }
 public sealed record RoomRowActionIntent(RoomOrderSection Section, Guid ClientId, RoomRowAction Action);
 public sealed record RoomNativeField(string Kind, string Client, string Field, string Value, long Generation, bool Composing);
-public enum RoomTableKind { Subroom, Transition, Connection, Check }
+public enum RoomTableKind { Subroom, Transition, Connection, Check, Explanation }
 public enum RoomNativeTrigger { TextBlur, ControlBlur, BoundaryArrow, ControlChange }
 public enum RoomNativeDirection { Left, Right, Up, Down }
-public enum RoomNativeColumn { Name, Reference, Notes, Alias, Source, DestinationRoom, DestinationAlias, UnsafeArrival, Requirements, Todo, Verification, Destination, Type, Subroom }
+public enum RoomNativeColumn { Name, Reference, Notes, Alias, Source, DestinationRoom, DestinationAlias, UnsafeArrival, Requirements, Todo, Verification, Destination, Type, Subroom, Link }
 public abstract record RoomTableBoundaryIntent(RoomTableKind Kind, Guid ClientId, ImmutableArray<RoomNativeField> Fields, long Interaction);
 public sealed record RoomRowBoundaryIntent(RoomTableKind Kind, Guid ClientId, ImmutableArray<RoomNativeField> Fields, long Interaction,
     RoomNativeTrigger Trigger, RoomNativeColumn Column, RoomNativeDirection? Direction, string? FocusTarget)
@@ -45,6 +45,14 @@ public sealed class RoomSubroomRow(Guid clientId, RoomSubroomValues initial) : R
     public RoomSubroomValues Initial { get; } = initial;
     public RoomSubroomValues Values { get; set; } = initial;
     public RoomSubroomGeometry Geometry { get; set; } = new(null, null, null, null, true);
+}
+public sealed class RoomExplanationRow(Guid clientId, RoomExplanationValues initial) : RoomTableRow(clientId)
+{
+    public RoomExplanationValues Initial { get; } = initial;
+    public RoomExplanationValues Values { get; set; } = initial;
+    // Set only for a row present in the confirmed document, not a draft or a
+    // missing receiver retained for correction.
+    public string? ConfirmedLinkHref { get; init; }
 }
 public sealed class RoomTransitionRow(Guid clientId, RoomTransitionValues initial) : RoomTableRow(clientId)
 {

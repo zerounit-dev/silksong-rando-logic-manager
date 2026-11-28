@@ -198,6 +198,7 @@ internal sealed class RoomEditingTracker(TimeProvider clock, SceneImageFileServi
         // them across proposal re-preparation; never rebase a queued original.
         public Wire.RoomMergeReview<Wire.RoomHeaderValues>? HeaderReview { get; set; }
         public Wire.RoomMergeReview<Wire.RoomSubroomValues>? SubroomReview { get; set; }
+        public Wire.RoomMergeReview<Wire.RoomExplanationValues>? ExplanationReview { get; set; }
         public Wire.RoomMergeReview<Wire.RoomTransitionValues>? TransitionReview { get; set; }
         public RoomInverseSourceObservation? InverseSource { get; set; }
         public Wire.RoomMergeReview<Wire.RoomConnectionValues>? ConnectionReview { get; set; }
@@ -331,6 +332,7 @@ internal sealed class RoomEditingTracker(TimeProvider clock, SceneImageFileServi
             Blocked = null;
             HeaderReview = null;
             SubroomReview = null;
+            ExplanationReview = null;
             TransitionReview = null;
             InverseSource = null;
             ConnectionReview = null;
@@ -465,7 +467,7 @@ internal sealed class RoomEditingTracker(TimeProvider clock, SceneImageFileServi
         private static bool ResolutionMatches(Wire.RoomHeadResolution resolution, Wire.RoomBlockedHead blocked) => resolution switch
         {
             Wire.ChooseRoomConflictValues => blocked.Disposition == Wire.RoomBlockedDisposition.ConflictAwaitingChoice
-                && blocked.Evidence is Wire.RoomHeaderConflictEvidence or Wire.RoomSubroomConflictEvidence
+                && blocked.Evidence is Wire.RoomHeaderConflictEvidence or Wire.RoomSubroomConflictEvidence or Wire.RoomExplanationConflictEvidence
                     or Wire.RoomTransitionConflictEvidence or Wire.RoomConnectionConflictEvidence or Wire.RoomCheckConflictEvidence
                     or Wire.RoomMetadataConflictEvidence or Wire.RoomGeometryConflictEvidence
                     or Wire.RoomDirectAnnotationConflictEvidence or Wire.RoomConnectionAnnotationConflictEvidence,

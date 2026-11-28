@@ -157,7 +157,7 @@ async function install(request) {
         db.exec('BEGIN');
         try {
             for (const trigger of rows("SELECT name, tbl_name FROM sqlite_schema WHERE type='trigger'")) {
-                if (!trigger.name.startsWith('CF_') || !['Rooms', 'Subrooms', 'RoomTransitions', 'SubroomConnections', 'CheckLocations'].includes(trigger.tbl_name))
+                if (!trigger.name.startsWith('CF_') || !['Rooms', 'Subrooms', 'RequirementExplanations', 'RoomTransitions', 'SubroomConnections', 'CheckLocations'].includes(trigger.tbl_name))
                     throw new Error('Unexpected trigger in the prepared logic database.');
                 db.exec(`DROP TRIGGER ${quote(trigger.name)}`);
             }

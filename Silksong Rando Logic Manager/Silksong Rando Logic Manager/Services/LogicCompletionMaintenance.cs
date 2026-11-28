@@ -33,7 +33,7 @@ internal static class LogicCompletionMaintenance
         {
             if (change.Table == LogicCacheTable.Rooms) owners.Add(Guid.Parse(change.Key));
             else if (change.Table is LogicCacheTable.Subrooms or LogicCacheTable.RoomTransitions
-                or LogicCacheTable.SubroomConnections or LogicCacheTable.CheckLocations)
+                or LogicCacheTable.SubroomConnections or LogicCacheTable.CheckLocations or LogicCacheTable.RequirementExplanations)
             {
                 var ordinal = change.Columns.ToList().IndexOf("RoomId");
                 if (ordinal < 0) throw new InvalidOperationException("Missing completion owner column.");
@@ -77,6 +77,7 @@ internal static class LogicCompletionMaintenance
         var transitionQuery = db.RoomTransitions.AsNoTracking();
         var connectionQuery = db.SubroomConnections.AsNoTracking();
         var checkQuery = db.CheckLocations.AsNoTracking();
+        var explanationQuery = db.RequirementExplanations.AsNoTracking();
         if (ids is not null)
         {
             roomQuery = roomQuery.Where(x => ids.Contains(x.Id));
@@ -84,6 +85,7 @@ internal static class LogicCompletionMaintenance
             transitionQuery = transitionQuery.Where(x => ids.Contains(x.RoomId));
             connectionQuery = connectionQuery.Where(x => ids.Contains(x.RoomId));
             checkQuery = checkQuery.Where(x => ids.Contains(x.RoomId));
+            explanationQuery = explanationQuery.Where(x => ids.Contains(x.RoomId));
         }
         var rooms = await roomQuery.Select(x => new StatusRoom(x.Id, x.FriendlyName,
             x.ReferenceId, x.InGameId, x.IsArchived)).ToArrayAsync(token);
@@ -103,8 +105,10 @@ internal static class LogicCompletionMaintenance
             x.SubroomReferenceText, x.Requirements, x.LocationType, x.AnnotationSceneUnitX,
             x.AnnotationSceneUnitY, x.ResolvedSubroomId, x.IsTodo, x.IsVerified, x.IsArchived,
             x.RequirementsParseSucceeded)).ToArrayAsync(token)).ToLookup(x => x.RoomId);
+        var explanations = (await explanationQuery.Select(x => new StatusExplanation(x.Id, x.RoomId,
+            x.FriendlyName, x.ReferenceId, x.Link, x.IsArchived)).ToArrayAsync(token)).ToLookup(x => x.RoomId);
         return rooms.ToDictionary(x => x.Id, x => new AppliedCompletionIndex.RoomFacts(x,
             subrooms[x.Id].ToImmutableArray(), transitions[x.Id].ToImmutableArray(),
-            connections[x.Id].ToImmutableArray(), checks[x.Id].ToImmutableArray()));
+            connections[x.Id].ToImmutableArray(), checks[x.Id].ToImmutableArray(), explanations[x.Id].ToImmutableArray()));
     }
 }

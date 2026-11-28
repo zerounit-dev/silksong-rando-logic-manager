@@ -2,7 +2,7 @@ using System.Text.Json.Serialization;
 
 namespace SilksongRandoLogicManager.Contracts;
 
-public enum EditorHistoryFamily { Subroom, Transition, Connection, Check, Room }
+public enum EditorHistoryFamily { Subroom, Transition, Connection, Check, Room, Explanation }
 public enum EditorHistoryState { Active, Archived, Deleted }
 public enum EditorHistoryStatus { Available, HistoryUnavailable }
 
@@ -25,4 +25,4 @@ public sealed record EditorHistoryValues(string? Name, string? Notes, bool Annot
     string? DestinationAlias = null, string? Type = null, bool UnsafeArrival = false, string? Requirements = null,
     bool Todo = false, bool? Verify = null, string? InGameId = null, EditorHistoryPoint? InGamePosition = null,
     EditorHistoryPoint? LocalPosition = null, EditorHistoryPoint? AnnotationPoint = null,
-    EditorHistoryRectangle? AnnotationRectangle = null, EditorHistoryRoomDetails? RoomDetails = null);
+    EditorHistoryRectangle? AnnotationRectangle = null, EditorHistoryRoomDetails? RoomDetails = null, string? Link = null);

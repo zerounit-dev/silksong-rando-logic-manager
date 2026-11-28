@@ -25,7 +25,7 @@
         {
             <div class="history-controls">
                 <div class="history-view-options">
-                    @if (Family != EditorHistoryFamily.Room)
+                    @if (Family is not (EditorHistoryFamily.Room or EditorHistoryFamily.Explanation))
                     {
                         <label class="history-details-option"><input type="checkbox" checked="@showDetails" @onchange="ToggleDetails" />more details</label>
                     }

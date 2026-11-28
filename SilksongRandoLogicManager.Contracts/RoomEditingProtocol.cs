@@ -83,6 +83,7 @@ public sealed record RoomResolutionAttemptSummary(Guid AttemptId, long Sequence,
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "kind")]
 [JsonDerivedType(typeof(RoomHeaderConflictEvidence), "header-conflict")]
 [JsonDerivedType(typeof(RoomSubroomConflictEvidence), "subroom-conflict")]
+[JsonDerivedType(typeof(RoomExplanationConflictEvidence), "explanation-conflict")]
 [JsonDerivedType(typeof(RoomTransitionConflictEvidence), "transition-conflict")]
 [JsonDerivedType(typeof(RoomConnectionConflictEvidence), "connection-conflict")]
 [JsonDerivedType(typeof(RoomCheckConflictEvidence), "check-conflict")]
@@ -99,6 +100,8 @@ public sealed record RoomHeaderConflictEvidence(RoomHeaderValues Reviewed, RoomH
     ImmutableArray<RoomHeaderField> DivergentFields) : RoomHeadEvidence;
 public sealed record RoomSubroomConflictEvidence(RoomSubroomValues Reviewed, RoomSubroomValues Submitted,
     ImmutableArray<RoomSubroomField> DivergentFields) : RoomHeadEvidence;
+public sealed record RoomExplanationConflictEvidence(RoomExplanationValues Reviewed, RoomExplanationValues Submitted,
+    ImmutableArray<RoomExplanationField> DivergentFields) : RoomHeadEvidence;
 public sealed record RoomTransitionConflictEvidence(RoomTransitionValues Reviewed, RoomTransitionValues Submitted,
     ImmutableArray<RoomTransitionField> DivergentFields) : RoomHeadEvidence;
 public sealed record RoomConnectionConflictEvidence(RoomConnectionValues Reviewed, RoomConnectionValues Submitted,

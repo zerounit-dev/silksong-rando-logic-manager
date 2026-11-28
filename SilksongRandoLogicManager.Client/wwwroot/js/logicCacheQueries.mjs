@@ -3,7 +3,7 @@
 // Each scalar is read directly from SQLite into a named result, never a cell graph.
 const quote = name => `"${name.replaceAll('"', '""')}"`;
 const vocabulary = ['Predicates', 'Crests', 'Methods', 'Items', 'Countables', 'Souls'];
-const children = ['Subrooms', 'RoomTransitions', 'SubroomConnections', 'CheckLocations'];
+const children = ['Subrooms', 'RoomTransitions', 'SubroomConnections', 'CheckLocations', 'RequirementExplanations'];
 const uuid = value => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 
 export function extractNamedQuery(db, sqlite, request, current, observation = null, clock = () => performance.now()) {
@@ -186,9 +186,12 @@ export function extractNamedQuery(db, sqlite, request, current, observation = nu
             if (!rooms.length) {
                 const absent = table => select(table, ['Id','RoomId'], r => ({ id: r.text('Id'), roomId: r.text('RoomId') }), 'WHERE RoomId=? COLLATE NOCASE', bind);
                 return { state: current, rooms, subrooms: absent('Subrooms'), transitions: absent('RoomTransitions'),
-                    connections: absent('SubroomConnections'), checks: absent('CheckLocations') };
+                    connections: absent('SubroomConnections'), checks: absent('CheckLocations'), explanations: absent('RequirementExplanations') };
             }
             return { state: current, rooms,
+                explanations: child('RequirementExplanations', ['FriendlyName','ReferenceId','Link','Notes'], r => ({
+                    observation: row(r), sortOrder: r.int('SortOrder'), values: {
+                        friendlyName: r.text('FriendlyName'), referenceId: r.text('ReferenceId'), link: r.text('Link'), notes: r.text('Notes') } })),
                 subrooms: child('Subrooms', ['FriendlyName','ReferenceId','Notes','SceneUnitX','SceneUnitY','SceneUnitWidth','SceneUnitHeight','EnableAnnotation'], r => ({
                     observation: row(r), sortOrder: r.int('SortOrder'), values: { friendlyName: r.text('FriendlyName'), referenceId: r.text('ReferenceId'), notes: r.text('Notes', true) },
                     geometry: { x: r.real('SceneUnitX', true), y: r.real('SceneUnitY', true), width: r.real('SceneUnitWidth', true), height: r.real('SceneUnitHeight', true), enableAnnotation: r.bool('EnableAnnotation') } })),

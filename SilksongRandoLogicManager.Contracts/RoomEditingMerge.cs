@@ -38,6 +38,19 @@ public static class RoomEditingMerge
         return merge.Result(values);
     }
 
+    public static RoomValueMerge<RoomExplanationValues, RoomExplanationField> Explanation(
+        RoomExplanationValues original, RoomExplanationValues submitted, RoomExplanationValues current,
+        RoomMergeReview<RoomExplanationValues>? review = null)
+    {
+        var merge = new Fields<RoomExplanationField>(review?.Choice);
+        var r = review?.Reviewed;
+        return merge.Result(new RoomExplanationValues(
+            merge.Value(RoomExplanationField.FriendlyName, original.FriendlyName, submitted.FriendlyName, current.FriendlyName, r?.FriendlyName ?? current.FriendlyName),
+            merge.Value(RoomExplanationField.ReferenceId, original.ReferenceId, submitted.ReferenceId, current.ReferenceId, r?.ReferenceId ?? current.ReferenceId),
+            merge.Value(RoomExplanationField.Link, original.Link, submitted.Link, current.Link, r?.Link ?? current.Link),
+            merge.Value(RoomExplanationField.Notes, original.Notes, submitted.Notes, current.Notes, r?.Notes ?? current.Notes)));
+    }
+
     public static RoomValueMerge<RoomTransitionValues, RoomTransitionField> Transition(
         RoomTransitionValues original, RoomTransitionValues submitted, RoomTransitionValues current,
         RoomMergeReview<RoomTransitionValues>? review = null)

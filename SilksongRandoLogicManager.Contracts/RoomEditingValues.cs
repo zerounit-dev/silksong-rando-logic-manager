@@ -7,6 +7,7 @@ namespace SilksongRandoLogicManager.Contracts;
 public sealed record RoomHeaderValues(string FriendlyName, string ReferenceId, string? InGameId,
     string? Contributors, string? Comments);
 public sealed record RoomSubroomValues(string FriendlyName, string ReferenceId, string? Notes);
+public sealed record RoomExplanationValues(string FriendlyName, string ReferenceId, string Link, string Notes);
 public sealed record RoomTransitionValues(string Alias, string FriendlyName, string? SourceSubroomReferenceText,
     string? DestinationRoomReferenceText, string? DestinationTransitionAliasText, string Requirements,
     string Notes, bool IsTodo, bool? IsVerified, bool IsUnsafeArrival);
@@ -17,6 +18,7 @@ public sealed record RoomCheckValues(string FriendlyName, string? SubroomReferen
 
 public enum RoomHeaderField { FriendlyName, ReferenceId, InGameId, Contributors, Comments }
 public enum RoomSubroomField { FriendlyName, ReferenceId, Notes }
+public enum RoomExplanationField { FriendlyName, ReferenceId, Link, Notes }
 public enum RoomTransitionField
 {
     Alias, FriendlyName, SourceSubroomReferenceText, DestinationRoomReferenceText,

@@ -16,6 +16,7 @@ internal sealed partial class RecordHistoryStore
         var name = request.Family switch
         {
             EditorHistoryFamily.Subroom => "Subrooms",
+            EditorHistoryFamily.Explanation => nameof(LogicCacheTable.RequirementExplanations),
             EditorHistoryFamily.Transition => "RoomTransitions",
             EditorHistoryFamily.Connection => "SubroomConnections",
             EditorHistoryFamily.Check => "CheckLocations",
@@ -28,7 +29,7 @@ internal sealed partial class RecordHistoryStore
         {
             EditorHistoryFamily.Subroom => new[] { "SceneUnitX", "SceneUnitY", "SceneUnitWidth", "SceneUnitHeight" },
             EditorHistoryFamily.Connection => new[] { "SceneUnitX", "SceneUnitY" },
-            EditorHistoryFamily.Room => [],
+            EditorHistoryFamily.Room or EditorHistoryFamily.Explanation => [],
             _ => new[] { "AnnotationSceneUnitX", "AnnotationSceneUnitY" }
         };
         string[] gameDetails = request.Family is EditorHistoryFamily.Transition or EditorHistoryFamily.Check
@@ -39,7 +40,7 @@ internal sealed partial class RecordHistoryStore
             var table = schema.Single(x => x.Name == name);
             var columns = table.Columns.ToDictionary(x => x.Name, x => x.Ordinal, StringComparer.Ordinal);
             var hiddenOrdinals = positions.Concat(gameDetails).Select(x => columns[x]).ToHashSet();
-            if (request.Family != EditorHistoryFamily.Room) hiddenOrdinals.Add(columns["EnableAnnotation"]);
+            if (request.Family is not (EditorHistoryFamily.Room or EditorHistoryFamily.Explanation)) hiddenOrdinals.Add(columns["EnableAnnotation"]);
             List<StoredVersion> rows;
             long ceiling;
             await using (var connection = Connection(true))
@@ -128,6 +129,8 @@ internal sealed partial class RecordHistoryStore
         if (family == EditorHistoryFamily.Room)
             return new(Text("FriendlyName"), null, false, state, Reference: Text("ReferenceId"), InGameId: Text("InGameId"),
                 RoomDetails: new(Text("Contributors"), Text("Comments"), Text("RoomGroupId") is { } group ? Guid.Parse(group) : null));
+        if (family == EditorHistoryFamily.Explanation)
+            return new(Text("FriendlyName"), Text("Notes"), false, state, Reference: Text("ReferenceId"), Link: Text("Link"));
 
         var values = new EditorHistoryValues(Text("FriendlyName"), Text("Notes"), Flag("EnableAnnotation")!.Value, state);
         var x = NumberAt(positions[0]); var y = NumberAt(positions[1]);

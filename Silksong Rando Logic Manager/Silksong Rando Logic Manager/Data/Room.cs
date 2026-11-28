@@ -49,6 +49,8 @@ public sealed class Room : ArchivableEntity
 
     public ICollection<Subroom> Subrooms { get; } = new List<Subroom>();
 
+    public ICollection<RequirementExplanation> RequirementExplanations { get; } = new List<RequirementExplanation>();
+
     public ICollection<RoomTransition> Transitions { get; } = new List<RoomTransition>();
 
     public ICollection<SubroomConnection> Connections { get; } = new List<SubroomConnection>();

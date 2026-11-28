@@ -10,6 +10,7 @@ public sealed class LogicDbContext(DbContextOptions<LogicDbContext> options) : D
     public DbSet<RoomGroup> RoomGroups => Set<RoomGroup>();
     public DbSet<Room> Rooms => Set<Room>();
     public DbSet<Subroom> Subrooms => Set<Subroom>();
+    public DbSet<RequirementExplanation> RequirementExplanations => Set<RequirementExplanation>();
     public DbSet<RoomTransition> RoomTransitions => Set<RoomTransition>();
     public DbSet<SubroomConnection> SubroomConnections => Set<SubroomConnection>();
     public DbSet<CheckLocation> CheckLocations => Set<CheckLocation>();
@@ -56,6 +57,7 @@ public sealed class LogicDbContext(DbContextOptions<LogicDbContext> options) : D
         ConfigureRoomGroup(modelBuilder.Entity<RoomGroup>());
         ConfigureRoom(modelBuilder.Entity<Room>());
         ConfigureSubroom(modelBuilder.Entity<Subroom>());
+        ConfigureArchivable(modelBuilder.Entity<RequirementExplanation>());
         ConfigureRoomTransition(modelBuilder.Entity<RoomTransition>());
         ConfigureSubroomConnection(modelBuilder.Entity<SubroomConnection>());
         ConfigureCheckLocation(modelBuilder.Entity<CheckLocation>());
@@ -127,6 +129,7 @@ public sealed class LogicDbContext(DbContextOptions<LogicDbContext> options) : D
         entity.Property(x => x.UseUploadedSceneImage).HasDefaultValue(false);
         entity.Property(x => x.IsSceneImageStale).HasDefaultValue(false);
         entity.HasMany(x => x.Subrooms).WithOne(x => x.Room).HasForeignKey(x => x.RoomId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasMany(x => x.RequirementExplanations).WithOne(x => x.Room).HasForeignKey(x => x.RoomId).OnDelete(DeleteBehavior.Restrict);
         entity.HasMany(x => x.Transitions).WithOne(x => x.Room).HasForeignKey(x => x.RoomId).OnDelete(DeleteBehavior.Restrict);
         entity.HasMany(x => x.Connections).WithOne(x => x.Room).HasForeignKey(x => x.RoomId).OnDelete(DeleteBehavior.Restrict);
         entity.HasMany(x => x.CheckLocations).WithOne(x => x.Room).HasForeignKey(x => x.RoomId).OnDelete(DeleteBehavior.Restrict);

@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Globalization;
 using System.Text;
+using SilksongRandoLogicManager.Contracts;
 
 namespace Silksong_Rando_Logic_Manager.Services;
 
@@ -16,7 +17,8 @@ internal sealed record RoomGraphTranslationContext(
     IReadOnlyList<RoomGraphItemDefinition> Countables,
     IReadOnlyList<RoomGraphItemDefinition> Souls,
     IReadOnlyList<RoomGraphItemDefinition> Crests,
-    IReadOnlyList<RoomGraphItemDefinition> Methods);
+    IReadOnlyList<RoomGraphItemDefinition> Methods,
+    ILookup<Guid, string> Explanations);
 
 internal static class RoomGraphRequirementTranslator
 {
@@ -32,6 +34,8 @@ internal static class RoomGraphRequirementTranslator
         AtomNode { Evidence: { } evidence } => evidence,
         AndNode and => new AuditBoolean(true, Project(and.Left), Project(and.Right)),
         OrNode or => new AuditBoolean(false, Project(or.Left), Project(or.Right)),
+        ExplainedNode explained => Project(explained.Operand),
+        NotedNode noted => Project(noted.Operand),
         _ => throw new InvalidOperationException("Successful recognition has no audit evidence.")
     };
     internal static RoomGraphRequirement Translate(string source, Guid owningRoomId, RoomGraphTranslationContext context, PreparedRuleEvidence? evidence = null)
@@ -44,14 +48,26 @@ internal static class RoomGraphRequirementTranslator
         }
         var parser = new Parser(source, owningRoomId, context, evidence);
         var parsed = parser.Parse();
-        if (parsed.Node is null) return new(source, "unresolved", [], parsed.Reasons);
+        if (parsed.Node is null) return new(source, "unresolved", [], parsed.Reasons, null);
 
         var dnf = Lower(parsed.Node);
-        if (parsed.Node is AtomNode { Value: "none" }) return new(source, "none", [[]], []);
-        return new(source, "expression", dnf, []);
+        var rule = ProjectRule(parsed.Node);
+        if (Underlying(parsed.Node) is AtomNode { Value: "none" }) return new(source, "none", [[]], [], rule);
+        return new(source, "expression", dnf, [], rule);
     }
 
-    private static RoomGraphRequirement Unresolved(string raw, string reason) => new(raw, "unresolved", [], [reason]);
+    private static RoomGraphRequirement Unresolved(string raw, string reason) => new(raw, "unresolved", [], [reason], null);
+
+    private static Node Underlying(Node node)
+    {
+        while (true)
+            switch (node)
+            {
+                case ExplainedNode explained: node = explained.Operand; break;
+                case NotedNode noted: node = noted.Operand; break;
+                default: return node;
+            }
+    }
 
     private static IReadOnlyList<IReadOnlyList<string>> Lower(Node node) => node switch
     {
@@ -59,14 +75,57 @@ internal static class RoomGraphRequirementTranslator
         OrNode or => [.. Lower(or.Left), .. Lower(or.Right)],
         AndNode and => Lower(and.Left).SelectMany(left => Lower(and.Right).Select(right =>
             (IReadOnlyList<string>)[.. left, .. right])).ToArray(),
+        ExplainedNode explained => Lower(explained.Operand),
+        NotedNode noted => Lower(noted.Operand),
         _ => throw new ArgumentOutOfRangeException(nameof(node))
     };
+
+    private static RoomGraphRule ProjectRule(Node node) => node switch
+    {
+        AtomNode atom => new RoomGraphRuleAtom(atom.Value),
+        NotedNode noted => ProjectRule(noted.Operand) with { Note = noted.Note },
+        ExplainedNode explained => Attach(ProjectRule(explained.Operand), explained.Reference),
+        AndNode => ProjectGroup(node, RoomGraphRuleGroupKind.And),
+        OrNode => ProjectGroup(node, RoomGraphRuleGroupKind.Or),
+        _ => throw new ArgumentOutOfRangeException(nameof(node))
+    };
+
+    private static RoomGraphRule Attach(RoomGraphRule rule, string reference) =>
+        rule.Explanation is null ? rule with { Explanation = reference }
+            : new RoomGraphRuleGroup(RoomGraphRuleGroupKind.Group, [rule]) { Explanation = reference };
+
+    private static RoomGraphRuleGroup ProjectGroup(Node node, RoomGraphRuleGroupKind kind)
+    {
+        // Splice only naked same-operator nodes. Annotation wrappers stop the
+        // walk, so an authored list or Boolean operand with metadata stays whole.
+        var pending = new Stack<Node>();
+        var children = new List<RoomGraphRule>();
+        pending.Push(node);
+        while (pending.TryPop(out var child))
+            switch (child)
+            {
+                case AndNode conjunction when kind == RoomGraphRuleGroupKind.And:
+                    pending.Push(conjunction.Right);
+                    pending.Push(conjunction.Left);
+                    break;
+                case OrNode disjunction when kind == RoomGraphRuleGroupKind.Or:
+                    pending.Push(disjunction.Right);
+                    pending.Push(disjunction.Left);
+                    break;
+                default:
+                    children.Add(ProjectRule(child));
+                    break;
+            }
+        return new(kind, children);
+    }
 
     private abstract record Node;
     private sealed record AtomNode(string Value, AuditAtom? Evidence = null) : Node;
     private sealed record AndNode(Node Left, Node Right) : Node;
     private sealed record OrNode(Node Left, Node Right) : Node;
     private sealed record InvalidAtom : Node;
+    private sealed record ExplainedNode(Node Operand, string Reference) : Node;
+    private sealed record NotedNode(Node Operand, string Note) : Node;
     private sealed record ParseResult(Node? Node, IReadOnlyList<string> Reasons);
     private sealed record AtomCandidate(Node? Output, string? Failure, PreparedDependencyFailure? DependencyFailure = null);
 
@@ -106,7 +165,7 @@ internal static class RoomGraphRequirementTranslator
 
         private Node? ParseExpression(bool grouped)
         {
-            var left = ParseOperand();
+            var left = ParseOperand(grouped);
             if (left is null) return null;
             string? operatorKind = null;
             while (true)
@@ -143,13 +202,13 @@ internal static class RoomGraphRequirementTranslator
                     AddReason($"Boolean operator {next} is missing its right operand");
                     return null;
                 }
-                var right = ParseOperand();
+                var right = ParseOperand(grouped);
                 if (right is null) return null;
                 left = next == "AND" ? new AndNode(left, right) : new OrNode(left, right);
             }
         }
 
-        private Node? ParseOperand()
+        private Node? ParseOperand(bool grouped)
         {
             SkipWhitespace();
             if (position >= source.Length)
@@ -165,7 +224,9 @@ internal static class RoomGraphRequirementTranslator
             if (source[position] == '(')
             {
                 position++;
-                return ParseExpression(true);
+                var failuresBefore = reasons.Count;
+                var group = ParseExpression(true);
+                return group is null ? null : ParseExplanation(group, reasons.Count == failuresBefore, grouped);
             }
 
             var start = position;
@@ -173,7 +234,8 @@ internal static class RoomGraphRequirementTranslator
             while (position < source.Length)
             {
                 var character = source[position];
-                if (bracketDepth == 0 && (character is '(' or ')' || WordAt("AND") || WordAt("OR"))) break;
+                if (bracketDepth == 0 && (character is '(' or ')' || WordAt("AND") || WordAt("OR") || WordAt("SEE"))) break;
+                if (bracketDepth > 0 && WordAt("SEE")) { UntrustedBoundary("SEE must follow a complete operand, not a list entry."); return null; }
                 if (character == '[') bracketDepth++;
                 if (character == ']') bracketDepth--;
                 if (bracketDepth < 0) { UntrustedBoundary("unmatched list delimiter"); return null; }
@@ -197,7 +259,7 @@ internal static class RoomGraphRequirementTranslator
             SkipWhitespace();
             if (position < source.Length && source[position] == '(')
             {
-                var annotation = ParseAnnotation();
+                var annotation = ParseAnnotation(out var note);
                 if (annotation == AnnotationResult.Unsafe) return null;
                 if (annotation == AnnotationResult.Blank)
                 {
@@ -205,10 +267,57 @@ internal static class RoomGraphRequirementTranslator
                     // The closing delimiter was consumed. Continue only to
                     // observe evidence; this operand still rejects the rule.
                     firstRecoverableFailure ??= reasons.ToArray();
-                    return new InvalidAtom();
+                    atom = new InvalidAtom();
                 }
+                else if (atom is not InvalidAtom) atom = new NotedNode(atom, note!);
             }
-            return atom;
+            return ParseExplanation(atom, atom is not InvalidAtom, grouped);
+        }
+
+        private Node? ParseExplanation(Node operand, bool completeOperand, bool grouped)
+        {
+            var beforeWhitespace = position;
+            SkipWhitespace();
+            if (!WordAt("SEE")) return operand;
+            var keywordStart = position;
+            position += 3;
+            var referenceStart = position;
+            var scan = ExplanationReferenceReader.ScanSuffix(source, referenceStart, WordAt);
+            position = scan.End;
+            if (!scan.Balanced)
+            {
+                UntrustedBoundary("Unbalanced parentheses in SEE Reference.");
+                return null;
+            }
+            var reference = source[referenceStart..position].Trim();
+            var matchedReference = scan.Repeated ? null
+                : ExplanationRules.FindUniqueReference(context.Explanations, owningRoomId, reference);
+            var failure = scan.Repeated ? "Repeated SEE attachment on one operand."
+                : reference.Length == 0 ? "SEE is missing its Reference."
+                : matchedReference is null
+                    ? $"SEE Reference '{reference}' does not identify exactly one active Explanation in this room." : null;
+            if (failure is not null)
+            {
+                AddReason(failure);
+                if (evidence is null) return null;
+                firstRecoverableFailure ??= reasons.ToArray();
+                return new InvalidAtom();
+            }
+            // A delimited bad operand may be traversed for later evidence;
+            // its own suffix is not a recognized attachment.
+            if (!completeOperand) return operand;
+            // Keep the suffix scoped to this source operand through recognition;
+            // executable projections explicitly traverse only Operand.
+            var suffixEnd = referenceStart + source.AsSpan(referenceStart, position - referenceStart).TrimEnd().Length;
+            // An AND/OR boundary proves this range independently of later operands.
+            // A tail needs the delimiter belonging to this expression: a group
+            // needs its unpaired close, while the root needs EOF. In particular,
+            // a balanced literal may have consumed the last ')' of an unclosed group.
+            var endpointConfirmed = position == source.Length ? !grouped
+                : source[position] != ')' || grouped;
+            if (endpointConfirmed)
+                evidence?.RecognizedExplanationSuffixes.Add(new(beforeWhitespace..suffixEnd, keywordStart..suffixEnd, matchedReference!));
+            return new ExplainedNode(operand, matchedReference!);
         }
 
         private void UntrustedBoundary(string reason)
@@ -231,8 +340,9 @@ internal static class RoomGraphRequirementTranslator
             }
         }
 
-        private AnnotationResult ParseAnnotation()
+        private AnnotationResult ParseAnnotation(out string? note)
         {
+            note = null;
             position++;
             var start = position;
             while (position < source.Length && source[position] != ')')
@@ -249,13 +359,14 @@ internal static class RoomGraphRequirementTranslator
                 UntrustedBoundary("mismatched annotation parenthesis");
                 return AnnotationResult.Unsafe;
             }
-            var blank = source.AsSpan(start, position - start).IsWhiteSpace();
+            var content = source.AsSpan(start, position - start);
             position++;
-            if (blank)
+            if (content.IsWhiteSpace())
             {
                 AddReason("annotation is blank");
                 return AnnotationResult.Blank;
             }
+            note = content.ToString();
             return AnnotationResult.Valid;
         }
 

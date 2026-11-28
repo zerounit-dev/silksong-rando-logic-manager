@@ -13,14 +13,17 @@ internal sealed record PreparedGraphReference(PreparedReferenceKind Kind, Prepar
 internal enum PreparedDependencyProblem { MissingOperand, InvalidScope, MissingRoom, AmbiguousRoom, MissingCheck, AmbiguousCheck, InvalidIdentity }
 internal sealed record PreparedDependencyFailure(PreparedDependencyProblem Problem, string Operand, string Cause, Guid? RelatedRoom = null);
 internal sealed record PreparedUnreadableReason(string Cause, string? CheckOperand = null, Guid? RelatedRoom = null);
+internal sealed record PreparedExplanationSuffix(Range MaskSpan, Range DisplaySpan, string Reference);
 internal sealed class PreparedRuleEvidence
 {
     internal List<PreparedDependencyFailure> MissingChecks { get; } = [];
     internal List<PreparedUnreadableReason> UnreadableReasons { get; } = [];
     internal HashSet<string> ResolvedIds { get; } = new(StringComparer.Ordinal);
+    internal List<PreparedExplanationSuffix> RecognizedExplanationSuffixes { get; } = [];
     internal string? UninspectedSyntax { get; set; }
 }
 internal sealed record PreparedGraphRule(string Room, string Kind, string Record, Guid RecordId, PreparedRuleEvidence Evidence, Guid RoomRecordId);
+internal sealed record PreparedGraphExplanation(Guid RecordId, Guid RoomRecordId, string Name, string Reference);
 internal sealed record PreparedGraphRoom(RoomGraphRoom Room, bool? IsPlayable, IReadOnlySet<string> CoverageNodes,
     IReadOnlyList<Guid> LocationRecordIds, Guid RoomRecordId);
 internal sealed record PreparedGraphRoomGroup(Guid Id, string Name);
@@ -33,6 +36,10 @@ internal sealed class PreparedGraphEvidence
     internal List<PreparedIntegrityFailure> Integrity { get; } = [];
     internal List<PreparedGraphReference> References { get; } = [];
     internal List<PreparedGraphRule> Rules { get; } = [];
+    internal Dictionary<(string Kind, Guid Id), IReadOnlyList<Range>> ExplanationSpans { get; } = [];
+    internal Dictionary<(string Kind, Guid Id), IReadOnlyList<PreparedExplanationSuffix>> ExplanationSuffixes { get; } = [];
+    internal IReadOnlyList<PreparedGraphExplanation> Explanations { get; set; } = [];
+    internal HashSet<Guid> UsedExplanationRecordIds { get; } = [];
     internal IReadOnlyList<PreparedGraphRoom> Rooms { get; set; } = [];
     internal IReadOnlyDictionary<(string Kind, Guid Id), string> RecordLabels { get; set; } =
         new Dictionary<(string, Guid), string>();

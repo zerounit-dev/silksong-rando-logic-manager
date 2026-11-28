@@ -7,7 +7,8 @@ public partial class RoomWorkspaceEditor
 {
     private sealed record PresentationInputs(RoomCompleteDocument Document, RoomDiagnosticIndex.Facts Global,
         IReadOnlyList<RoomSubroomRow> Subrooms, IReadOnlyList<RoomTransitionRow> Transitions,
-        IReadOnlyList<RoomConnectionRow> Connections, RoomCheckSectionRows Checks, RoomCheckSectionRows Enemies);
+         IReadOnlyList<RoomConnectionRow> Connections, RoomCheckSectionRows Checks, RoomCheckSectionRows Enemies,
+         IReadOnlyList<RoomExplanationRow> Explanations);
     private PresentationInputs? preparedPresentation;
 
     private void EnsurePresentation()
@@ -25,14 +26,16 @@ public partial class RoomWorkspaceEditor
             && ReferenceEquals(previous.Transitions, workspace.Transitions)
             && ReferenceEquals(previous.Connections, workspace.Connections)
             && ReferenceEquals(previous.Checks, workspace.CheckLocations)
-            && ReferenceEquals(previous.Enemies, workspace.Enemies)) return;
+            && ReferenceEquals(previous.Enemies, workspace.Enemies)
+            && ReferenceEquals(previous.Explanations, workspace.Explanations)) return;
         ObserveShellOperation();
         using var work = observedRoomWork.Measure(ObservedWork.Tables);
         RoomTableDiagnostics.Apply(document, Catalogue.Diagnostics, workspace.Subrooms, workspace.Transitions, workspace.Connections,
-            workspace.CheckLocations.Active.Concat(workspace.CheckLocations.Archived).Concat(workspace.Enemies.Active).Concat(workspace.Enemies.Archived).ToArray());
+             workspace.CheckLocations.Active.Concat(workspace.CheckLocations.Archived).Concat(workspace.Enemies.Active).Concat(workspace.Enemies.Archived).ToArray(),
+             workspace.Explanations);
         // Failed mapping never certifies default or partially prepared guidance.
         preparedPresentation = new(document, Catalogue.Diagnostics, workspace.Subrooms, workspace.Transitions,
-            workspace.Connections, workspace.CheckLocations, workspace.Enemies);
+             workspace.Connections, workspace.CheckLocations, workspace.Enemies, workspace.Explanations);
     }
     private RoomTableRow CurrentPresentationRow(string kind, Guid id)
     {
